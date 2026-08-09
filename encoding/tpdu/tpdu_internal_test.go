@@ -143,6 +143,23 @@ func TestDecodeUserData(t *testing.T) {
 	}
 }
 
+func TestDecode7BitRejectsNegativeShortMessageLength(t *testing.T) {
+	patterns := []struct {
+		name string
+		src  []byte
+	}{
+		{"empty source", nil},
+		{"non-empty source", []byte{0x00}},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			sm, err := decode7Bit(-1, 0, p.src)
+			require.Equal(t, ErrUnderflow, err)
+			assert.Nil(t, sm)
+		})
+	}
+}
+
 func TestEncodeUserData(t *testing.T) {
 	patterns := []struct {
 		name string

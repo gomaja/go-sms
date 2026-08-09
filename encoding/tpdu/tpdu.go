@@ -900,6 +900,9 @@ func decode7Bit(sml, udhl int, src []byte) ([]byte, error) {
 		}
 		sml = sml - (udhl*8+fillBits)/7
 	}
+	if sml < 0 {
+		return nil, ErrUnderflow
+	}
 	sm := gsm7.Unpack7Bit(src, fillBits)
 	// this is a double check on the math and should never trip...
 	if len(sm) < sml {
