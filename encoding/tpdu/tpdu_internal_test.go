@@ -5,6 +5,7 @@ package tpdu
 import (
 	"testing"
 
+	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -160,6 +161,28 @@ func TestDecode7BitRejectsNegativeShortMessageLength(t *testing.T) {
 			sm, err := decode7Bit(p.sml, p.udhl, p.src)
 			require.Equal(t, ErrUnderflow, err)
 			assert.Nil(t, sm)
+		})
+	}
+}
+
+func TestDecode7BitHandlesSurplusSeptets(t *testing.T) {
+	patterns := []struct {
+		name  string
+		sml   int
+		src   []byte
+		outSM []byte
+		err   error
+	}{
+		{"drops single trailing zero septet", 0, []byte{0x00}, []byte{}, nil},
+		{"drops trailing zero after message septets", 2, gsm7.Pack7Bit([]byte("OK\x00"), 0), []byte("OK"), nil},
+		{"rejects single non-zero surplus septet", 0, []byte{0x01}, nil, ErrOverlength},
+		{"rejects multiple surplus septets", 0, []byte{0x00, 0x00}, nil, ErrOverlength},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			sm, err := decode7Bit(p.sml, 0, p.src)
+			require.Equal(t, p.err, err)
+			assert.Equal(t, p.outSM, sm)
 		})
 	}
 }

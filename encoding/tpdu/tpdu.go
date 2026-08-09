@@ -905,11 +905,12 @@ func decode7Bit(sml, udhl int, src []byte) ([]byte, error) {
 	}
 	sm := gsm7.Unpack7Bit(src, fillBits)
 	// this is a double check on the math and should never trip...
-	if len(sm) < sml {
+	surplus := len(sm) - sml
+	if surplus < 0 {
 		return nil, ErrUnderflow
 	}
-	if len(sm) > sml {
-		if len(sm) > sml+1 || sm[sml] != 0 {
+	if surplus > 0 {
+		if surplus > 1 || sm[len(sm)-1] != 0 {
 			return nil, ErrOverlength
 		}
 		// drop trailing 0 septet
