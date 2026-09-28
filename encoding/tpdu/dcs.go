@@ -133,6 +133,9 @@ const (
 // 01xx with bit 4 set, and group 1111, carry a message class. A reserved
 // coding is assumed to be 00000000, which has no message class.
 func (d DCS) Class() MessageClass {
+	if d.reserved() {
+		return MClassUnknown
+	}
 	if d&0x90 == 0x10 || d&0xf0 == 0xf0 { // 0xx1 and 1111
 		return MessageClass(d & 0x3)
 	}
@@ -150,7 +153,7 @@ func (d DCS) Class() MessageClass {
 // incompatible with setting the message class.
 func (d DCS) WithClass(c MessageClass) (DCS, error) {
 	switch {
-	case c < MClass0 || c > MClassUnknown:
+	case c < MClass0 || c > MClassUnknown, d.reserved():
 		return d, ErrInvalid
 	case d&0x80 == 0x00: // 0xxx
 		if c == MClassUnknown {
@@ -179,5 +182,13 @@ func (d DCS) WithClass(c MessageClass) (DCS, error) {
 // The DCS is assumed to be defined as per 3GPP TS 23.038 Section 4.
 func (d DCS) Compressed() bool {
 	// only true for 0x1xxxxx (binary)
-	return (d&0xa0 == 0x20)
+	return !d.reserved() && d&0xa0 == 0x20
+}
+
+// reserved reports whether the DCS is a reserved coding, which a receiving
+// entity assumes to be the same as codepoint 00000000 (3GPP TS 23.038 Section
+// 4): one of the reserved coding groups 10xx, or the reserved character set,
+// bits 3..2 set to 11, of the general data coding groups 00xx and 01xx.
+func (d DCS) reserved() bool {
+	return d&0xc0 == 0x80 || (d&0x80 == 0x00 && d&0x0c == 0x0c)
 }

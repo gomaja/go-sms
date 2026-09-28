@@ -131,7 +131,7 @@ func TestDCSClass(t *testing.T) {
 	patterns := []dcsClassPattern{}
 	for i := 0; i < 4; i++ {
 		m := byte(i << 5)
-		for cs := byte(0); cs < 0x10; cs += 4 {
+		for cs := byte(0); cs < 0x0c; cs += 4 {
 			patterns = append(patterns,
 				dcsClassPattern{0x00 | cs | m, tpdu.MClassUnknown},
 				dcsClassPattern{0x01 | cs | m, tpdu.MClassUnknown},
@@ -142,6 +142,13 @@ func TestDCSClass(t *testing.T) {
 				dcsClassPattern{0x12 | cs | m, tpdu.MClass2},
 				dcsClassPattern{0x13 | cs | m, tpdu.MClass3},
 			)
+		}
+		// the reserved character set is a reserved coding, assumed to be
+		// 00000000, which has no class (3GPP TS 23.038 Section 4)
+		for i := byte(0); i < 0x20; i++ {
+			if i&0x0c == 0x0c {
+				patterns = append(patterns, dcsClassPattern{i | m, tpdu.MClassUnknown})
+			}
 		}
 	}
 	// reserved coding groups are assumed to be 00000000, which has no class
@@ -190,6 +197,10 @@ func TestDCSWithClass(t *testing.T) {
 	// might as well test them all..
 	patterns := make(map[dcsWithClassIn]dcsWithClassOut) // the good ones
 	for i := 0x00; i < 0x80; i++ {
+		if i&0x0c == 0x0c {
+			// a reserved coding, so incompatible with a class
+			continue
+		}
 		for a := 0; a < 4; a++ {
 			patterns[dcsWithClassIn{byte(i), tpdu.MessageClass(a)}] =
 				dcsWithClassOut{tpdu.DCS(i&^0x03 | 0x10 | a), nil}
@@ -228,7 +239,11 @@ func TestDCSReservedCodingGroups(t *testing.T) {
 	// 3GPP TS 23.038 Section 4: "Any reserved codings shall be assumed to be
 	// the GSM 7 bit default alphabet (the same as codepoint 00000000) by a
 	// receiving entity."
-	for i := 0x80; i < 0xc0; i++ {
+	for i := 0x00; i < 0xc0; i++ {
+		if i < 0x80 && i&0x0c != 0x0c {
+			// only the character set 11 of groups 00xx and 01xx is reserved
+			continue
+		}
 		d := tpdu.DCS(i)
 		assert.Equal(t, tpdu.Alpha7Bit, d.Alphabet(), "%02x", i)
 		assert.Equal(t, tpdu.MClassUnknown, d.Class(), "%02x", i)
@@ -330,11 +345,15 @@ func TestDCSCompressed(t *testing.T) {
 		{0x00, false},
 		{0x10, false},
 		{0x20, true},
+		{0x2c, false}, // reserved character set, assumed to be 0x00
 		{0x30, true},
+		{0x3c, false},
 		{0x40, false},
 		{0x50, false},
 		{0x60, true},
+		{0x6c, false},
 		{0x70, true},
+		{0x7f, false},
 		{0x80, false},
 		{0x90, false},
 		{0xa0, false},
@@ -392,7 +411,8 @@ func FuzzDCS(f *testing.F) {
 		if class < tpdu.MClass0 || class > tpdu.MClassUnknown {
 			t.Fatalf("%02x: class %d", b, class)
 		}
-		if b&0xc0 == 0x80 && (alpha != tpdu.Alpha7Bit || class != tpdu.MClassUnknown || d.Compressed()) {
+		reserved := b&0xc0 == 0x80 || (b&0x80 == 0 && b&0x0c == 0x0c)
+		if reserved && (alpha != tpdu.Alpha7Bit || class != tpdu.MClassUnknown || d.Compressed()) {
 			t.Fatalf("%02x: reserved coding not treated as 0x00", b)
 		}
 		_ = d.String()
@@ -402,7 +422,10 @@ func FuzzDCS(f *testing.F) {
 			if wa != d {
 				t.Fatalf("%02x.WithAlphabet(%d) failed but changed DCS to %02x", b, a, byte(wa))
 			}
-		} else if wa.Alphabet() != tpdu.Alphabet(a) || wa.Class() != class || wa.Compressed() != d.Compressed() {
+		} else if wa.Alphabet() != tpdu.Alphabet(a) ||
+			// setting the alphabet of a reserved coding makes its other
+			// bits meaningful
+			!reserved && (wa.Class() != class || wa.Compressed() != d.Compressed()) {
 			t.Fatalf("%02x.WithAlphabet(%d) = %02x", b, a, byte(wa))
 		}
 
