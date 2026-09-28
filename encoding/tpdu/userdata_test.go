@@ -45,6 +45,35 @@ func TestUserDataHeaderMarshalBinary(t *testing.T) {
 				tpdu.InformationElement{ID: 2, Data: []byte{1, 2, 3}},
 			},
 			[]byte{15, 1, 3, 1, 2, 3, 1, 3, 5, 6, 7, 2, 3, 1, 2, 3}, nil},
+		{"max",
+			tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: 1, Data: make([]byte, 253)},
+			},
+			append([]byte{255, 1, 253}, make([]byte, 253)...),
+			nil,
+		},
+		{"ied overlength",
+			tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: 1, Data: make([]byte, 256)},
+			},
+			nil,
+			tpdu.EncodeError("ied", tpdu.ErrOverlength),
+		},
+		{"udhl overlength",
+			tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: 1, Data: make([]byte, 200)},
+				tpdu.InformationElement{ID: 2, Data: make([]byte, 200)},
+			},
+			nil,
+			tpdu.EncodeError("udhl", tpdu.ErrOverlength),
+		},
+		{"udhl overlength by one",
+			tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: 1, Data: make([]byte, 254)},
+			},
+			nil,
+			tpdu.EncodeError("udhl", tpdu.ErrOverlength),
+		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -54,6 +83,20 @@ func TestUserDataHeaderMarshalBinary(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+func TestUserDataHeaderOverlengthTPDU(t *testing.T) {
+	// The UDH error must reach the caller rather than a TPDU with wrapped
+	// length octets.
+	pdu, err := tpdu.NewSubmit()
+	require.Nil(t, err)
+	pdu.SetUDH(tpdu.UserDataHeader{
+		tpdu.InformationElement{ID: 0x80, Data: make([]byte, 256)},
+	})
+	pdu.UD = []byte("hello")
+	b, err := pdu.MarshalBinary()
+	assert.Equal(t, tpdu.EncodeError("SmsSubmit.ud.udh.ied", tpdu.ErrOverlength), err)
+	assert.Nil(t, b)
 }
 
 func TestUserDataHeaderUnmarshalBinary(t *testing.T) {

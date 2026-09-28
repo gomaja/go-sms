@@ -927,7 +927,6 @@ func decode7Bit(sml, udhl int, src []byte) ([]byte, error) {
 func (t *TPDU) encodeUserData() (b []byte, err error) {
 	udh, err := t.UDH.MarshalBinary()
 	if err != nil {
-		// never trips as UDH marshalling never fails...
 		return nil, EncodeError("udh", err)
 	}
 	ud := t.UD

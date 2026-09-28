@@ -41,17 +41,31 @@ func (udh UserDataHeader) UDHL() int {
 	return udhl
 }
 
+// maxLengthOctet is the largest length a single length octet can encode.
+const maxLengthOctet = 0xff
+
 // MarshalBinary marshals the User Data Header, including the UDHL, into
 // binary.
 //
 // A nil UDH indicates that no header is present and marshals to nil. An empty,
 // but not nil, UDH is a header without IEs and marshals to the single UDHL
 // octet 0.
+//
+// An error is returned if the data of an IE, or the whole header, is too long
+// for its length octet, as defined in 3GPP TS 23.040 Section 9.2.3.24.
 func (udh UserDataHeader) MarshalBinary() ([]byte, error) {
 	if udh == nil {
 		return nil, nil
 	}
+	for _, ie := range udh {
+		if len(ie.Data) > maxLengthOctet {
+			return nil, EncodeError("ied", ErrOverlength)
+		}
+	}
 	udhl := udh.UDHL()
+	if udhl > maxLengthOctet {
+		return nil, EncodeError("udhl", ErrOverlength)
+	}
 	b := make([]byte, 0, udhl+1)
 	b = append(b, byte(udhl))
 	for _, ie := range udh {
