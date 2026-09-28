@@ -135,6 +135,19 @@ func TestAddressMarshalBinary(t *testing.T) {
 			nil,
 			tpdu.NewEncodeError("addr", gsm7.ErrUnencodable{Offset: 3, Rune: '⌘'}),
 		},
+		// An address that is not UTF-8 is rejected as EncodeUserData
+		// rejects such a message, rather than any byte being read as
+		// U+FFFD.
+		{"alpha not utf8",
+			tpdu.Address{Addr: "ab\xffc", TOA: 0xd0},
+			nil,
+			tpdu.NewEncodeError("addr", tpdu.ErrInvalidUTF8),
+		},
+		{"alpha not utf8 after unencodable",
+			tpdu.Address{Addr: "⌘\xff", TOA: 0xd0},
+			nil,
+			tpdu.NewEncodeError("addr", tpdu.ErrInvalidUTF8),
+		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -396,6 +409,20 @@ func TestAddressOverlengthTPDU(t *testing.T) {
 	b, err := pdu.MarshalBinary()
 	assert.Equal(t, tpdu.NewEncodeError("SmsSubmit.da.addr", tpdu.ErrOverlength), err)
 	assert.Nil(t, b)
+}
+
+// TestAddressNotUTF8TPDU checks an alphanumeric address that is not UTF-8
+// fails the TPDU with the error EncodeUserData gives such a message.
+func TestAddressNotUTF8TPDU(t *testing.T) {
+	pdu, err := tpdu.NewSubmit(tpdu.WithDA(tpdu.Address{Addr: "Shop\xc3", TOA: 0xd0}))
+	require.Nil(t, err)
+	pdu.UD = []byte("hello")
+	b, err := pdu.MarshalBinary()
+	assert.Equal(t, tpdu.NewEncodeError("SmsSubmit.da.addr", tpdu.ErrInvalidUTF8), err)
+	assert.ErrorIs(t, err, tpdu.ErrInvalidUTF8)
+	assert.Nil(t, b)
+	_, _, _, err = tpdu.EncodeUserData([]byte("Shop\xc3"))
+	assert.Equal(t, tpdu.ErrInvalidUTF8, err)
 }
 
 // midFill reports whether a semi-octet address value contains a fill

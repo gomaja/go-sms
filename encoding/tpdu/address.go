@@ -3,6 +3,8 @@
 package tpdu
 
 import (
+	"unicode/utf8"
+
 	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/gomaja/go-sms/encoding/semioctet"
 )
@@ -58,6 +60,11 @@ const maxAddressLength = 20
 // 23.038 Section 6.2.1.1). The Address-Length is the number of semi-octets
 // its septets use.
 //
+// An alphanumeric address that is not valid UTF-8 results in an
+// ErrInvalidUTF8 error, as EncodeUserData gives for such a message, and one
+// with a character the default alphabet does not have in a
+// gsm7.ErrUnencodable error.
+//
 // An address longer than 20 digits, or 11 septets, cannot be encoded and
 // results in an ErrOverlength error.
 // The TOA is encoded as is, so an empty Address encodes to a zero length
@@ -68,6 +75,9 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 	var l int // is digits and ignores the toa
 	switch ton {
 	case TonAlphanumeric:
+		if !utf8.ValidString(a.Addr) {
+			return nil, NewEncodeError("addr", ErrInvalidUTF8)
+		}
 		e := gsm7.NewEncoder() // the default alphabet and its extension table
 		addr, err = e.Encode([]byte(a.Addr))
 		if err != nil {

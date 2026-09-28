@@ -506,5 +506,6 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 	return enc, nil, AlphaUCS2, nil
 }
 
-// ErrInvalidUTF8 indicates that a message to be encoded is not valid UTF8.
+// ErrInvalidUTF8 indicates that a message, or an alphanumeric address, to be
+// encoded is not valid UTF-8.
 var ErrInvalidUTF8 = errors.New("invalid UTF8")
