@@ -18,6 +18,10 @@ type TPDU struct {
 	//
 	// It is not carried in the TPDU, so it must be set before calling
 	// UnmarshalBinary, which keeps it.
+	//
+	// Any other value is of no TPDU type, so SmsType returns a type that is
+	// not supported, and UnmarshalBinary, MarshalBinary and Segment return an
+	// ErrUnsupportedSmsType.
 	Direction Direction
 
 	// RPMessage indicates whether an SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT
@@ -1447,7 +1451,12 @@ const (
 )
 
 // ApplyTPDUOption sets the direction of the TPDU.
+//
+// An error is returned if the Direction is neither MT nor MO.
 func (d Direction) ApplyTPDUOption(t *TPDU) error {
+	if d != MT && d != MO {
+		return ErrInvalid
+	}
 	t.Direction = d
 	return nil
 }
@@ -1554,12 +1563,25 @@ func (st SmsType) ApplyTPDUOption(t *TPDU) error {
 // "SMS-DELIVER" but store the message exactly as received." So the Reserved
 // value in the MT direction is an SMS-DELIVER, while the first octet keeps
 // the received TP-MTI, and is marshalled as received.
+//
+// A direction other than MT and MO is of no type, rather than being combined
+// with the TP-MTI, which would make it that of another type.
 func smsType(mt MessageType, dir Direction) SmsType {
-	if mt == MtReserved && dir == MT {
-		return SmsDeliver
+	switch dir {
+	case MT:
+		if mt == MtReserved {
+			return SmsDeliver
+		}
+	case MO:
+	default:
+		return noSmsType
 	}
 	return SmsType(byte(mt<<1) | byte(dir))
 }
+
+// noSmsType is the SmsType of a TPDU that has a Direction of neither MT nor
+// MO, which is of no type.
+const noSmsType SmsType = -1
 
 func newInfoElement(msgCount, segCount, segment int) InformationElement {
 	ie := InformationElement{}

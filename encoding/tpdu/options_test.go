@@ -72,4 +72,14 @@ func TestWithDirection(t *testing.T) {
 	s, err := tpdu.New(tpdu.MO)
 	require.Nil(t, err)
 	assert.Equal(t, tpdu.MO, s.Direction)
+	s, err = tpdu.New(tpdu.MT)
+	require.Nil(t, err)
+	assert.Equal(t, tpdu.MT, s.Direction)
+	// A TPDU is carried either to or from the MS, so any other Direction is
+	// rejected, as it would otherwise be ORed into the type.
+	for _, d := range []tpdu.Direction{-1, 2, 3, 4} {
+		s, err = tpdu.New(d)
+		assert.Equal(t, tpdu.ErrInvalid, err, "%d", d)
+		assert.Nil(t, s)
+	}
 }

@@ -1144,6 +1144,35 @@ func TestSmsType(t *testing.T) {
 	}
 }
 
+// TestInvalidDirection checks that a TPDU with a Direction other than MT or
+// MO, as set on the exported field, is of no type, so every method that
+// depends on the type rejects it, rather than the Direction being ORed into
+// the TP-MTI, which would make an SMS-DELIVER an SMS-SUBMIT-REPORT or an
+// SMS-SUBMIT.
+func TestInvalidDirection(t *testing.T) {
+	deliver := unhex(t, "04 04 91 3619 00 00 51507132200523 01 41")
+	for _, d := range []tpdu.Direction{-1, 2, 3, 4, 7} {
+		for _, mt := range []tpdu.MessageType{tpdu.MtDeliver, tpdu.MtSubmit, tpdu.MtCommand, tpdu.MtReserved} {
+			name := fmt.Sprintf("%d %s", d, mt)
+			p := tpdu.TPDU{Direction: d, FirstOctet: tpdu.FirstOctet(mt), OA: tpdu.Address{Addr: "6391", TOA: 0x91}}
+			st := p.SmsType()
+			assert.Equal(t, "Unknown", st.String(), name)
+			b, err := p.MarshalBinary()
+			assert.Equal(t, tpdu.ErrUnsupportedSmsType(st), err, name)
+			assert.Nil(t, b, name)
+			pdus, err := p.Segment([]byte("hi"))
+			assert.Equal(t, tpdu.ErrUnsupportedSmsType(st), err, name)
+			assert.Nil(t, pdus, name)
+			assert.Error(t, p.SetSmsType(st), name)
+			in := append([]byte{byte(mt)}, deliver[1:]...)
+			u := tpdu.TPDU{Direction: d}
+			err = u.UnmarshalBinary(in)
+			assert.Equal(t, tpdu.NewDecodeError("tpdu.firstOctet", 0, tpdu.ErrUnsupportedSmsType(st)), err, name)
+			assert.Equal(t, tpdu.TPDU{Direction: d, FirstOctet: tpdu.FirstOctet(mt)}, u, name)
+		}
+	}
+}
+
 func TestSmsTypeString(t *testing.T) {
 	patterns := []struct {
 		st  tpdu.SmsType
