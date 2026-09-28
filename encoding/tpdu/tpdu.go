@@ -622,9 +622,15 @@ func addressOctets(a *Address) int {
 // UDHI returns the User Data Header Indicator bit from the SMS TPDU first
 // octet, as held.
 //
-// For an unmarshalled TPDU, or one whose UDH was set with SetUDH, it is set
-// exactly when the UDH is not nil. MarshalBinary derives the bit from the UDH
-// rather than using it.
+// After SetUDH it is set exactly when the UDH is not nil. After
+// UnmarshalBinary it is the bit as received, which, for a TPDU that has a
+// TP-UD, is set exactly when the UDH is not nil. A TPDU that has no TP-UD,
+// such as one with a TP-UDL of 0, or a report whose TP-PI announces no
+// TP-UDL, has no header to decode, so its UDH is nil whatever the bit. To
+// find whether a TPDU has a header, test the UDH rather than this bit.
+//
+// MarshalBinary derives the bit from the UDH and UD where they are written,
+// and otherwise marshals it as held.
 func (t *TPDU) UDHI() bool {
 	return t.FirstOctet.UDHI()
 }

@@ -1398,6 +1398,39 @@ func TestUDHI(t *testing.T) {
 	}
 }
 
+// TestUDHIWithoutUD checks that a TPDU received with the TP-UDHI set but no
+// TP-UD has no UDH, as there is no header to decode, and keeps the bit, so
+// it marshals back to the octets it came from.
+//
+// TS 23.040 9.2.3.16: "If this field is zero, the TP-User-Data field shall
+// not be present."
+func TestUDHIWithoutUD(t *testing.T) {
+	for _, p := range []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+	}{
+		{"deliver udl 0", tpdu.MT, "44 04 91 2143 00 00 99202150750321 00"},
+		{"command cdl 0", tpdu.MO, "42 42 00 00 34 04 91 3619 00"},
+		{"status report without pi", tpdu.MT, "42 42 04 91 3619 51507132200523 51408132200542 ab"},
+		{"status report without udl", tpdu.MT, "42 42 04 91 3619 51507132200523 51408132200542 ab 01 00"},
+		{"deliver report without udl", tpdu.MO, "40 00"},
+	} {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{Direction: p.dirn}
+			require.NoError(t, d.UnmarshalBinary(in))
+			assert.True(t, d.UDHI())
+			assert.Nil(t, d.UDH)
+			assert.Equal(t, 0, d.UDHL())
+			out, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, out)
+		}
+		t.Run(p.name, f)
+	}
+}
+
 func TestUnmarshalBinary(t *testing.T) {
 	patterns := []struct {
 		name string
