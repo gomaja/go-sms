@@ -168,7 +168,7 @@ func TestAddressUnmarshalBinary(t *testing.T) {
 			[]byte{10, 0xd1, 0xED, 0xF2, 0x7C, 0x03, 0x9c, 0x87, 0xCF, 0xE5, 0x39},
 			tpdu.Address{},
 			2,
-			tpdu.NewDecodeError("addr", 2, gsm7.ErrInvalidSeptet(0x40)),
+			tpdu.NewDecodeError("addr", 2, gsm7.ErrInvalidSeptet{Offset: 4, Septet: 0x40, Escaped: true}),
 		},
 		{"underflow alpha",
 			[]byte{10, 0xd1, 0xCF, 0xE5, 0x39},

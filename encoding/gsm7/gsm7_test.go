@@ -106,6 +106,11 @@ func TestDecode(t *testing.T) {
 		{"escaped", []byte("mes\x1b\x40sage"), []byte("mes|sage"), nil},
 		{"double escaped", []byte("mes\x1b\x1b\x40sage"), []byte("mes ¡sage"), nil},
 		{"dangling escape", []byte("message\x1b"), []byte("message "), nil},
+		// 3GPP TS 23.038 V20.0.0 Section 6.2.1.1: a code with no symbol in
+		// the extension table is displayed as the main table character.
+		{"undefined ext", []byte("\x1b\x41\x1b\x61"), []byte("Aa"), nil},
+		{"not a septet", []byte("A\x80B\xff"), []byte("A B "), nil},
+		{"escaped not a septet", []byte("A\x1b\x80B"), []byte("A B"), nil},
 	}
 	testDecoder(t, d, p)
 }
@@ -135,14 +140,49 @@ func TestDecoderWithExtCharset(t *testing.T) {
 }
 
 func TestDecoderStrict(t *testing.T) {
-	set := map[byte]rune{'m': 'M', 'e': 'E', 's': 'S', 'a': 'A', 'g': 'G'}
-	ext := map[byte]rune{'e': 'E', 'x': 'X', 't': 'T'}
+	// the entries at 0x1b and 0x80 are not characters, and are ignored
+	set := map[byte]rune{'m': 'M', 'e': 'E', 's': 'S', 'a': 'A', 'g': 'G', 0x1b: 'Z', 0x80: 'Z'}
+	ext := map[byte]rune{'e': 'E', 'x': 'X', 't': 'T', 0x1b: 'Z', 0x80: 'Z'}
 	d := gsm7.NewDecoder().Strict().WithCharset(set).WithExtCharset(ext)
 	p := []decoderPattern{
 		{"known", []byte("message"), []byte("MESSAGE"), nil},
 		{"ext", []byte("\x1be\x1bx\x1bt"), []byte("EXT"), nil},
-		{"unknown", []byte("mesMsage"), nil, gsm7.ErrInvalidSeptet('M')},
-		{"unknown ext", []byte("mes\x1bmsage"), nil, gsm7.ErrInvalidSeptet('m')},
+		{"unknown", []byte("mesMsage"), nil,
+			gsm7.ErrInvalidSeptet{Offset: 3, Septet: 'M'}},
+		// 'm' is in the character set, but not in the extension set
+		{"unknown ext", []byte("mes\x1bmsage"), nil,
+			gsm7.ErrInvalidSeptet{Offset: 4, Septet: 'm', Escaped: true}},
+		// reserved for another extension table (6.2.1.1 Note 1)
+		{"double escape", []byte("mes\x1b\x1bsage"), nil,
+			gsm7.ErrInvalidSeptet{Offset: 4, Septet: 0x1b, Escaped: true}},
+		{"dangling escape", []byte("message\x1b"), nil,
+			gsm7.ErrInvalidSeptet{Offset: 7, Septet: 0x1b}},
+		{"only escape", []byte("\x1b"), nil,
+			gsm7.ErrInvalidSeptet{Offset: 0, Septet: 0x1b}},
+		{"not a septet", []byte("mes\x80"), nil,
+			gsm7.ErrInvalidSeptet{Offset: 3, Septet: 0x80}},
+		{"escaped not a septet", []byte("mes\x1b\x80"), nil,
+			gsm7.ErrInvalidSeptet{Offset: 4, Septet: 0x80, Escaped: true}},
+	}
+	testDecoder(t, d, p)
+}
+
+// TestDecoderNotStrict decodes, with the tables of TestDecoderStrict, each
+// input a Strict Decoder rejects, applying the receiver rules of 3GPP TS
+// 23.038 V20.0.0 Sections 6.2.1 and 6.2.1.1.
+func TestDecoderNotStrict(t *testing.T) {
+	set := map[byte]rune{'m': 'M', 'e': 'E', 's': 'S', 'a': 'A', 'g': 'G', 0x1b: 'Z', 0x80: 'Z'}
+	ext := map[byte]rune{'e': 'E', 'x': 'X', 't': 'T', 0x1b: 'Z', 0x80: 'Z'}
+	d := gsm7.NewDecoder().WithCharset(set).WithExtCharset(ext)
+	p := []decoderPattern{
+		{"unknown", []byte("mesMsage"), []byte("MES SAGE"), nil},
+		{"unknown ext", []byte("mes\x1bmsage"), []byte("MESMSAGE"), nil},
+		{"unknown ext and set", []byte("mes\x1bMsage"), []byte("MES SAGE"), nil},
+		{"double escape", []byte("mes\x1b\x1bsage"), []byte("MES SAGE"), nil},
+		{"dangling escape", []byte("message\x1b"), []byte("MESSAGE "), nil},
+		{"only escape", []byte("\x1b"), []byte(" "), nil},
+		{"not a septet", []byte("mes\x80"), []byte("MES "), nil},
+		{"escaped not a septet", []byte("mes\x1b\x80"), []byte("MES "), nil},
 	}
 	testDecoder(t, d, p)
 }
@@ -183,15 +223,27 @@ func TestEncoderWithExtCharset(t *testing.T) {
 // It is fragile, as it compares the strings exactly, but its main purpose is
 // to confirm the Error function doesn't recurse, as that is bad.
 func TestErrInvalidSeptet(t *testing.T) {
-	patterns := []byte{0x00, 0xa0, 0x0a, 0x9a, 0xa9, 0xff}
+	patterns := []struct {
+		name string
+		err  gsm7.ErrInvalidSeptet
+		out  string
+	}{
+		{"septet", gsm7.ErrInvalidSeptet{Offset: 3, Septet: 0x4d},
+			"gsm7: invalid septet 0x4d at offset 3"},
+		{"octet", gsm7.ErrInvalidSeptet{Septet: 0xff},
+			"gsm7: invalid septet 0xff at offset 0"},
+		{"escaped", gsm7.ErrInvalidSeptet{Offset: 4, Septet: 0x6d, Escaped: true},
+			"gsm7: invalid septet 0x6d after escape at offset 4"},
+		{"double escape", gsm7.ErrInvalidSeptet{Offset: 4, Septet: 0x1b, Escaped: true},
+			"gsm7: invalid septet 0x1b after escape at offset 4"},
+		{"dangling escape", gsm7.ErrInvalidSeptet{Offset: 7, Septet: 0x1b},
+			"gsm7: escape at offset 7 has no septet after it"},
+	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			err := gsm7.ErrInvalidSeptet(p)
-			expected := fmt.Sprintf("gsm7: invalid septet 0x%02x", int(err))
-			s := err.Error()
-			assert.Equal(t, expected, s)
+			assert.Equal(t, p.out, p.err.Error())
 		}
-		t.Run(fmt.Sprintf("%x", p), f)
+		t.Run(p.name, f)
 	}
 }
 
@@ -311,6 +363,6 @@ func TestWithoutExtCharset(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("iG"), out)
 	out, err = gsm7.Decode([]byte{0x1b, 0x69, 0x1b, 0x47}, gsm7.WithoutExtCharset, gsm7.Strict)
-	assert.Equal(t, gsm7.ErrInvalidSeptet(0x69), err)
+	assert.Equal(t, gsm7.ErrInvalidSeptet{Offset: 1, Septet: 0x69, Escaped: true}, err)
 	assert.Nil(t, out)
 }
