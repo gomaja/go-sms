@@ -408,267 +408,201 @@ func TestUserDataHeaderIEs(t *testing.T) {
 }
 
 type concatTestPattern struct {
-	name     string
-	udh      tpdu.UserDataHeader
-	mref     int
-	segments int
-	seqno    int
-	ok       bool
+	name string
+	udh  tpdu.UserDataHeader
+	ci   tpdu.ConcatInfo
+	ok   bool
+}
+
+var concatTestPatterns = []concatTestPattern{
+	{"empty",
+		tpdu.UserDataHeader{},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"empty data",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"nil data",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: nil},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"concat8",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
+		},
+		tpdu.ConcatInfo{Ref: 3, Total: 2, Seqno: 1},
+		true,
+	},
+	{"id 1",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 1, Data: []byte{3, 2, 1}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"concat16",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 2, 1}},
+		},
+		tpdu.ConcatInfo{Ref: 1027, Ref16Bit: true, Total: 2, Seqno: 1},
+		true,
+	},
+	{"short concat8",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{2, 1}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"short concat16",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 8, Data: []byte{3, 2, 1}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"long concat8",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1, 0}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	// 3GPP TS 23.040 Section 9.2.3.24.1: a total of zero, a sequence number of
+	// zero, or one greater than the total, means the whole IE is ignored.
+	{"concat8 zero total",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 0, 0}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"concat8 zero seqno",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 0}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"concat8 seqno beyond total",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 3}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"concat16 zero total",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 0, 1}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"concat16 zero seqno",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 2, 0}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"concat16 seqno beyond total",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 2, 3}},
+		},
+		tpdu.ConcatInfo{},
+		false,
+	},
+	{"concat8 single",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 1, 1}},
+		},
+		tpdu.ConcatInfo{Ref: 3, Total: 1, Seqno: 1},
+		true,
+	},
+	{"concat8 max",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{0xff, 0xff, 0xff}},
+		},
+		tpdu.ConcatInfo{Ref: 0xff, Total: 0xff, Seqno: 0xff},
+		true,
+	},
+	{"concat16 max",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 8, Data: []byte{0xff, 0xff, 0xff, 0xff}},
+		},
+		tpdu.ConcatInfo{Ref: 0xffff, Ref16Bit: true, Total: 0xff, Seqno: 0xff},
+		true,
+	},
+	// 3GPP TS 23.040 Section 9.2.3.24: of mutually exclusive IEs "the last
+	// occurring IE shall be used".
+	{"concat8 then concat16",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
+			tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 5, 4}},
+		},
+		tpdu.ConcatInfo{Ref: 1027, Ref16Bit: true, Total: 5, Seqno: 4},
+		true,
+	},
+	{"concat16 then concat8",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 5, 4}},
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
+		},
+		tpdu.ConcatInfo{Ref: 3, Total: 2, Seqno: 1},
+		true,
+	},
+	{"duplicate concat8",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
+			tpdu.InformationElement{ID: 0, Data: []byte{7, 4, 3}},
+		},
+		tpdu.ConcatInfo{Ref: 7, Total: 4, Seqno: 3},
+		true,
+	},
+	{"concat8 among other IEs",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0x24, Data: []byte{1}},
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
+			tpdu.InformationElement{ID: 0x25, Data: []byte{1}},
+		},
+		tpdu.ConcatInfo{Ref: 3, Total: 2, Seqno: 1},
+		true,
+	},
+	// An ignored IE is skipped over, so an earlier valid IE still applies.
+	{"concat16 then ignored concat8",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 5, 4}},
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 0, 1}},
+		},
+		tpdu.ConcatInfo{Ref: 1027, Ref16Bit: true, Total: 5, Seqno: 4},
+		true,
+	},
+	{"concat8 then short concat16",
+		tpdu.UserDataHeader{
+			tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
+			tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 5}},
+		},
+		tpdu.ConcatInfo{Ref: 3, Total: 2, Seqno: 1},
+		true,
+	},
 }
 
 func TestConcatInfo(t *testing.T) {
-	patterns := []concatTestPattern{
-		{"empty",
-			tpdu.UserDataHeader{},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"empty data",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"nil data",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: nil},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"concat8",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
-			},
-			3,
-			2,
-			1,
-			true,
-		},
-		{"id 1",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 1, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"concat16",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 2, 1}},
-			},
-			1027,
-			2,
-			1,
-			true,
-		},
-		{"short concat8",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"short concat16",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 8, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-	}
-	for _, p := range patterns {
+	for _, p := range concatTestPatterns {
 		f := func(t *testing.T) {
-			segments, seqno, mref, ok := p.udh.ConcatInfo()
+			ci, ok := p.udh.ConcatInfo()
 			assert.Equal(t, p.ok, ok)
-			assert.Equal(t, p.segments, segments)
-			assert.Equal(t, p.seqno, seqno)
-			assert.Equal(t, p.mref, mref)
+			assert.Equal(t, p.ci, ci)
 		}
 		t.Run(p.name, f)
-	}
-}
-
-func TestConcatInfo8(t *testing.T) {
-	patterns := []concatTestPattern{
-		{"empty",
-			tpdu.UserDataHeader{},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"empty data",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"nil data",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: nil},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"concat8",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
-			},
-			3,
-			2,
-			1,
-			true,
-		},
-		{"id 1",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 1, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"concat16",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"short concat8",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"short concat16",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 8, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-	}
-	for _, p := range patterns {
-		f := func(t *testing.T) {
-			segments, seqno, mref, ok := p.udh.ConcatInfo8()
-			assert.Equal(t, p.ok, ok)
-			assert.Equal(t, p.segments, segments)
-			assert.Equal(t, p.seqno, seqno)
-			assert.Equal(t, p.mref, mref)
-		}
-		t.Run(p.name, f)
-	}
-}
-
-func TestConcatInfo16(t *testing.T) {
-	patterns := []concatTestPattern{
-		{"empty",
-			tpdu.UserDataHeader{},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"empty data",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"nil data",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: nil},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"concat8",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"id 1",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 1, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"concat16",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 2, 1}},
-			},
-			1027,
-			2,
-			1,
-			true,
-		},
-		{"short concat8",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{"short concat16",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 8, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-	}
-	for _, p := range patterns {
-		f := func(t *testing.T) {
-			segments, seqno, mref, ok := p.udh.ConcatInfo16()
-			assert.Equal(t, p.ok, ok)
-			assert.Equal(t, p.segments, segments)
-			assert.Equal(t, p.seqno, seqno)
-			assert.Equal(t, p.mref, mref)
-		}
-		t.Run(p.name, f)
-
 	}
 }
 

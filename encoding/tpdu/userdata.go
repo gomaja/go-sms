@@ -146,52 +146,72 @@ func (udh UserDataHeader) IEs(id byte) []InformationElement {
 	return ies
 }
 
+// ConcatInfo is the segmentation information carried by a Concatenated short
+// messages IE, as defined in 3GPP TS 23.040 Sections 9.2.3.24.1 (8-bit
+// reference number) and 9.2.3.24.8 (16-bit reference number).
+type ConcatInfo struct {
+	// Ref is the concatenated short message reference number.
+	Ref int
+
+	// Ref16Bit indicates that Ref is a 16-bit reference number, from an IE
+	// with IEIConcat16Bit, rather than an 8-bit one, from an IE with
+	// IEIConcat8Bit.
+	//
+	// An 8-bit and a 16-bit reference number with the same value identify
+	// different concatenated short messages.
+	Ref16Bit bool
+
+	// Total is the number of short messages in the concatenated short
+	// message.
+	Total int
+
+	// Seqno is the sequence number of the short message within the
+	// concatenated short message, from 1 to Total.
+	Seqno int
+}
+
 // ConcatInfo extracts the segmentation info contained in the provided User
 // Data Header.
 //
-// If the UDH contains no segmentation information then ok is false and zero
-// values are returned.
-// The returned values do not distinguish between 8bit and 16bit message
-// reference numbers.
-func (udh UserDataHeader) ConcatInfo() (segments, seqno, mref int, ok bool) {
-	if len(udh) == 0 {
-		// single segment - most likely case
-		return
+// If the UDH contains no valid concatenation IE then ok is false and a zero
+// ConcatInfo is returned.
+//
+// A concatenation IE with a total of zero, or a sequence number of zero or
+// greater than the total, is ignored, as required by 3GPP TS 23.040 Sections
+// 9.2.3.24.1 and 9.2.3.24.8, as is one with the wrong length. Ignoring an IE
+// means skipping over it, so of the remaining 8-bit and 16-bit concatenation
+// IEs, which are mutually exclusive, the last occurring one is used, as
+// required by 3GPP TS 23.040 Section 9.2.3.24.
+func (udh UserDataHeader) ConcatInfo() (ci ConcatInfo, ok bool) {
+	for i := len(udh) - 1; i >= 0; i-- {
+		if ci, ok = udh[i].concatInfo(); ok {
+			return ci, ok
+		}
 	}
-	if segments, seqno, mref, ok = udh.ConcatInfo8(); ok {
-		return
-	}
-	return udh.ConcatInfo16()
+	return ConcatInfo{}, false
 }
 
-// ConcatInfo8 extracts the segmentation info contained in the provided User
-// Data Header, for the 8bit message reference case.
-//
-// If the UDH contains no segmentation information then ok is false and zero
-// values are returned.
-func (udh UserDataHeader) ConcatInfo8() (segments, seqno, mref int, ok bool) {
-	if c, k := udh.IE(IEIConcat8Bit); k && len(c.Data) == 3 {
-		ok = true
-		mref = int(c.Data[0])
-		segments = int(c.Data[1])
-		seqno = int(c.Data[2])
+// concatInfo returns the segmentation info carried by the IE, if it is a valid
+// concatenation IE.
+func (ie InformationElement) concatInfo() (ConcatInfo, bool) {
+	var ci ConcatInfo
+	switch {
+	case ie.ID == IEIConcat8Bit && len(ie.Data) == 3:
+		ci.Ref = int(ie.Data[0])
+		ci.Total = int(ie.Data[1])
+		ci.Seqno = int(ie.Data[2])
+	case ie.ID == IEIConcat16Bit && len(ie.Data) == 4:
+		ci.Ref = int(binary.BigEndian.Uint16(ie.Data[0:2]))
+		ci.Ref16Bit = true
+		ci.Total = int(ie.Data[2])
+		ci.Seqno = int(ie.Data[3])
+	default:
+		return ConcatInfo{}, false
 	}
-	return
-}
-
-// ConcatInfo16 extracts the segmentation info contained in the provided User
-// Data Header, for the 16bit message reference case.
-//
-// If the UDH contains no segmentation information then ok is false and zero
-// values are returned.
-func (udh UserDataHeader) ConcatInfo16() (segments, seqno, mref int, ok bool) {
-	if c, k := udh.IE(IEIConcat16Bit); k && len(c.Data) == 4 {
-		ok = true
-		mref = int(binary.BigEndian.Uint16(c.Data[0:2]))
-		segments = int(c.Data[2])
-		seqno = int(c.Data[3])
+	if ci.Total == 0 || ci.Seqno == 0 || ci.Seqno > ci.Total {
+		return ConcatInfo{}, false
 	}
-	return
+	return ci, true
 }
 
 type udDecodeConfig struct {

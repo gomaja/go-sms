@@ -369,6 +369,8 @@ func TestCollectorCollect(t *testing.T) {
 			},
 			nil,
 		},
+		// A concatenation IE with an invalid sequence number is ignored (3GPP
+		// TS 23.040 Section 9.2.3.24.1), so the SM is delivered on its own.
 		{
 			"zero seqno",
 			tpdu.TPDU{
@@ -377,8 +379,15 @@ func TestCollectorCollect(t *testing.T) {
 					tpdu.InformationElement{ID: 0, Data: []byte{7, 2, 0}},
 				},
 			},
+			[]*tpdu.TPDU{
+				{
+					OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{7, 2, 0}},
+					},
+				},
+			},
 			nil,
-			sms.ErrReassemblyInconsistency,
 		},
 		{
 			"large seqno",
@@ -388,8 +397,105 @@ func TestCollectorCollect(t *testing.T) {
 					tpdu.InformationElement{ID: 0, Data: []byte{8, 2, 3}},
 				},
 			},
+			[]*tpdu.TPDU{
+				{
+					OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{8, 2, 3}},
+					},
+				},
+			},
 			nil,
-			sms.ErrReassemblyInconsistency,
+		},
+		{
+			"zero total",
+			tpdu.TPDU{
+				OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+				UDH: tpdu.UserDataHeader{
+					tpdu.InformationElement{ID: 8, Data: []byte{0, 8, 0, 1}},
+				},
+			},
+			[]*tpdu.TPDU{
+				{
+					OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{0, 8, 0, 1}},
+					},
+				},
+			},
+			nil,
+		},
+		// An 8-bit reference 9 and a 16-bit reference 9 identify different
+		// concatenated messages.
+		{
+			"deliver 8bit ref a",
+			tpdu.TPDU{
+				OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+				UDH: tpdu.UserDataHeader{
+					tpdu.InformationElement{ID: 0, Data: []byte{9, 2, 1}},
+				},
+			},
+			nil,
+			nil,
+		},
+		{
+			"deliver 16bit ref b",
+			tpdu.TPDU{
+				OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+				UDH: tpdu.UserDataHeader{
+					tpdu.InformationElement{ID: 8, Data: []byte{0, 9, 2, 2}},
+				},
+			},
+			nil,
+			nil,
+		},
+		{
+			"deliver 8bit ref b",
+			tpdu.TPDU{
+				OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+				UDH: tpdu.UserDataHeader{
+					tpdu.InformationElement{ID: 0, Data: []byte{9, 2, 2}},
+				},
+			},
+			[]*tpdu.TPDU{
+				{
+					OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{9, 2, 1}},
+					},
+				},
+				{
+					OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{9, 2, 2}},
+					},
+				},
+			},
+			nil,
+		},
+		{
+			"deliver 16bit ref a",
+			tpdu.TPDU{
+				OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+				UDH: tpdu.UserDataHeader{
+					tpdu.InformationElement{ID: 8, Data: []byte{0, 9, 2, 1}},
+				},
+			},
+			[]*tpdu.TPDU{
+				{
+					OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{0, 9, 2, 1}},
+					},
+				},
+				{
+					OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{0, 9, 2, 2}},
+					},
+				},
+			},
+			nil,
 		},
 		{
 			"deliverreport concat",
@@ -497,8 +603,8 @@ func TestCollectorReassemblyTimeout(t *testing.T) {
 			c := sms.NewCollector(sms.WithReassemblyTimeout(time.Millisecond, exph))
 			pexp := make([]*tpdu.TPDU, len(p.in)+1)
 			for i, s := range p.in {
-				_, seqno, _, _ := s.ConcatInfo()
-				pexp[seqno-1] = &p.in[i]
+				ci, _ := s.ConcatInfo()
+				pexp[ci.Seqno-1] = &p.in[i]
 				m, err := c.Collect(s)
 				assert.Nil(t, err)
 				assert.Nil(t, m)

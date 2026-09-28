@@ -329,6 +329,73 @@ func TestIsCompleteMessage(t *testing.T) {
 			},
 			true,
 		},
+		// ignored concatenation IEs (3GPP TS 23.040 Section 9.2.3.24.1)
+		{
+			"zero total",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{3, 0, 1}},
+					},
+				},
+			},
+			true,
+		},
+		{
+			"zero seqno",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{3, 1, 0}},
+					},
+				},
+			},
+			true,
+		},
+		{
+			"seqno beyond total",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{0, 3, 1, 2}},
+					},
+				},
+			},
+			true,
+		},
+		{
+			"reference size mismatch",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
+					},
+				},
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{0, 3, 2, 2}},
+					},
+				},
+			},
+			false,
+		},
+		{
+			"last concat IE used",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 2}},
+						tpdu.InformationElement{ID: 8, Data: []byte{1, 3, 2, 1}},
+					},
+				},
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{1, 3, 2, 2}},
+					},
+				},
+			},
+			true,
+		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {

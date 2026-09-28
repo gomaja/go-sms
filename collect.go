@@ -96,15 +96,16 @@ func (c *Collector) Collect(pdu tpdu.TPDU) (d []*tpdu.TPDU, err error) {
 	if c.closed {
 		return nil, ErrClosed
 	}
-	segments, seqno, concatRef, ok := pdu.ConcatInfo()
-	if !ok || segments < 2 {
+	ci, ok := pdu.ConcatInfo()
+	if !ok || ci.Total < 2 {
 		// short circuit single segment - no need for a pipe
 		return []*tpdu.TPDU{&pdu}, nil
 	}
+	segments, seqno := ci.Total, ci.Seqno
 	if seqno < 1 || seqno > segments {
 		return nil, ErrReassemblyInconsistency
 	}
-	key, err := pduKey(pdu, segments, concatRef)
+	key, err := pduKey(pdu, ci)
 	p, ok := c.pipes[key]
 	if ok {
 		if p.segments[seqno-1] != nil {
@@ -142,24 +143,29 @@ func (c *Collector) Collect(pdu tpdu.TPDU) (d []*tpdu.TPDU, err error) {
 	return nil, err
 }
 
-func pduKey(pdu tpdu.TPDU, segments, concatRef int) (string, error) {
+func pduKey(pdu tpdu.TPDU, ci tpdu.ConcatInfo) (string, error) {
 	st := pdu.SmsType()
+	// 8-bit and 16-bit references with the same value are distinct.
+	concatRef := fmt.Sprintf("%d", ci.Ref)
+	if ci.Ref16Bit {
+		concatRef += "/16"
+	}
 	var key string
 	switch st {
 	case tpdu.SmsSubmit:
-		key = fmt.Sprintf("%d:%02x:%s:%d:%d",
+		key = fmt.Sprintf("%d:%02x:%s:%s:%d",
 			st,
 			pdu.DA.TOA,
 			pdu.DA.Addr,
 			concatRef,
-			segments)
+			ci.Total)
 	case tpdu.SmsDeliver:
-		key = fmt.Sprintf("%d:%02x:%s:%d:%d",
+		key = fmt.Sprintf("%d:%02x:%s:%s:%d",
 			st,
 			pdu.OA.TOA,
 			pdu.OA.Addr,
 			concatRef,
-			segments)
+			ci.Total)
 	default:
 		return "", tpdu.ErrUnsupportedSmsType(st)
 	}

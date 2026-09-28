@@ -141,14 +141,14 @@ func (t *TPDU) Alphabet() Alphabet {
 
 // ConcatInfo extracts the segmentation info contained in the provided User
 // Data Header.
-func (t *TPDU) ConcatInfo() (segments, seqno, mref int, ok bool) {
+func (t *TPDU) ConcatInfo() (ConcatInfo, bool) {
 	return t.UDH.ConcatInfo()
 }
 
 // IsSingleSegment returns true unless the TPDU is part of a multi-part
 // message.
 func (t *TPDU) IsSingleSegment() bool {
-	_, _, _, ok := t.ConcatInfo()
+	_, ok := t.ConcatInfo()
 	return !ok
 }
 

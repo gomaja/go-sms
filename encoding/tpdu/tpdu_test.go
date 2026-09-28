@@ -94,96 +94,15 @@ func TestAlphabet(t *testing.T) {
 }
 
 func TestConcat(t *testing.T) {
-	patterns := []concatTestPattern{
-		{
-			"empty",
-			tpdu.UserDataHeader{},
-			0,
-			0,
-			0,
-			false,
-		},
-		{
-			"empty data",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{
-			"nil data",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: nil},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{
-			"concat8",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
-			},
-			3,
-			2,
-			1,
-			true,
-		},
-		{
-			"id 1",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 1, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{
-			"concat16",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 8, Data: []byte{4, 3, 2, 1}},
-			},
-			1027,
-			2,
-			1,
-			true,
-		},
-		{
-			"short concat8",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 0, Data: []byte{2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-		{
-			"short concat16",
-			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 8, Data: []byte{3, 2, 1}},
-			},
-			0,
-			0,
-			0,
-			false,
-		},
-	}
-	for _, p := range patterns {
+	for _, p := range concatTestPatterns {
 		f := func(t *testing.T) {
 			s, err := tpdu.New(tpdu.WithUDH(p.udh))
 			require.Nil(t, err)
 			require.NotNil(t, s)
-			segments, seqno, mref, ok := s.ConcatInfo()
+			ci, ok := s.ConcatInfo()
 			assert.Equal(t, p.ok, ok)
-			assert.Equal(t, p.segments, segments)
-			assert.Equal(t, p.seqno, seqno)
-			assert.Equal(t, p.mref, mref)
+			assert.Equal(t, p.ci, ci)
+			assert.Equal(t, !p.ok, s.IsSingleSegment())
 		}
 		t.Run(p.name, f)
 	}
