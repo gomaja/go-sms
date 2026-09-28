@@ -197,9 +197,56 @@ func TestEncode(t *testing.T) {
 		{"base", []byte("message"), []byte("message"), nil},
 		{"ext", []byte("{}"), []byte("\x1b\x28\x1b\x29"), nil},
 		{"escaped", []byte("mes|sage"), []byte("mes\x1b\x40sage"), nil},
-		{"invalid", []byte("mesŞsage"), nil, gsm7.ErrInvalidUTF8('Ş')},
+		{"unencodable", []byte("mesŞsage"), nil, gsm7.ErrUnencodable{Offset: 3, Rune: 'Ş'}},
+		// valid UTF-8 that the default tables do not have
+		{"cyrillic", []byte("Привет"), nil, gsm7.ErrUnencodable{Offset: 0, Rune: 'П'}},
+		// the offset counts bytes, not characters or septets: Ä is 2 bytes
+		// and 1 septet, € is 3 bytes and 2 septets
+		{"offset in bytes", []byte("Ä€Ş"), nil, gsm7.ErrUnencodable{Offset: 5, Rune: 'Ş'}},
+		// U+FFFD is a character, which the default tables do not have
+		{"replacement character", []byte("ab\uFFFD"), nil, gsm7.ErrUnencodable{Offset: 2, Rune: 0xfffd}},
+		{"not utf8", []byte("ab\xff"), nil, gsm7.ErrInvalidUTF8{Offset: 2, Byte: 0xff}},
+		{"continuation byte", []byte("a\x80"), nil, gsm7.ErrInvalidUTF8{Offset: 1, Byte: 0x80}},
+		{"truncated", []byte("a€"[:3]), nil, gsm7.ErrInvalidUTF8{Offset: 1, Byte: 0xe2}},
+		{"overlong", []byte("{\xc0\xaf"), nil, gsm7.ErrInvalidUTF8{Offset: 1, Byte: 0xc0}},
+		{"surrogate", []byte("Ä\xed\xa0\x80"), nil, gsm7.ErrInvalidUTF8{Offset: 2, Byte: 0xed}},
+		{"above U+10FFFF", []byte("a\xf4\x90\x80\x80"), nil, gsm7.ErrInvalidUTF8{Offset: 1, Byte: 0xf4}},
+		// the first error in src is the one returned
+		{"unencodable first", []byte("aŞ\xff"), nil, gsm7.ErrUnencodable{Offset: 1, Rune: 'Ş'}},
+		{"invalid first", []byte("a\xffŞ"), nil, gsm7.ErrInvalidUTF8{Offset: 1, Byte: 0xff}},
 	}
 	testEncoder(t, e, p)
+}
+
+// TestEncodeReplacementCharacter checks that an invalid byte is not encoded
+// as the replacement character U+FFFD, even with tables that have a septet
+// for U+FFFD, while a U+FFFD in the source is.
+func TestEncodeReplacementCharacter(t *testing.T) {
+	set := map[rune]byte{'a': 0x61, 0xfffd: 0x3f}
+	ext := map[rune]byte{'b': 0x62, 0xfffd: 0x3f}
+	patterns := []struct {
+		name string
+		e    gsm7.Encoder
+		out  []byte // of "a\uFFFD"
+	}{
+		{"set", gsm7.NewEncoder().WithCharset(set), []byte{0x61, 0x3f}},
+		{"set and ext", gsm7.NewEncoder().WithCharset(set).WithExtCharset(ext), []byte{0x61, 0x3f}},
+		{"ext", gsm7.NewEncoder().WithCharset(map[rune]byte{'a': 0x61}).WithExtCharset(ext),
+			[]byte{0x61, 0x1b, 0x3f}},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			out, err := p.e.Encode([]byte("a\uFFFD"))
+			assert.NoError(t, err)
+			assert.Equal(t, p.out, out)
+			// an invalid byte, a truncated U+FFFD and a surrogate half
+			for _, in := range []string{"a\xff", "a\xef\xbf", "a\xed\xbf\xbf"} {
+				out, err = p.e.Encode([]byte(in))
+				assert.Equal(t, gsm7.ErrInvalidUTF8{Offset: 1, Byte: in[1]}, err, "%q", in)
+				assert.Nil(t, out, "%q", in)
+			}
+		})
+	}
 }
 
 func TestEncoderWithCharset(t *testing.T) {
@@ -255,23 +302,44 @@ func TestErrInvalidSeptet(t *testing.T) {
 // to confirm the Error function doesn't recurse, as that is bad.
 func TestErrInvalidUTF8(t *testing.T) {
 	patterns := []struct {
-		r   rune
+		err gsm7.ErrInvalidUTF8
 		out string
 	}{
-		{0x00, `gsm7: invalid utf8 '\x00' (U+0000)`},
-		{0x0a, `gsm7: invalid utf8 '\n' (U+000A)`},
-		// control characters are escaped, so none reaches a log or terminal
-		{0x1b, `gsm7: invalid utf8 '\x1b' (U+001B)`},
-		{0x9a, `gsm7: invalid utf8 '\u009a' (U+009A)`},
-		{0xa9, `gsm7: invalid utf8 '©' (U+00A9)`},
-		{0xff, `gsm7: invalid utf8 'ÿ' (U+00FF)`},
-		{'€', `gsm7: invalid utf8 '€' (U+20AC)`},
+		{gsm7.ErrInvalidUTF8{}, "gsm7: invalid UTF-8 byte 0x00 at offset 0"},
+		{gsm7.ErrInvalidUTF8{Offset: 2, Byte: 0xff}, "gsm7: invalid UTF-8 byte 0xff at offset 2"},
+		{gsm7.ErrInvalidUTF8{Offset: 17, Byte: 0x80}, "gsm7: invalid UTF-8 byte 0x80 at offset 17"},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			assert.Equal(t, p.out, gsm7.ErrInvalidUTF8(p.r).Error())
+			assert.Equal(t, p.out, p.err.Error())
 		}
-		t.Run(fmt.Sprintf("%x", p.r), f)
+		t.Run(p.out, f)
+	}
+}
+
+// TestErrUnencodable tests that the errors can be stringified.
+// It is fragile, as it compares the strings exactly, but its main purpose is
+// to confirm the Error function doesn't recurse, as that is bad.
+func TestErrUnencodable(t *testing.T) {
+	patterns := []struct {
+		err gsm7.ErrUnencodable
+		out string
+	}{
+		{gsm7.ErrUnencodable{Rune: 0x00}, `gsm7: '\x00' (U+0000) at offset 0 has no GSM7 encoding`},
+		{gsm7.ErrUnencodable{Offset: 1, Rune: 0x0a}, `gsm7: '\n' (U+000A) at offset 1 has no GSM7 encoding`},
+		// control characters are escaped, so none reaches a log or terminal
+		{gsm7.ErrUnencodable{Offset: 2, Rune: 0x1b}, `gsm7: '\x1b' (U+001B) at offset 2 has no GSM7 encoding`},
+		{gsm7.ErrUnencodable{Offset: 3, Rune: 0x9a}, `gsm7: '\u009a' (U+009A) at offset 3 has no GSM7 encoding`},
+		{gsm7.ErrUnencodable{Offset: 4, Rune: 0xa9}, `gsm7: '©' (U+00A9) at offset 4 has no GSM7 encoding`},
+		{gsm7.ErrUnencodable{Offset: 5, Rune: 0xff}, `gsm7: 'ÿ' (U+00FF) at offset 5 has no GSM7 encoding`},
+		{gsm7.ErrUnencodable{Offset: 6, Rune: 'П'}, `gsm7: 'П' (U+041F) at offset 6 has no GSM7 encoding`},
+		{gsm7.ErrUnencodable{Offset: 7, Rune: 0xfffd}, "gsm7: '\uFFFD' (U+FFFD) at offset 7 has no GSM7 encoding"},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			assert.Equal(t, p.out, p.err.Error())
+		}
+		t.Run(fmt.Sprintf("%x", p.err.Rune), f)
 	}
 }
 
@@ -302,7 +370,8 @@ func TestEncodeEscape(t *testing.T) {
 		for ext := charset.Default; ext < charset.End; ext++ {
 			for _, in := range []string{"\x1b", "\x1be", "a\x1b", "\x1b<"} {
 				out, err := gsm7.Encode([]byte(in), gsm7.WithCharset(set), gsm7.WithExtCharset(ext))
-				assert.Equal(t, gsm7.ErrInvalidUTF8(0x1b), err, "set=%d ext=%d %q", set, ext, in)
+				want := gsm7.ErrUnencodable{Offset: strings.IndexByte(in, 0x1b), Rune: 0x1b}
+				assert.Equal(t, want, err, "set=%d ext=%d %q", set, ext, in)
 				assert.Nil(t, out, "set=%d ext=%d %q", set, ext, in)
 			}
 		}
@@ -316,7 +385,7 @@ func TestEncodeInvalidTableEntry(t *testing.T) {
 		bad := map[rune]byte{'x': g}
 		e := gsm7.NewEncoder().WithCharset(bad).WithExtCharset(bad)
 		out, err := e.Encode([]byte("x"))
-		assert.Equal(t, gsm7.ErrInvalidUTF8('x'), err, "%#x", g)
+		assert.Equal(t, gsm7.ErrUnencodable{Rune: 'x'}, err, "%#x", g)
 		assert.Nil(t, out, "%#x", g)
 		// a bad locking entry falls back to a good extension entry
 		e = gsm7.NewEncoder().WithCharset(bad).WithExtCharset(map[rune]byte{'x': 0x40})
@@ -353,9 +422,9 @@ func TestDecodeEscapedCR(t *testing.T) {
 func TestTeluguEuro(t *testing.T) {
 	telugu := []gsm7.EncoderOption{gsm7.WithCharset(charset.Telugu), gsm7.WithExtCharset(charset.Telugu)}
 	_, err := gsm7.Encode([]byte("€"), telugu...)
-	assert.Equal(t, gsm7.ErrInvalidUTF8('€'), err)
+	assert.Equal(t, gsm7.ErrUnencodable{Rune: '€'}, err)
 	_, err = gsm7.Encode([]byte("€"), gsm7.WithExtCharset(charset.Telugu))
-	assert.Equal(t, gsm7.ErrInvalidUTF8('€'), err)
+	assert.Equal(t, gsm7.ErrUnencodable{Rune: '€'}, err)
 	// the default extension table still has € at 0x65
 	out, err := gsm7.Encode([]byte("€"), gsm7.WithCharset(charset.Telugu))
 	assert.NoError(t, err)
@@ -417,7 +486,7 @@ func TestHindi(t *testing.T) {
 	}
 	// the Bengali signs at the same code points are not in the Hindi table
 	_, err := gsm7.Encode([]byte("\u0981"), gsm7.WithCharset(charset.Hindi))
-	assert.Equal(t, gsm7.ErrInvalidUTF8('\u0981'), err)
+	assert.Equal(t, gsm7.ErrUnencodable{Rune: '\u0981'}, err)
 }
 
 func TestWithoutExtCharset(t *testing.T) {
@@ -461,9 +530,9 @@ func tableText(nli int) string {
 }
 
 // FuzzEncode encodes text with every combination of locking and single
-// shift tables. Encoding must fail on the first character neither table
-// has, and otherwise produce septets that a Strict Decoder turns back into
-// the text.
+// shift tables. Encoding must fail on the first byte that is not valid UTF-8
+// or the first character neither table has, whichever comes first, and
+// otherwise produce septets that a Strict Decoder turns back into the text.
 func FuzzEncode(f *testing.F) {
 	for nli := charset.Default; nli < charset.End; nli++ {
 		f.Add(tableText(nli), uint8(nli), uint8(nli))
@@ -471,18 +540,29 @@ func FuzzEncode(f *testing.F) {
 	}
 	f.Add("hello {€} \x1be \r\n", uint8(0), uint8(0))
 	f.Add("\xff\xfe", uint8(0), uint8(0))
+	f.Add("a\uFFFDb\xef\xbf", uint8(0), uint8(0))
+	f.Add("Ä€\xed\xa0\x80Привет", uint8(0), uint8(0))
 	f.Fuzz(func(t *testing.T, s string, set, ext uint8) {
 		ls, ss := int(set)%charset.End, int(ext)%charset.End
 		out, err := gsm7.Encode([]byte(s), gsm7.WithCharset(ls), gsm7.WithExtCharset(ss))
-		for _, r := range s {
+		for i, r := range s {
+			var want error
 			_, inSet := lockingEncoders[ls][r]
 			_, inExt := shiftEncoders[ss][r]
-			if !inSet && !inExt {
-				if err != gsm7.ErrInvalidUTF8(r) || out != nil {
-					t.Fatalf("set %d ext %d encode %q: got % x, %v, want %v", ls, ss, s, out, err, gsm7.ErrInvalidUTF8(r))
-				}
-				return
+			switch {
+			// ranging over a string yields U+FFFD, with a width of one
+			// byte, for a byte that is not valid UTF-8
+			case r == utf8.RuneError && !strings.HasPrefix(s[i:], "\uFFFD"):
+				want = gsm7.ErrInvalidUTF8{Offset: i, Byte: s[i]}
+			case !inSet && !inExt:
+				want = gsm7.ErrUnencodable{Offset: i, Rune: r}
+			default:
+				continue
 			}
+			if err != want || out != nil {
+				t.Fatalf("set %d ext %d encode %q: got % x, %v, want %v", ls, ss, s, out, err, want)
+			}
+			return
 		}
 		if err != nil {
 			t.Fatalf("set %d ext %d encode %q: %v", ls, ss, s, err)

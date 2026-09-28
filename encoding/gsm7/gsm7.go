@@ -105,10 +105,10 @@ func Decode(src []byte, options ...DecoderOption) ([]byte, error) {
 	return d.Decode(src)
 }
 
-// Encode converts the src from UTF-8 to GSM7 and writes the result to dst.
+// Encode converts the src from UTF-8 to unpacked GSM7.
 //
-// The return value includes the encoded GSM7 bytes, and any error that
-// occurred during encoding.
+// It is the same as NewEncoder(options...).Encode(src). See Encoder.Encode
+// for the errors it returns.
 func Encode(src []byte, options ...EncoderOption) ([]byte, error) {
 	e := NewEncoder(options...)
 	return e.Encode(src)
@@ -279,10 +279,21 @@ func (d Decoder) Strict() Decoder {
 	return d
 }
 
-// Encode converts the src from UTF-8 to GSM7 and writes the result to dst.
+// Encode converts the src from UTF-8 to unpacked GSM7.
 //
-// The return value includes the encoded GSM7 bytes, and any error that
-// occurred during encoding.
+// Each character is encoded as its septet in the character set or, if the
+// character set has no septet for it, as the escape 0x1B followed by its
+// septet in the extension character set.
+//
+// Encode stops at the first of these errors, and returns no septets:
+//
+//   - ErrInvalidUTF8, with its offset, for a byte of src that does not begin
+//     a valid UTF-8 sequence;
+//   - ErrUnencodable, with the character and its offset, for a character that
+//     neither the character set nor the extension character set has.
+//
+// An invalid byte is never read as the replacement character U+FFFD, so it
+// is reported even by an Encoder whose tables have a septet for U+FFFD.
 //
 // A table entry that maps a rune to the escape septet 0x1B, or to a value
 // above 0x7F, is treated as absent, as neither is a character (3GPP TS 23.038
@@ -292,18 +303,19 @@ func (e *Encoder) Encode(src []byte) ([]byte, error) {
 		return nil, nil
 	}
 	dst := make([]byte, 0, len(src))
-	for _, u := range string(src) {
-		g, ok := e.set[u]
-		if ok && isCharacter(g) {
+	for i := 0; i < len(src); {
+		u, n := utf8.DecodeRune(src[i:])
+		if u == utf8.RuneError && n == 1 {
+			return nil, ErrInvalidUTF8{Offset: i, Byte: src[i]}
+		}
+		if g, ok := e.set[u]; ok && isCharacter(g) {
 			dst = append(dst, g)
-			continue
-		}
-		g, ok = e.ext[u]
-		if ok && isCharacter(g) {
+		} else if g, ok := e.ext[u]; ok && isCharacter(g) {
 			dst = append(dst, esc, g)
-			continue
+		} else {
+			return nil, ErrUnencodable{Offset: i, Rune: u}
 		}
-		return nil, ErrInvalidUTF8(u)
+		i += n
 	}
 	return dst, nil
 }
@@ -351,9 +363,32 @@ func (e ErrInvalidSeptet) Error() string {
 	}
 }
 
-// ErrInvalidUTF8 indicates a rune cannot be converted to GSM7.
-type ErrInvalidUTF8 rune
+// ErrInvalidUTF8 indicates that the source of an Encoder is not valid UTF-8
+// (RFC 3629 Section 3): Byte does not begin a valid UTF-8 sequence. It is a
+// byte that cannot begin a sequence, or it begins one that is truncated, that
+// is longer than its character needs, or that encodes a surrogate half
+// (U+D800 to U+DFFF) or a value above U+10FFFF.
+type ErrInvalidUTF8 struct {
+	// Offset is the index of Byte in the source.
+	Offset int
+	// Byte is the first byte that does not begin a valid UTF-8 sequence.
+	Byte byte
+}
 
 func (e ErrInvalidUTF8) Error() string {
-	return fmt.Sprintf("gsm7: invalid utf8 %q (%U)", rune(e), rune(e))
+	return fmt.Sprintf("gsm7: invalid UTF-8 byte 0x%02x at offset %d", e.Byte, e.Offset)
+}
+
+// ErrUnencodable indicates a character that has no GSM7 encoding with the
+// tables of the Encoder: neither its character set nor its extension
+// character set has a septet for it.
+type ErrUnencodable struct {
+	// Offset is the index in the source of the first byte of Rune.
+	Offset int
+	// Rune is the character that cannot be encoded.
+	Rune rune
+}
+
+func (e ErrUnencodable) Error() string {
+	return fmt.Sprintf("gsm7: %q (%U) at offset %d has no GSM7 encoding", e.Rune, e.Rune, e.Offset)
 }

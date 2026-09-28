@@ -110,18 +110,18 @@ func TestAddressMarshalBinary(t *testing.T) {
 		{"invalid alpha euro",
 			tpdu.Address{Addr: "a euro €32", TOA: 0xd1},
 			nil,
-			tpdu.NewEncodeError("addr", gsm7.ErrInvalidUTF8('€')),
+			tpdu.NewEncodeError("addr", gsm7.ErrUnencodable{Offset: 7, Rune: '€'}),
 		},
 		{"invalid alpha bar",
 			tpdu.Address{Addr: "a bar | ", TOA: 0xd1},
 			nil,
-			tpdu.NewEncodeError("addr", gsm7.ErrInvalidUTF8('|')),
+			tpdu.NewEncodeError("addr", gsm7.ErrUnencodable{Offset: 6, Rune: '|'}),
 		},
 		// test characters not available in the default character set at all.
 		{"invalid alpha",
 			tpdu.Address{Addr: "mes⌘sages", TOA: 0xd1},
 			nil,
-			tpdu.NewEncodeError("addr", gsm7.ErrInvalidUTF8('⌘')),
+			tpdu.NewEncodeError("addr", gsm7.ErrUnencodable{Offset: 3, Rune: '⌘'}),
 		},
 	}
 	for _, p := range patterns {
