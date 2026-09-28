@@ -38,10 +38,22 @@ func FromNumber(number string) AddressOption {
 	}
 }
 
+// maxAddressLength is the maximum Address-Length, in semi-octets.
+//
+// 3GPP TS 23.040 Section 9.1.2.5: "The maximum length of the full address
+// field (Address-Length, Type-of-Address and Address-Value) is 12 octets", so
+// the Address-Value is at most 10 octets, which holds 20 digits or 11
+// alphanumeric characters.
+const maxAddressLength = 20
+
 // MarshalBinary marshals an Address into binary.
 //
 // It returns the marshalled address and any error detected
 // while marshalling.
+// An address longer than 20 digits, or 11 alphanumeric characters, cannot be
+// encoded and results in an ErrOverlength error.
+// The TOA is encoded as is, so an empty Address encodes to a zero length
+// address with a zero TOA.
 func (a *Address) MarshalBinary() (dst []byte, err error) {
 	ton := a.TypeOfNumber()
 	var addr []byte
@@ -54,11 +66,17 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 			return nil, EncodeError("addr", err)
 		}
 		l = (len(addr)*7 + 3) / 4
+		if l > maxAddressLength {
+			return nil, EncodeError("addr", ErrOverlength)
+		}
 		addr, err = gsm7.Pack7Bit(addr, 0)
 		if err != nil {
 			return nil, EncodeError("addr", err)
 		}
 	default:
+		if len(a.Addr) > maxAddressLength {
+			return nil, EncodeError("addr", ErrOverlength)
+		}
 		addr, err = semioctet.Encode([]byte(a.Addr))
 		if err != nil {
 			return nil, EncodeError("addr", err)
@@ -75,11 +93,16 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 //
 // It returns the number of bytes read from the source, and any error detected
 // while unmarshalling.
+// An Address-Length greater than 20 exceeds the maximum length of the address
+// field and results in an ErrOverlength error.
 func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 	if len(src) < 2 {
 		return 0, NewDecodeError("addr", 0, ErrUnderflow)
 	}
-	l := int(src[0])  // len is semi-octets and ignores toa
+	l := int(src[0]) // len is semi-octets and ignores toa
+	if l > maxAddressLength {
+		return 0, NewDecodeError("addr", 0, ErrOverlength)
+	}
 	ol := (l + 1) / 2 // octet length
 	toa := src[1]
 	ton := TypeOfNumber((toa >> 4) & 0x07)
