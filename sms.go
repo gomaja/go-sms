@@ -80,7 +80,12 @@ func Decode(segments []*tpdu.TPDU, options ...DecodeOption) ([]byte, error) {
 // IsCompleteMessage confirms that the TPDUs contain all the segments required
 // to reassemble a complete message and are in the correct order.
 //
-// It returns false if any segment is nil.
+// It returns false if any segment is nil, or if the segments differ in type
+// or address, as the reference number only identifies a message "together
+// with the originating address and Service Centre address" (3GPP TS 23.040
+// Section 9.2.3.24.1). For an SMS-SUBMIT the originator is not in the TPDU,
+// so the caller must ensure the segments come from one originator, as the
+// Collector does with WithOriginator.
 func IsCompleteMessage(segments []*tpdu.TPDU) bool {
 	if len(segments) == 0 || slices.Contains(segments, nil) {
 		return false
@@ -92,7 +97,11 @@ func IsCompleteMessage(segments []*tpdu.TPDU) bool {
 	if base.Total != len(segments) {
 		return false
 	}
+	first := segments[0]
 	for i, s := range segments {
+		if s.SmsType() != first.SmsType() || s.OA != first.OA || s.DA != first.DA {
+			return false
+		}
 		ci, ok := s.ConcatInfo()
 		if !ok {
 			return false

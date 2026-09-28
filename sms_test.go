@@ -409,6 +409,70 @@ func TestIsCompleteMessage(t *testing.T) {
 			},
 			false,
 		},
+		// 3GPP TS 23.040 Section 9.2.3.24.1: the reference "together with the
+		// originating address and Service Centre address" identifies the
+		// message, so segments of different senders, recipients or types
+		// never form one message.
+		{
+			"originator mismatch",
+			[]*tpdu.TPDU{
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("111")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("222")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			false,
+		},
+		{
+			"destination mismatch",
+			[]*tpdu.TPDU{
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					DA:         tpdu.NewAddress(tpdu.FromNumber("111")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					DA:         tpdu.NewAddress(tpdu.FromNumber("222")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			false,
+		},
+		{
+			"type mismatch",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			false,
+		},
+		{
+			"same originator",
+			[]*tpdu.TPDU{
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("111")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("111")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			true,
+		},
 		{
 			"misordered segments",
 			[]*tpdu.TPDU{
