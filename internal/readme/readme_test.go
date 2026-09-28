@@ -15,6 +15,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// readText returns the text of a file with its line endings as LF, as a
+// checkout may give it CRLF line endings, as Git does on Windows.
+func readText(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return strings.ReplaceAll(string(b), "\r\n", "\n")
+}
+
 // goBlocks returns the Go code blocks of the markdown.
 func goBlocks(md string) []string {
 	re := regexp.MustCompile("(?s)```go\n(.*?)```")
@@ -29,14 +38,12 @@ func goBlocks(md string) []string {
 // compiled, so the README cannot show code that does not compile, and every
 // example of readme.go is shown in the README.
 func TestReadmeExamples(t *testing.T) {
-	md, err := os.ReadFile("../../README.md")
-	require.NoError(t, err)
-	src, err := os.ReadFile("readme.go")
-	require.NoError(t, err)
-	blocks := goBlocks(string(md))
+	md := readText(t, "../../README.md")
+	src := readText(t, "readme.go")
+	blocks := goBlocks(md)
 	require.NotEmpty(t, blocks)
 	for _, b := range blocks {
-		assert.True(t, strings.Contains(string(src), b), "README block not in readme.go:\n%s", b)
+		assert.True(t, strings.Contains(src, b), "README block not in readme.go:\n%s", b)
 	}
 
 	fset := token.NewFileSet()
@@ -61,10 +68,9 @@ func TestReadmeExamples(t *testing.T) {
 // branch, the only supported version of the module, whose tagged versions
 // are all retracted.
 func TestReadmeInstallNamesMain(t *testing.T) {
-	md, err := os.ReadFile("../../README.md")
-	require.NoError(t, err)
+	md := readText(t, "../../README.md")
 	re := regexp.MustCompile(`(?m)^(?:\$ )?go (?:get|install) (github\.com/gomaja/go-sms\S*)`)
-	cmds := re.FindAllStringSubmatch(string(md), -1)
+	cmds := re.FindAllStringSubmatch(md, -1)
 	require.NotEmpty(t, cmds)
 	for _, c := range cmds {
 		assert.True(t, strings.HasSuffix(c[1], "@main"), "%s", c[0])
