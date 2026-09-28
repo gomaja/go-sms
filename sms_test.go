@@ -482,6 +482,30 @@ func TestUnmarshal(t *testing.T) {
 			},
 			nil,
 		},
+		{
+			"deliverreport rp-ack",
+			[]byte{0x00, 0x01, 0x7f},
+			[]sms.UnmarshalOption{sms.AsMO, sms.AsRPAck},
+			&tpdu.TPDU{
+				Direction: tpdu.MO,
+				PI:        tpdu.PiPID,
+				PID:       0x7f,
+			},
+			nil,
+		},
+		{
+			"deliverreport rp-error",
+			[]byte{0x00, 0xd0, 0x01, 0x7f},
+			[]sms.UnmarshalOption{sms.AsMO, sms.AsRPError},
+			&tpdu.TPDU{
+				Direction: tpdu.MO,
+				RPMessage: tpdu.RPError,
+				FCS:       0xd0,
+				PI:        tpdu.PiPID,
+				PID:       0x7f,
+			},
+			nil,
+		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {

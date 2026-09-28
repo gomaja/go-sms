@@ -226,9 +226,10 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 			},
-			[]byte{0x00, 0x12, 0x00},
+			[]byte{0x00, 0xd0, 0x00},
 			nil,
 		},
 		{
@@ -239,11 +240,12 @@ func TestMarshalBinary(t *testing.T) {
 				PID:        0xab,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x01,
 			},
 			[]byte{
-				0x00, 0x12, 0x01, 0xab,
+				0x00, 0xd0, 0x01, 0xab,
 			},
 			nil,
 		},
@@ -255,11 +257,12 @@ func TestMarshalBinary(t *testing.T) {
 				PID:        0xab,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x02,
 			},
 			[]byte{
-				0x00, 0x12, 0x02, 0x04,
+				0x00, 0xd0, 0x02, 0x04,
 			},
 			nil,
 		},
@@ -271,11 +274,12 @@ func TestMarshalBinary(t *testing.T) {
 				PID:        0xab,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x04,
 			},
 			[]byte{
-				0x00, 0x12, 0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
+				0x00, 0xd0, 0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
 			},
 			nil,
 		},
@@ -287,11 +291,12 @@ func TestMarshalBinary(t *testing.T) {
 				PID:        0xab,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x07,
 			},
 			[]byte{
-				0x00, 0x12, 0x07, 0xab, 0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72,
+				0x00, 0xd0, 0x07, 0xab, 0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72,
 				0x74,
 			},
 			nil,
@@ -303,7 +308,8 @@ func TestMarshalBinary(t *testing.T) {
 				FirstOctet: 0,
 				DCS:        0x08,
 				UD:         []byte("report!"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x06,
 			},
 			nil,
@@ -551,13 +557,14 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
 						time.FixedZone("SCTS", 8*3600)),
 				},
 			},
-			[]byte{0x01, 0x12, 0x00, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23},
+			[]byte{0x01, 0xc0, 0x00, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23},
 			nil,
 		},
 		{
@@ -568,7 +575,8 @@ func TestMarshalBinary(t *testing.T) {
 				PID:        0xab,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x01,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -576,7 +584,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			[]byte{
-				0x01, 0x12, 0x01, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0xab,
+				0x01, 0xc0, 0x01, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0xab,
 			},
 			nil,
 		},
@@ -588,7 +596,8 @@ func TestMarshalBinary(t *testing.T) {
 				PID:        0xab,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x02,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -596,7 +605,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			[]byte{
-				0x01, 0x12, 0x02, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x04,
+				0x01, 0xc0, 0x02, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x04,
 			},
 			nil,
 		},
@@ -608,7 +617,8 @@ func TestMarshalBinary(t *testing.T) {
 				PID:        0xab,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x04,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -616,7 +626,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			[]byte{
-				0x01, 0x12, 0x04, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x06,
+				0x01, 0xc0, 0x04, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x06,
 				0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
 			},
 			nil,
@@ -629,7 +639,8 @@ func TestMarshalBinary(t *testing.T) {
 				PID:        0xab,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x07,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -637,7 +648,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			[]byte{
-				0x01, 0x12, 0x07, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0xab,
+				0x01, 0xc0, 0x07, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0xab,
 				0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
 			},
 			nil,
@@ -649,7 +660,8 @@ func TestMarshalBinary(t *testing.T) {
 				FirstOctet: 0x01,
 				DCS:        0x80,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x07,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -665,7 +677,8 @@ func TestMarshalBinary(t *testing.T) {
 				FirstOctet: 0x01,
 				DCS:        0x08,
 				UD:         []byte("report!"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x06,
 			},
 			nil,
@@ -1224,7 +1237,7 @@ func TestUDBlockSize(t *testing.T) {
 			"deliverreport RP-ERROR 7bit",
 			tpdu.TPDU{
 				Direction: tpdu.MO,
-				FCS:       0x90,
+				RPMessage: tpdu.RPError,
 			},
 			180,
 		},
@@ -1241,7 +1254,7 @@ func TestUDBlockSize(t *testing.T) {
 			tpdu.TPDU{
 				Direction: tpdu.MO,
 				DCS:       0xf4,
-				FCS:       0x90,
+				RPMessage: tpdu.RPError,
 			},
 			158,
 		},
@@ -1305,7 +1318,7 @@ func TestUDBlockSize(t *testing.T) {
 			"submitreport RP-ERROR 7bit",
 			tpdu.TPDU{
 				FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
-				FCS:        0x90,
+				RPMessage:  tpdu.RPError,
 			},
 			172,
 		},
@@ -1322,7 +1335,7 @@ func TestUDBlockSize(t *testing.T) {
 			tpdu.TPDU{
 				FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
 				DCS:        0xf4,
-				FCS:        0x90,
+				RPMessage:  tpdu.RPError,
 			},
 			151,
 		},
@@ -1577,37 +1590,40 @@ func TestUnmarshalBinary(t *testing.T) {
 		},
 		{
 			"SmsDeliverReport minimal",
-			[]byte{0x00, 0x12, 0x00},
+			[]byte{0x00, 0xd0, 0x00},
 			tpdu.MO,
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x00,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 			},
 			nil,
 		},
 		{
 			"SmsDeliverReport pid",
-			[]byte{0x00, 0x12, 0x01, 0xab},
+			[]byte{0x00, 0xd0, 0x01, 0xab},
 			tpdu.MO,
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x00,
 				PID:        0xab,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x01,
 			},
 			nil,
 		},
 		{
 			"SmsDeliverReport dcs",
-			[]byte{0x00, 0x12, 0x02, 0x04},
+			[]byte{0x00, 0xd0, 0x02, 0x04},
 			tpdu.MO,
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x00,
 				DCS:        0x04,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x02,
 			},
 			nil,
@@ -1615,7 +1631,7 @@ func TestUnmarshalBinary(t *testing.T) {
 		{
 			"SmsDeliverReport ud",
 			[]byte{
-				0x00, 0x12, 0x06, 0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
+				0x00, 0xd0, 0x06, 0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
 			},
 			tpdu.MO,
 			tpdu.TPDU{
@@ -1623,7 +1639,8 @@ func TestUnmarshalBinary(t *testing.T) {
 				FirstOctet: 0x00,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x06,
 			},
 			nil,
@@ -1634,53 +1651,58 @@ func TestUnmarshalBinary(t *testing.T) {
 			tpdu.MO,
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
+				RPMessage:  tpdu.RPError,
 				FirstOctet: 0x00,
 			},
 			tpdu.NewDecodeError("SmsDeliverReport.fcs", 1, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsDeliverReport underflow pi",
-			[]byte{0x00, 0x12},
+			[]byte{0x00, 0xd0},
 			tpdu.MO,
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x00,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 			},
 			tpdu.NewDecodeError("SmsDeliverReport.pi", 2, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsDeliverReport underflow pid",
-			[]byte{0x00, 0x12, 0x01},
+			[]byte{0x00, 0xd0, 0x01},
 			tpdu.MO,
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x00,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x01,
 			},
 			tpdu.NewDecodeError("SmsDeliverReport.pid", 3, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsDeliverReport underflow dcs",
-			[]byte{0x00, 0x12, 0x02},
+			[]byte{0x00, 0xd0, 0x02},
 			tpdu.MO,
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x00,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x02,
 			},
 			tpdu.NewDecodeError("SmsDeliverReport.dcs", 3, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsDeliverReport underflow ud",
-			[]byte{0x00, 0x12, 0x04},
+			[]byte{0x00, 0xd0, 0x04},
 			tpdu.MO,
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x00,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xd0,
 				PI:         0x04,
 			},
 			tpdu.NewDecodeError("SmsDeliverReport.ud.udl", 3, tpdu.ErrUnderflow),
@@ -2115,12 +2137,13 @@ func TestUnmarshalBinary(t *testing.T) {
 		},
 		{
 			"SmsSubmitReport minimal",
-			[]byte{0x01, 0x12, 0x00, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23},
+			[]byte{0x01, 0xc0, 0x00, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
 						time.FixedZone("SCTS", 8*3600)),
@@ -2130,13 +2153,14 @@ func TestUnmarshalBinary(t *testing.T) {
 		},
 		{
 			"SmsSubmitReport pid",
-			[]byte{0x01, 0x12, 0x01, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0xab},
+			[]byte{0x01, 0xc0, 0x01, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0xab},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
 				PID:        0xab,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         tpdu.PiPID,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -2147,13 +2171,14 @@ func TestUnmarshalBinary(t *testing.T) {
 		},
 		{
 			"SmsSubmitReport dcs",
-			[]byte{0x01, 0x12, 0x02, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x04},
+			[]byte{0x01, 0xc0, 0x02, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x04},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
 				DCS:        0x04,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         tpdu.PiDCS,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -2165,7 +2190,7 @@ func TestUnmarshalBinary(t *testing.T) {
 		{
 			"SmsSubmitReport ud",
 			[]byte{
-				0x01, 0x12, 0x06, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x04,
+				0x01, 0xc0, 0x06, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x04,
 				0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
 			},
 			tpdu.MT,
@@ -2174,7 +2199,8 @@ func TestUnmarshalBinary(t *testing.T) {
 				FirstOctet: 0x01,
 				DCS:        0x04,
 				UD:         []byte("report"),
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x06,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -2189,52 +2215,57 @@ func TestUnmarshalBinary(t *testing.T) {
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
+				RPMessage:  tpdu.RPError,
 				FirstOctet: 0x01,
 			},
 			tpdu.NewDecodeError("SmsSubmitReport.fcs", 1, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsSubmitReport underflow pi",
-			[]byte{0x01, 0x12},
+			[]byte{0x01, 0xc0},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 			},
 			tpdu.NewDecodeError("SmsSubmitReport.pi", 2, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsSubmitReport underflow scts",
-			[]byte{0x01, 0x12, 0x00},
+			[]byte{0x01, 0xc0, 0x00},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 			},
 			tpdu.NewDecodeError("SmsSubmitReport.scts", 3, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsSubmitReport non-integer scts",
-			[]byte{0x01, 0x12, 0x00, 0x51, 0x50, 0xf1, 0x32, 0x20, 0x05, 0x23},
+			[]byte{0x01, 0xc0, 0x00, 0x51, 0x50, 0xf1, 0x32, 0x20, 0x05, 0x23},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				SCTS:       timestampFrom(0x51, 0x50, 0xf1, 0x32, 0x20, 0x05, 0x23),
 			},
 			nil,
 		},
 		{
 			"SmsSubmitReport underflow pid",
-			[]byte{0x01, 0x12, 0x01, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23},
+			[]byte{0x01, 0xc0, 0x01, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x01,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -2244,12 +2275,13 @@ func TestUnmarshalBinary(t *testing.T) {
 		},
 		{
 			"SmsSubmitReport underflow dcs",
-			[]byte{0x01, 0x12, 0x02, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23},
+			[]byte{0x01, 0xc0, 0x02, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x02,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -2259,13 +2291,14 @@ func TestUnmarshalBinary(t *testing.T) {
 		},
 		{
 			"SmsSubmitReport underflow ud",
-			[]byte{0x01, 0x12, 0x06, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x04},
+			[]byte{0x01, 0xc0, 0x06, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x04},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
 				DCS:        0x04,
-				FCS:        0x12,
+				RPMessage:  tpdu.RPError,
+				FCS:        0xc0,
 				PI:         0x06,
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -2277,7 +2310,7 @@ func TestUnmarshalBinary(t *testing.T) {
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			d := tpdu.TPDU{Direction: p.dirn}
+			d := tpdu.TPDU{Direction: p.dirn, RPMessage: p.out.RPMessage}
 			err := d.UnmarshalBinary(p.in)
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.out, d)
@@ -2376,6 +2409,157 @@ func TestReservedMTI(t *testing.T) {
 	assert.Equal(t, tpdu.NewDecodeError("tpdu.firstOctet", 0, tpdu.ErrUnsupportedSmsType(7)), err)
 	// the TPDU is left partially decoded, so the first octet is kept.
 	assert.Equal(t, tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x07}, m)
+}
+
+// TestReportRPAckDecode checks reports carried by an RP-ACK, which have no
+// TP-FCS, decode with the default RP message, and marshal back to the same
+// octets.
+//
+// TS 23.040 9.2.2.1a (ii) "SMS-DELIVER-REPORT for RP-ACK" and 9.2.2.2a (ii)
+// "SMS-SUBMIT-REPORT for RP-ACK": TP-MTI, TP-UDHI; TP-PI; ... with no TP-FCS.
+func TestReportRPAckDecode(t *testing.T) {
+	scts := tpdu.Timestamp{
+		Time: time.Date(2015, time.May, 17, 23, 02, 50, 0, time.FixedZone("SCTS", 8*3600)),
+	}
+	patterns := []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+		out  tpdu.TPDU
+	}{
+		{
+			"deliver report pi 0",
+			tpdu.MO,
+			"00 00",
+			tpdu.TPDU{Direction: tpdu.MO},
+		},
+		{
+			"deliver report pid",
+			tpdu.MO,
+			"00 01 7f",
+			tpdu.TPDU{Direction: tpdu.MO, PI: tpdu.PiPID, PID: 0x7f},
+		},
+		{
+			"deliver report pid and dcs",
+			tpdu.MO,
+			"00 03 00 00",
+			tpdu.TPDU{Direction: tpdu.MO, PI: tpdu.PiPID | tpdu.PiDCS},
+		},
+		{
+			"deliver report ud",
+			tpdu.MO,
+			"00 07 00 00 02 e834",
+			tpdu.TPDU{Direction: tpdu.MO, PI: tpdu.PiPID | tpdu.PiDCS | tpdu.PiUDL, UD: []byte("hi")},
+		},
+		{
+			"submit report pi 0",
+			tpdu.MT,
+			"01 00 51507132200523",
+			tpdu.TPDU{FirstOctet: 0x01, SCTS: scts},
+		},
+		{
+			"submit report ud",
+			tpdu.MT,
+			"01 04 51507132200523 02 e834",
+			tpdu.TPDU{FirstOctet: 0x01, PI: tpdu.PiUDL, SCTS: scts, UD: []byte("hi")},
+		},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{Direction: p.dirn}
+			require.NoError(t, d.UnmarshalBinary(in))
+			assert.Equal(t, p.out, d)
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, b)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+// TestReportRPErrorDecode checks reports carried by an RP-ERROR, which have a
+// TP-FCS, round trip.
+//
+// TS 23.040 9.2.2.1a (i) and 9.2.2.2a (i): TP-MTI, TP-UDHI; TP-FCS; TP-PI...
+func TestReportRPErrorDecode(t *testing.T) {
+	patterns := []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+		fcs  byte
+		pi   tpdu.PI
+	}{
+		{"deliver report", tpdu.MO, "00 d0 00", 0xd0, 0},
+		{"deliver report pid", tpdu.MO, "00 ff 01 7f", 0xff, tpdu.PiPID},
+		// a reserved FCS is decoded, and treated as "Unspecified error
+		// cause" by the application, as per TS 23.040 9.2.3.22.
+		{"deliver report reserved fcs", tpdu.MO, "00 00 00", 0x00, 0},
+		{"submit report", tpdu.MT, "01 c0 00 51507132200523", 0xc0, 0},
+		{"submit report ud", tpdu.MT, "01 c5 04 51507132200523 02 e834", 0xc5, tpdu.PiUDL},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError}
+			require.NoError(t, d.UnmarshalBinary(in))
+			assert.Equal(t, tpdu.RPError, d.RPMessage)
+			assert.Equal(t, p.fcs, d.FCS)
+			assert.Equal(t, p.pi, d.PI)
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, b)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+func TestReportFCSMarshal(t *testing.T) {
+	// An FCS cannot be carried in a report for RP-ACK.
+	for _, st := range []tpdu.SmsType{tpdu.SmsDeliverReport, tpdu.SmsSubmitReport} {
+		r, err := tpdu.New(st)
+		require.NoError(t, err)
+		r.FCS = 0xd0
+		_, err = r.MarshalBinary()
+		assert.Equal(t, tpdu.NewEncodeError(st.String()+".fcs", tpdu.ErrInvalid), err)
+		// but it can in a report for RP-ERROR
+		r.RPMessage = tpdu.RPError
+		b, err := r.MarshalBinary()
+		require.NoError(t, err)
+		assert.Equal(t, byte(0xd0), b[1])
+		// even if it is zero
+		r.FCS = 0
+		b, err = r.MarshalBinary()
+		require.NoError(t, err)
+		assert.Equal(t, byte(0x00), b[1])
+		assert.Equal(t, byte(0x00), b[2])
+	}
+	// An invalid RPMessage is rejected, rather than guessed.
+	r := tpdu.TPDU{Direction: tpdu.MO, RPMessage: 2}
+	_, err := r.MarshalBinary()
+	assert.Equal(t, tpdu.NewEncodeError("SmsDeliverReport.rp", tpdu.ErrInvalid), err)
+	err = r.UnmarshalBinary([]byte{0x00, 0x00})
+	assert.Equal(t, tpdu.NewDecodeError("SmsDeliverReport.rp", 1, tpdu.ErrInvalid), err)
+	// but only matters for the reports
+	r.FirstOctet = 0x01
+	_, err = r.MarshalBinary()
+	assert.NoError(t, err)
+}
+
+func TestRPMessageOption(t *testing.T) {
+	r, err := tpdu.New(tpdu.SmsDeliverReport, tpdu.RPError)
+	require.NoError(t, err)
+	assert.Equal(t, tpdu.RPError, r.RPMessage)
+	r, err = tpdu.New(tpdu.SmsDeliverReport, tpdu.RPError, tpdu.RPAck)
+	require.NoError(t, err)
+	assert.Equal(t, tpdu.RPAck, r.RPMessage)
+	_, err = tpdu.New(tpdu.RPMessage(2))
+	assert.Equal(t, tpdu.ErrInvalid, err)
+	_, err = tpdu.New(tpdu.RPMessage(-1))
+	assert.Equal(t, tpdu.ErrInvalid, err)
+	assert.Equal(t, "RP-ACK", tpdu.RPAck.String())
+	assert.Equal(t, "RP-ERROR", tpdu.RPError.String())
+	assert.Equal(t, "Unknown", tpdu.RPMessage(2).String())
 }
 
 // counter is an implementation of the tpdu.Counter interface.

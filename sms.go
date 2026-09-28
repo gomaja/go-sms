@@ -95,15 +95,19 @@ func IsCompleteMessage(segments []*tpdu.TPDU) bool {
 // UnmarshalConfig contains configuration options for Unmarshal.
 type UnmarshalConfig struct {
 	dirn tpdu.Direction
+	rp   tpdu.RPMessage
 }
 
 // Unmarshal converts a binary SMS TPDU into the corresponding TPDU object.
+//
+// The TPDU is assumed to be MT, and a report to be carried by an RP-ACK,
+// unless the options say otherwise.
 func Unmarshal(src []byte, options ...UnmarshalOption) (*tpdu.TPDU, error) {
 	cfg := UnmarshalConfig{}
 	for _, option := range options {
 		option.ApplyUnmarshalOption(&cfg)
 	}
-	t := tpdu.TPDU{Direction: cfg.dirn}
+	t := tpdu.TPDU{Direction: cfg.dirn, RPMessage: cfg.rp}
 	err := t.UnmarshalBinary(src)
 	if err != nil {
 		return nil, err

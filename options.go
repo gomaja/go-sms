@@ -70,6 +70,16 @@ var (
 	// AsMT indicates that the TPDU as destined for the mobile station.
 	AsMT = directionOption{tpdu.MT}
 
+	// AsRPAck indicates that an SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT is
+	// carried by an RP-ACK, so has no TP-FCS.
+	//
+	// This is the default.
+	AsRPAck = rpMessageOption{tpdu.RPAck}
+
+	// AsRPError indicates that an SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT is
+	// carried by an RP-ERROR, so has a TP-FCS.
+	AsRPError = rpMessageOption{tpdu.RPError}
+
 	// WithAllCharsets specifies that all character sets are available for
 	// encoding or decoding.
 	//
@@ -171,4 +181,12 @@ type directionOption struct {
 
 func (o directionOption) ApplyUnmarshalOption(d *UnmarshalConfig) {
 	d.dirn = o.d
+}
+
+type rpMessageOption struct {
+	m tpdu.RPMessage
+}
+
+func (o rpMessageOption) ApplyUnmarshalOption(d *UnmarshalConfig) {
+	d.rp = o.m
 }

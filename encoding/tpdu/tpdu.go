@@ -15,7 +15,20 @@ import (
 type TPDU struct {
 	// Direction indicates whether the TPDU is mobile originated (MO) or
 	// terminated (MT).
+	//
+	// It is not carried in the TPDU, so it must be set before calling
+	// UnmarshalBinary, which keeps it.
 	Direction Direction
+
+	// RPMessage indicates whether an SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT
+	// is carried by an RP-ACK or an RP-ERROR, as only the latter has a TP-FCS.
+	//
+	// It is not carried in the TPDU, so, like the Direction, it must be set
+	// before calling UnmarshalBinary, which keeps it. It is used by
+	// UnmarshalBinary, MarshalBinary and UDBlockSize.
+	//
+	// Only applies to SMS-DELIVER-REPORT and SMS-SUBMIT-REPORT
+	RPMessage RPMessage
 
 	// FirstOctet is the first octet of all TPDUs.
 	FirstOctet FirstOctet
@@ -27,7 +40,9 @@ type TPDU struct {
 
 	// FCS contains the TP-FCS Failure Cause field.
 	//
-	// Only applies to SMS-DELIVER-REPORT and SMS-SUBMIT-REPORT
+	// Only applies to an SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT with an
+	// RPMessage of RPError. MarshalBinary returns an error if it is set for
+	// one with an RPMessage of RPAck, which has no TP-FCS.
 	FCS byte
 
 	// MR contains the TP-MP Message Reference field.
@@ -323,16 +338,16 @@ func (t *TPDU) UDBlockSize() int {
 		bs = 146 // conservative
 		// precise answer depends on variable length fields...
 	case SmsSubmitReport:
-		if t.FCS == 0 {
-			bs = 152 // for RP-ACK
+		if t.RPMessage == RPError {
+			bs = 151
 		} else {
-			bs = 151 // for RP-ERROR
+			bs = 152
 		}
 	case SmsDeliverReport:
-		if t.FCS == 0 {
-			bs = 159 // for RP-ACK
+		if t.RPMessage == RPError {
+			bs = 158
 		} else {
-			bs = 158 // for RP-ERROR
+			bs = 159
 		}
 	case SmsStatusReport:
 		bs = 131 // conservative
@@ -445,12 +460,14 @@ func (t *TPDU) marshalDeliverReport() ([]byte, error) {
 			return nil, NewEncodeError("ud", err)
 		}
 	}
-	l := 5 + len(ud) // assume FCS, PID and DCS
+	fcs, err := t.rpFCS()
+	if err != nil {
+		return nil, err
+	}
+	l := 4 + len(fcs) + len(ud) // assume PID and DCS
 	b := make([]byte, 0, l)
 	b = append(b, byte(t.FirstOctet))
-	if t.FCS != 0 {
-		b = append(b, t.FCS)
-	}
+	b = append(b, fcs...)
 	b = append(b, byte(t.PI))
 	if t.PI.PID() {
 		b = append(b, t.PID)
@@ -541,12 +558,14 @@ func (t *TPDU) marshalSubmitReport() ([]byte, error) {
 			return nil, NewEncodeError("ud", err)
 		}
 	}
-	l := 5 + len(scts) + len(ud) // assume PID and DCS
+	fcs, err := t.rpFCS()
+	if err != nil {
+		return nil, err
+	}
+	l := 4 + len(fcs) + len(scts) + len(ud) // assume PID and DCS
 	b := make([]byte, 0, l)
 	b = append(b, byte(t.FirstOctet))
-	if t.FCS != 0 {
-		b = append(b, t.FCS)
-	}
+	b = append(b, fcs...)
 	b = append(b, byte(t.PI))
 	b = append(b, scts...)
 	if t.PI.PID() {
@@ -561,14 +580,15 @@ func (t *TPDU) marshalSubmitReport() ([]byte, error) {
 
 // UnmarshalBinary unmarshals a SMS TPDU from the corresponding byte array.
 //
-// The Direction must be set before calling UnmarshalBinary, as the octets
-// alone do not identify the type of the TPDU. Every other field is reset
+// The Direction, and for the reports the RPMessage, must be set before
+// calling UnmarshalBinary, as the octets alone do not identify the type of
+// the TPDU, nor whether a report has a TP-FCS. Every other field is reset
 // before decoding, so no field of a TPDU previously held by t survives.
 //
 // In the case of error the TPDU will be partially unmarshalled, up to the
 // point that the decoding error was detected.
 func (t *TPDU) UnmarshalBinary(src []byte) (err error) {
-	*t = TPDU{Direction: t.Direction}
+	*t = TPDU{Direction: t.Direction, RPMessage: t.RPMessage}
 	if len(src) < 1 {
 		return NewDecodeError("tpdu.firstOctet", 0, ErrUnderflow)
 	}
@@ -654,13 +674,48 @@ func (t *TPDU) unmarshalDeliver(src []byte) (err error) {
 	return nil
 }
 
-func (t *TPDU) unmarshalDeliverReport(src []byte) error {
-	ri := 0
-	if len(src) <= ri {
-		return NewDecodeError("fcs", ri, ErrUnderflow)
+// rpFCS returns the TP-FCS of a report, which is only present in a report
+// carried by an RP-ERROR, as defined in 3GPP TS 23.040 Sections 9.2.2.1a and
+// 9.2.2.2a.
+//
+// An FCS in a report carried by an RP-ACK cannot be encoded, so is an error
+// rather than being silently dropped.
+func (t *TPDU) rpFCS() ([]byte, error) {
+	switch t.RPMessage {
+	case RPError:
+		return []byte{t.FCS}, nil
+	case RPAck:
+		if t.FCS != 0 {
+			return nil, NewEncodeError("fcs", ErrInvalid)
+		}
+		return nil, nil
+	default:
+		return nil, NewEncodeError("rp", ErrInvalid)
 	}
-	t.FCS = src[ri]
-	ri++
+}
+
+// unmarshalFCS reads the TP-FCS of a report carried by an RP-ERROR from the
+// start of src, and returns the number of octets read.
+func (t *TPDU) unmarshalFCS(src []byte) (int, error) {
+	switch t.RPMessage {
+	case RPError:
+		if len(src) < 1 {
+			return 0, NewDecodeError("fcs", 0, ErrUnderflow)
+		}
+		t.FCS = src[0]
+		return 1, nil
+	case RPAck:
+		return 0, nil
+	default:
+		return 0, NewDecodeError("rp", 0, ErrInvalid)
+	}
+}
+
+func (t *TPDU) unmarshalDeliverReport(src []byte) error {
+	ri, err := t.unmarshalFCS(src)
+	if err != nil {
+		return err
+	}
 	if len(src) <= ri {
 		return NewDecodeError("pi", ri, ErrUnderflow)
 	}
@@ -789,12 +844,10 @@ func (t *TPDU) unmarshalSubmit(src []byte) error {
 }
 
 func (t *TPDU) unmarshalSubmitReport(src []byte) error {
-	ri := 0
-	if len(src) < 1 {
-		return NewDecodeError("fcs", ri, ErrUnderflow)
+	ri, err := t.unmarshalFCS(src)
+	if err != nil {
+		return err
 	}
-	t.FCS = src[ri]
-	ri++
 	if len(src) <= ri {
 		return NewDecodeError("pi", ri, ErrUnderflow)
 	}
@@ -803,7 +856,7 @@ func (t *TPDU) unmarshalSubmitReport(src []byte) error {
 	if len(src) < ri+7 {
 		return NewDecodeError("scts", ri, ErrUnderflow)
 	}
-	err := t.SCTS.UnmarshalBinary(src[ri : ri+7])
+	err = t.SCTS.UnmarshalBinary(src[ri : ri+7])
 	if err != nil {
 		return NewDecodeError("scts", ri, err)
 	}
@@ -1029,6 +1082,44 @@ const (
 func (d Direction) ApplyTPDUOption(t *TPDU) error {
 	t.Direction = d
 	return nil
+}
+
+// RPMessage identifies the RP message that carries an SMS-DELIVER-REPORT or
+// an SMS-SUBMIT-REPORT.
+//
+// 3GPP TS 23.040 Sections 9.2.2.1a and 9.2.2.2a define a report for RP-ERROR,
+// the negative acknowledgement, which has a TP-FCS, and a report for RP-ACK,
+// the positive acknowledgement, which does not. Nothing in the TPDU says which
+// it is: the RP layer knows.
+type RPMessage int
+
+const (
+	// RPAck indicates the report is carried by an RP-ACK, so has no TP-FCS.
+	RPAck RPMessage = iota
+
+	// RPError indicates the report is carried by an RP-ERROR, so has a
+	// TP-FCS.
+	RPError
+)
+
+// ApplyTPDUOption sets the RPMessage of the TPDU.
+func (m RPMessage) ApplyTPDUOption(t *TPDU) error {
+	if m != RPAck && m != RPError {
+		return ErrInvalid
+	}
+	t.RPMessage = m
+	return nil
+}
+
+func (m RPMessage) String() string {
+	switch m {
+	case RPAck:
+		return "RP-ACK"
+	case RPError:
+		return "RP-ERROR"
+	default:
+		return "Unknown"
+	}
 }
 
 // SmsType indicates the type of SMS TPDU type represented by the TPDU.
