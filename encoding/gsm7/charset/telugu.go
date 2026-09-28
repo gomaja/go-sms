@@ -139,7 +139,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -204,7 +203,10 @@ var (
 		0x58: 'X',
 		0x59: 'Y',
 		0x5a: 'Z',
-		0x65: '€',
+		// 0x65 has no symbol in 3GPP TS 23.038 V20.0.0 Annex A.2.12, where
+		// the other single shift tables have €, so € is not sent with this
+		// table. Android's GsmAlphabet does map 0x65 to €, but a receiver
+		// following the table decodes ESC 0x65 as the locking shift 'e'.
 	}
 	teluguEncoder    = generateEncoder(teluguDecoder)
 	teluguExtEncoder = generateEncoder(teluguExtDecoder)

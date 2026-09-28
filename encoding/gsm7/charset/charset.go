@@ -166,6 +166,10 @@ var (
 		Telugu:     teluguDecoder,
 		Urdu:       urduDecoder,
 	}
+	// The national language single shift tables of 3GPP TS 23.038 V20.0.0
+	// Annex A.2 have no symbol at 0x0D, which they mark only as a control
+	// character (Note 4), so none of these has an entry for it and ESC 0x0D
+	// decodes as the locking shift table's CR.
 	extDecoders = map[int]Decoder{
 		Turkish:    turkishExtDecoder,
 		Spanish:    spanishExtDecoder,

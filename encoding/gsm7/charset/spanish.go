@@ -6,7 +6,6 @@ var (
 	spanishExtDecoder = Decoder{
 		0x09: 'ç',
 		0x0a: '\f',
-		0x0d: '\n',
 		0x14: '^',
 		0x28: '{',
 		0x29: '}',

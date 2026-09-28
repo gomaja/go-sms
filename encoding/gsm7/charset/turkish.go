@@ -6,7 +6,6 @@ var (
 	turkishDecoder    = generateDecoderFromRunes(turkishRunes)
 	turkishExtDecoder = Decoder{
 		0x0a: '\f',
-		0x0d: '\n',
 		0x14: '^',
 		0x28: '{',
 		0x29: '}',

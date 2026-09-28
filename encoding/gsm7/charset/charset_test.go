@@ -152,6 +152,27 @@ func TestNoEscapeCharacter(t *testing.T) {
 	}
 }
 
+// TestExtUndefinedCodes checks codes that 3GPP TS 23.038 V20.0.0 leaves
+// without a symbol in the extension tables: 0x0D in every one (Section
+// 6.2.1.1, "NOTE 2: Void", and Annex A.2, Note 4), and 0x65 in the Telugu
+// single shift table (Annex A.2.12), where the others have €.
+func TestExtUndefinedCodes(t *testing.T) {
+	for nli := charset.Default; nli < charset.End; nli++ {
+		d := charset.NewExtDecoder(nli)
+		r, ok := d[0x0d]
+		assert.False(t, ok, "%s ext decodes 0x0d as %U", charsetName[nli], r)
+		for r, g := range charset.NewExtEncoder(nli) {
+			assert.NotEqual(t, byte(0x0d), g, "%s ext encodes %U as 0x0d", charsetName[nli], r)
+		}
+	}
+	_, ok := charset.DefaultExtDecoder()[0x0d]
+	assert.False(t, ok)
+	_, ok = charset.NewExtDecoder(charset.Telugu)[0x65]
+	assert.False(t, ok)
+	_, ok = charset.NewExtEncoder(charset.Telugu)['€']
+	assert.False(t, ok)
+}
+
 func TestDecoder(t *testing.T) {
 	for _, l := range languageTests {
 		d := charset.NewDecoder(l.nli)
@@ -270,7 +291,7 @@ func TestDefaultExtEncoder(t *testing.T) {
 
 var (
 	languageTests = []language{
-		{charset.Default, 127, 11, 0,
+		{charset.Default, 127, 10, 0,
 			[]testPattern{
 				{0x00, '@'},
 				{0x0a, '\n'},
@@ -290,7 +311,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Turkish, 127, 18, 0,
+		{charset.Turkish, 127, 17, 0,
 			[]testPattern{
 				{0x00, '@'},
 				{0x0a, '\n'},
@@ -319,7 +340,7 @@ var (
 				{0x73, 'ş'},
 			},
 		},
-		{charset.Spanish, 127, 20, 0,
+		{charset.Spanish, 127, 19, 0,
 			[]testPattern{
 				{0x00, '@'},
 				{0x0a, '\n'},
@@ -342,7 +363,7 @@ var (
 				{0x75, 'ú'},
 			},
 		},
-		{charset.Portuguese, 127, 38, 0,
+		{charset.Portuguese, 127, 37, 0,
 			[]testPattern{
 				{0x00, '@'},
 				{0x0a, '\n'},
@@ -371,7 +392,7 @@ var (
 				{0x7f, 'â'},
 			},
 		},
-		{charset.Bengali, 114, 83, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
+		{charset.Bengali, 114, 82, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
 			[]testPattern{
 				{0x00, '\u0981'},
 				{0x0a, '\n'},
@@ -404,7 +425,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Gujaranti, 120, 71, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
+		{charset.Gujaranti, 120, 70, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
 			[]testPattern{
 				{0x00, '\u0a81'},
 				{0x0a, '\n'},
@@ -437,7 +458,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Hindi, 127, 89, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
+		{charset.Hindi, 127, 88, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
 			[]testPattern{
 				{0x00, '\u0901'},
 				{0x01, '\u0902'},
@@ -475,7 +496,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Kannada, 120, 74, 2,
+		{charset.Kannada, 120, 73, 2,
 			[]testPattern{
 				{0x01, '\u0c82'},
 				{0x0a, '\n'},
@@ -510,7 +531,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Malayalam, 120, 83, 2,
+		{charset.Malayalam, 120, 82, 2,
 			[]testPattern{
 				{0x01, '\u0d02'},
 				{0x0a, '\n'},
@@ -544,7 +565,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Oriya, 116, 76, 2,
+		{charset.Oriya, 116, 75, 2,
 			[]testPattern{
 				{0x00, '\u0b01'},
 				{0x0a, '\n'},
@@ -581,7 +602,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Punjabi, 110, 77, 2,
+		{charset.Punjabi, 110, 76, 2,
 			[]testPattern{
 				{0x00, '\u0a01'},
 				{0x0a, '\n'},
@@ -618,7 +639,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Tamil, 102, 78, 2,
+		{charset.Tamil, 102, 77, 2,
 			[]testPattern{
 				{0x01, '\u0b82'},
 				{0x0a, '\n'},
@@ -654,7 +675,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Telugu, 120, 79, 2,
+		{charset.Telugu, 120, 77, 2,
 			[]testPattern{
 				{0x00, '\u0c01'},
 				{0x0a, '\n'},
@@ -686,10 +707,9 @@ var (
 				{0x32, '\u0c7f'},
 				{0x40, '|'},
 				{0x47, 'G'},
-				{0x65, '€'},
 			},
 		},
-		{charset.Urdu, 127, 91, 2,
+		{charset.Urdu, 127, 90, 2,
 			[]testPattern{
 				{0x00, 'ا'},
 				{0x0a, '\n'},

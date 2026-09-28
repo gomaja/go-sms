@@ -323,6 +323,51 @@ func TestEncodeInvalidTableEntry(t *testing.T) {
 	}
 }
 
+// TestDecodeEscapedCR checks ESC 0x0D with every combination of locking and
+// single shift tables. No extension table has a symbol at 0x0D: 3GPP TS
+// 23.038 V20.0.0 Section 6.2.1.1 leaves it empty ("NOTE 2: Void") and Annex
+// A.2 marks it only as a control character (Note 4). So a receiver displays
+// the character the locking shift table has at 0x0D, which is CR in all of
+// them, and a Strict Decoder rejects the sequence.
+func TestDecodeEscapedCR(t *testing.T) {
+	for set := charset.Default; set < charset.End; set++ {
+		for ext := charset.Default; ext < charset.End; ext++ {
+			out, err := gsm7.Decode([]byte("1\x1b\x0d2"), gsm7.WithCharset(set), gsm7.WithExtCharset(ext))
+			assert.NoError(t, err, "set=%d ext=%d", set, ext)
+			assert.Equal(t, "1\r2", string(out), "set=%d ext=%d", set, ext)
+			out, err = gsm7.Decode([]byte("1\x1b\x0d2"),
+				gsm7.WithCharset(set), gsm7.WithExtCharset(ext), gsm7.Strict)
+			assert.Equal(t, gsm7.ErrInvalidSeptet{Offset: 2, Septet: 0x0d, Escaped: true}, err,
+				"set=%d ext=%d", set, ext)
+			assert.Nil(t, out, "set=%d ext=%d", set, ext)
+		}
+	}
+}
+
+// TestTeluguEuro checks that € is not sent through the Telugu single shift
+// table, which has no symbol at 0x65 (3GPP TS 23.038 V20.0.0 Annex A.2.12),
+// so a receiver decodes ESC 0x65 as the locking shift character at 0x65.
+func TestTeluguEuro(t *testing.T) {
+	telugu := []gsm7.EncoderOption{gsm7.WithCharset(charset.Telugu), gsm7.WithExtCharset(charset.Telugu)}
+	_, err := gsm7.Encode([]byte("€"), telugu...)
+	assert.Equal(t, gsm7.ErrInvalidUTF8('€'), err)
+	_, err = gsm7.Encode([]byte("€"), gsm7.WithExtCharset(charset.Telugu))
+	assert.Equal(t, gsm7.ErrInvalidUTF8('€'), err)
+	// the default extension table still has € at 0x65
+	out, err := gsm7.Encode([]byte("€"), gsm7.WithCharset(charset.Telugu))
+	assert.NoError(t, err)
+	assert.Equal(t, []byte{0x1b, 0x65}, out)
+
+	out, err = gsm7.Decode([]byte{0x1b, 0x65},
+		gsm7.WithCharset(charset.Telugu), gsm7.WithExtCharset(charset.Telugu))
+	assert.NoError(t, err)
+	assert.Equal(t, "e", string(out))
+	out, err = gsm7.Decode([]byte{0x1b, 0x65},
+		gsm7.WithCharset(charset.Telugu), gsm7.WithExtCharset(charset.Telugu), gsm7.Strict)
+	assert.Equal(t, gsm7.ErrInvalidSeptet{Offset: 1, Septet: 0x65, Escaped: true}, err)
+	assert.Nil(t, out)
+}
+
 // TestHindi round trips Hindi text through the Hindi locking and single shift
 // tables. The septets are taken from 3GPP TS 23.038 V20.0.0 Annex A.3.6,
 // where 0x00-0x02 hold the Devanagari signs candrabindu, anusvara and visarga
