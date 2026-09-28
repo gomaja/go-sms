@@ -3,6 +3,8 @@
 package pdumode_test
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/gomaja/go-sms/encoding/pdumode"
@@ -55,6 +57,33 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 			},
 			nil,
 			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit('f')),
+		},
+		{
+			"max length",
+			pdumode.SMSCAddress{
+				tpdu.Address{Addr: "12345678901234567890", TOA: 0x91},
+			},
+			[]byte{
+				11, 0x91, 0x21, 0x43, 0x65, 0x87, 0x09, 0x21, 0x43, 0x65,
+				0x87, 0x09,
+			},
+			nil,
+		},
+		{
+			"overlength",
+			pdumode.SMSCAddress{
+				tpdu.Address{Addr: "123456789012345678901", TOA: 0x91},
+			},
+			nil,
+			tpdu.EncodeError("addr", tpdu.ErrOverlength),
+		},
+		{
+			"length octet wrap",
+			pdumode.SMSCAddress{
+				tpdu.Address{Addr: strings.Repeat("1", 510), TOA: 0x91},
+			},
+			nil,
+			tpdu.EncodeError("addr", tpdu.ErrOverlength),
 		},
 	}
 	for _, p := range patterns {
@@ -132,10 +161,39 @@ func TestSMSCAddressUnmarshalBinary(t *testing.T) {
 		},
 		{
 			"short number pad",
-			[]byte{12, 0x91, 0x16, 0x04, 0x89, 0x56, 0x97, 0xf7},
+			[]byte{11, 0x91, 0x16, 0x04, 0x89, 0x56, 0x97, 0xf7},
 			pdumode.SMSCAddress{},
 			8,
 			tpdu.NewDecodeError("addr", 2, tpdu.ErrUnderflow),
+		},
+		{
+			"max length",
+			[]byte{
+				11, 0x91, 0x21, 0x43, 0x65, 0x87, 0x09, 0x21, 0x43, 0x65,
+				0x87, 0x09, 0x01,
+			},
+			pdumode.SMSCAddress{
+				tpdu.Address{Addr: "12345678901234567890", TOA: 0x91},
+			},
+			12,
+			nil,
+		},
+		{
+			"overlength",
+			[]byte{
+				12, 0x91, 0x21, 0x43, 0x65, 0x87, 0x09, 0x21, 0x43, 0x65,
+				0x87, 0x09, 0xf1,
+			},
+			pdumode.SMSCAddress{},
+			1,
+			tpdu.NewDecodeError("length", 0, tpdu.ErrOverlength),
+		},
+		{
+			"overlength max",
+			append([]byte{0xff, 0x91}, bytes.Repeat([]byte{0x11}, 254)...),
+			pdumode.SMSCAddress{},
+			1,
+			tpdu.NewDecodeError("length", 0, tpdu.ErrOverlength),
 		},
 		{
 			"underflow alpha",

@@ -21,7 +21,19 @@ type SMSCAddress struct {
 	tpdu.Address
 }
 
+// maxSMSCAddressLen is the largest value of the SMSC address length octet.
+//
+// The SMSC address is an LV element of 1-12 octets, counting the length
+// octet itself (3GPP TS 27.005 Section 2.4.1.8, RP-Destination-Address, and
+// Sections 2.5.2.5 and 2.5.2.6, "The address is of variable length, 1-12
+// octets"). So the length octet counts at most 11 octets, the TOA and 10
+// octets of digits, which hold 20 digits.
+const maxSMSCAddressLen = 11
+
 // MarshalBinary marshals the SMSC Address into binary.
+//
+// An address longer than 20 digits returns an error, as its length would not
+// fit the field.
 func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 	addr, err := semioctet.Encode([]byte(a.Addr))
 	if err != nil {
@@ -31,6 +43,9 @@ func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 		return []byte{0}, nil
 	}
 	l := len(addr) + 1 // in octets and includes the toa
+	if l > maxSMSCAddressLen {
+		return nil, tpdu.EncodeError("addr", tpdu.ErrOverlength)
+	}
 	dst = make([]byte, 2, l+1)
 	dst[0] = byte(l)
 	dst[1] = a.TOA
@@ -52,6 +67,9 @@ func (a *SMSCAddress) UnmarshalBinary(src []byte) (int, error) {
 		return 0, tpdu.NewDecodeError("length", 0, tpdu.ErrUnderflow)
 	}
 	l := int(src[0]) // len is octets including toa
+	if l > maxSMSCAddressLen {
+		return 1, tpdu.NewDecodeError("length", 0, tpdu.ErrOverlength)
+	}
 	if l == 0 {
 		return 1, nil
 	}

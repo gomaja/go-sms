@@ -4,6 +4,7 @@ package pdumode_test
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/gomaja/go-sms/encoding/pdumode"
@@ -38,6 +39,13 @@ func TestUnmarshalBinary(t *testing.T) {
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
+		},
+		{
+			"overlength smsc",
+			"0c91214365870921436587092101020304",
+			nil,
+			nil,
+			tpdu.NewDecodeError("length", 0, tpdu.ErrOverlength),
 		},
 	}
 	for _, p := range decodePatterns {
@@ -194,6 +202,14 @@ func TestMarshalBinary(t *testing.T) {
 			},
 			nil,
 			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
+		},
+		{
+			"overlength smsc", "",
+			&pdumode.SMSCAddress{
+				tpdu.Address{Addr: strings.Repeat("1", 510), TOA: 0x91},
+			},
+			[]byte{0x01, 0x02, 0x03, 0x04},
+			tpdu.EncodeError("addr", tpdu.ErrOverlength),
 		},
 	}
 	for _, p := range patterns {
