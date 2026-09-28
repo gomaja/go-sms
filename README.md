@@ -34,7 +34,7 @@ proxy, which predates the current API and its fixes.
 
 ## Standards scope
 
-The core TPDU and field encoders track 3GPP TS 23.040 V19.0.0 and
+The core TPDU and field encoders track 3GPP TS 23.040 V20.0.0 and
 3GPP TS 23.038 V20.0.0. PDU mode framing for modem exchange tracks
 3GPP TS 27.005 V19.0.0. International number type handling follows the
 address format in 3GPP TS 23.040, with ISDN/E.164 numbering-plan values
