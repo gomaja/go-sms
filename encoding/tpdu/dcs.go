@@ -189,6 +189,12 @@ func (d DCS) Compressed() bool {
 // entity assumes to be the same as codepoint 00000000 (3GPP TS 23.038 Section
 // 4): one of the reserved coding groups 10xx, or the reserved character set,
 // bits 3..2 set to 11, of the general data coding groups 00xx and 01xx.
+//
+// A reserved bit, such as bit 3 of group 1111 or bit 2 of the message waiting
+// groups, which the sender is to "set to 0", does not make a reserved coding:
+// the receiver ignores it, and reads the other bits as defined, as it does a
+// reserved bit of the TP-PI (3GPP TS 23.040 Section 9.2.3.27). So DCS 0xfc is
+// 8 bit data of class 0, as 0xf4 is.
 func (d DCS) reserved() bool {
 	return d&0xc0 == 0x80 || (d&0x80 == 0x00 && d&0x0c == 0x0c)
 }
