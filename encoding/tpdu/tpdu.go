@@ -81,6 +81,11 @@ type TPDU struct {
 	// additional information they announce is not: it is discarded on
 	// unmarshal, as required by 3GPP TS 23.040 Section 9.2.3.27.
 	//
+	// The TP-PI of an SMS-STATUS-REPORT is optional unless a field it
+	// announces is present (Section 9.2.2.3), so one whose PI and PIExt
+	// are empty is marshalled without a TP-PI, unless it was unmarshalled
+	// with a TP-PI of 0.
+	//
 	// Only applies to SMS-DELIVER-REPORT, SMS-SUBMIT-REPORT and
 	// SMS-STATUS-REPORT
 	PI PI
@@ -154,6 +159,11 @@ type TPDU struct {
 	// Section 9.2.3.24), so these octets are marshalled while UDH is left
 	// empty, and dropped by SetUDH.
 	ignoredUDH []byte
+
+	// zeroPI is set for an SMS-STATUS-REPORT that was unmarshalled with a
+	// TP-PI of 0, which is then marshalled although it is optional, so the
+	// TPDU marshals back to the octets it came from.
+	zeroPI bool
 }
 
 // New creates a new TPDU
@@ -650,9 +660,24 @@ func (t *TPDU) UDHL() int {
 //
 // A bit that describes a field that is not written, as TP-UDHI does when
 // there is no UD, or a PI bit whose field holds 0, is marshalled as held, as
-// are the bits that describe no field, such as the reserved PI bits. So a
-// TPDU that was unmarshalled marshals back to the octets it came from, except
-// where 3GPP TS 23.040 requires a receiver to ignore or discard part of them.
+// are the bits that describe no field, such as the reserved PI bits.
+//
+// So a TPDU that was unmarshalled, and not changed since, marshals back to
+// the octets it came from, other than these, which are marshalled in the
+// form 3GPP TS 23.040 has a sender use:
+//
+//   - The octets that follow the TP-UD of a report with a reserved TP-PI
+//     bit set, which were discarded (Section 9.2.3.27).
+//   - The fill bits that follow a UDH in GSM 7 bit user data, and the unused
+//     bits that follow its last septet, which a receiver ignores, and are
+//     marshalled as zero (Sections 9.2.2.1 and 9.2.3.24).
+//   - The TP-UDL of GSM 7 bit user data that holds only a UDH, if it counts
+//     fewer septets than the UDH and its fill bits, which is marshalled as
+//     the count Section 9.2.3.16 gives.
+//   - An address in another form than the one it marshals to: one with a
+//     fill semi-octet, 1111, before its last (Section 9.1.2.3), or an
+//     alphanumeric one whose Address-Length counts more semi-octets than its
+//     septets use, or whose unused bits are not zero (Section 9.1.2.5).
 //
 // MarshalBinary does not change the TPDU.
 func (t *TPDU) MarshalBinary() (dst []byte, err error) {
@@ -844,7 +869,7 @@ func (t *TPDU) marshalStatusReport() ([]byte, error) {
 	b = append(b, t.ST)
 	// 3GPP TS 23.040 Section 9.2.2.3: the TP-PI is "Mandatory if any of the
 	// optional parameters following TP-PI is present, otherwise optional."
-	if len(pi) == 1 && pi[0] == 0 {
+	if len(pi) == 1 && pi[0] == 0 && !t.zeroPI {
 		return b, nil
 	}
 	b = append(b, pi...)
@@ -1174,6 +1199,8 @@ func (t *TPDU) unmarshalStatusReport(src []byte) error {
 	if err != nil {
 		return err
 	}
+	// A TP-PI of 0 has no extension bit, so it has no extension octets.
+	t.zeroPI = t.PI == 0
 	return t.unmarshalOptionals(src, ri)
 }
 

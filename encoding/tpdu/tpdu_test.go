@@ -2689,6 +2689,50 @@ func TestPIExtension(t *testing.T) {
 	}
 }
 
+// TestStatusReportExplicitPI checks an SMS-STATUS-REPORT marshals its TP-PI
+// if it was received with one, even one announcing no field, so it marshals
+// back to the octets it came from, while one built without a TP-PI, or
+// received without one, is marshalled without it.
+//
+// TS 23.040 9.2.2.3: the TP-PI is "Mandatory if any of the optional
+// parameters following TP-PI is present, otherwise optional."
+func TestStatusReportExplicitPI(t *testing.T) {
+	for _, in := range []string{
+		srHead,
+		srHead + " 00",
+		srHead + " 78",       // reserved bits only
+		srHead + " 80 00",    // an extension octet announcing nothing
+		srHead + " 04 01 41", // a TP-UD
+	} {
+		b := unhex(t, in)
+		d := tpdu.TPDU{}
+		require.NoError(t, d.UnmarshalBinary(b), in)
+		out, err := d.MarshalBinary()
+		require.NoError(t, err, in)
+		assert.Equal(t, b, out, in)
+		// Keeping the TP-PI does not keep the fields it announced.
+		d.UD = []byte("B")
+		out, err = d.MarshalBinary()
+		require.NoError(t, err, in)
+		r := tpdu.TPDU{}
+		require.NoError(t, r.UnmarshalBinary(out), in)
+		assert.Equal(t, []byte("B"), []byte(r.UD), in)
+	}
+
+	// The TP-PI is omitted from a status report built without one, and
+	// from one decoded without one, whatever the TPDU held before.
+	built := tpdu.TPDU{FirstOctet: 0x02, MR: 0x42, RA: tpdu.Address{Addr: "6391", TOA: 0x91}, ST: 0xab}
+	out, err := built.MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, unhex(t, "02 42 04 91 3619 00000000000000 00000000000000 ab"), out)
+	d := tpdu.TPDU{}
+	require.NoError(t, d.UnmarshalBinary(unhex(t, srHead+" 00")))
+	require.NoError(t, d.UnmarshalBinary(unhex(t, srHead)))
+	out, err = d.MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, unhex(t, srHead), out)
+}
+
 // TestPIReservedBits checks that octets following the TP-UD are discarded
 // when a reserved TP-PI bit is set, and rejected otherwise.
 //
@@ -3844,7 +3888,6 @@ func piReserved(d tpdu.TPDU) bool {
 //
 //   - a reserved TP-PI bit is set, as the octets that follow the TP-UD are
 //     then discarded (9.2.3.27).
-//   - an SMS-STATUS-REPORT has a TP-PI of 0, which is optional (9.2.2.3).
 //   - an address is not in the form it marshals to, such as one with a fill
 //     semi-octet other than the last (9.1.2.3).
 //   - a 7 bit UDH with no text has a TP-UDL of fewer septets than the UDH
@@ -3900,9 +3943,6 @@ func checkRemarshal(t *testing.T, d tpdu.TPDU, src, out []byte, label string) {
 	case tpdu.SmsStatusReport:
 		addrs, addr = []int{2}, []tpdu.Address{d.RA}
 		st := 2 + addrLen(2) + 7 + 7
-		if len(src) > st+1 && d.PI == 0 && len(d.PIExt) == 0 {
-			return // an explicit TP-PI of 0
-		}
 		if d.PI.UDL() {
 			udl = st + 1 + opts()
 		}
