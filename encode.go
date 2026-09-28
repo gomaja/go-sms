@@ -83,7 +83,8 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 // By default messages are encoded into SMS-DELIVER TPDUs.  This behaviour may
 // be overridden via options, either to NewEncoder or Encode.
 //
-// For 8-bit encoding the message is encoded as is.
+// For 8-bit encoding the message is encoded as is. This includes the TP-CD of
+// an SMS-COMMAND, which is octets whatever the DCS.
 //
 // For 7-bit encoding the message is assumed to contain UTF-8.
 //
@@ -138,8 +139,9 @@ func (e *Encoder) segment(msg []byte) ([]tpdu.TPDU, error) {
 		return nil, ErrCompressedUserData
 	}
 	sopts := append(e.sopts, tpdu.WithMR(e.MsgCount), tpdu.WithConcatRef(e.ConcatRef))
-	// take the DCS in the template TPDU as a hint...
-	alpha := e.pdu.DCS.Alphabet()
+	// take the alphabet of the template TPDU as a hint, which, for an
+	// SMS-COMMAND, is always 8 bit...
+	alpha := e.pdu.Alphabet()
 	switch alpha {
 	case tpdu.Alpha8Bit, tpdu.AlphaUCS2:
 		return e.pdu.Segment(msg, sopts...)

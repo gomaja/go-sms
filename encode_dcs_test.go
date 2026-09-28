@@ -55,3 +55,30 @@ func TestEncodeRejectsCompressedDCS(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, out, 1)
 }
+
+// The TP-CD of an SMS-COMMAND is octets, as 3GPP TS 23.040 Section 9.2.3.20
+// says: "The TP-Command-Data-Length field is used to indicate the number of
+// octets contained within the TP-Command-Data field", so the message is used
+// as it is, whatever it holds, rather than coded as text.
+func TestEncodeCommandData(t *testing.T) {
+	for _, cd := range [][]byte{
+		[]byte("hé"),
+		{0xff, 0x00, 0x1b},
+		{},
+	} {
+		out, err := sms.Encode(cd, sms.WithTemplateOption(tpdu.SmsCommand), sms.To("1234"))
+		if !assert.NoError(t, err, "% x", cd) || !assert.Len(t, out, 1, "% x", cd) {
+			continue
+		}
+		assert.Equal(t, tpdu.SmsCommand, out[0].SmsType())
+		assert.Equal(t, tpdu.DCS(0), out[0].DCS, "% x", cd)
+		if len(cd) == 0 {
+			assert.Nil(t, out[0].UD)
+		} else {
+			assert.Equal(t, tpdu.UserData(cd), out[0].UD, "% x", cd)
+		}
+		msg, err := sms.Decode(receive(t, out))
+		assert.NoError(t, err, "% x", cd)
+		assert.Equal(t, cd, msg, "% x", cd)
+	}
+}
