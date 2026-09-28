@@ -86,6 +86,12 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 //
 // For implicit UCS-2 encoding (the fallback with 7-bit fails) the message is
 // assumed to contain UTF-8.
+//
+// When the Encoder chooses the alphabet, it also chooses the national language
+// tables, so it replaces any National Language Single Shift or Locking Shift
+// IE in the template UDH by those of the tables it chose, as defined in 3GPP
+// TS 23.040 Sections 9.2.3.24.15 and 9.2.3.24.16. The other IEs of the
+// template UDH, such as application port addressing, are kept in every TPDU.
 func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, error) {
 	for _, option := range options {
 		option.ApplyEncoderOption(&e)
@@ -112,11 +118,37 @@ func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, erro
 		if dcs != e.pdu.DCS {
 			e.pdu.SetDCS(byte(dcs))
 		}
-		if udh != nil {
-			e.pdu.SetUDH(append(e.pdu.UDH[:0:0], udh...))
+		if h, changed := withNationalLanguage(e.pdu.UDH, udh); changed {
+			e.pdu.SetUDH(h)
 		}
 		return e.pdu.Segment(d, sopts...)
 	}
+}
+
+// withNationalLanguage returns the template UDH with its national language
+// IEs replaced by those in nl, and whether that changed it.
+//
+// The other IEs of the template, such as application port addressing, are
+// kept in order, and the national language IEs follow them. The result is a
+// new slice, so the template is not changed. If no IE remains then the
+// result is nil, unless the template UDH was empty but not nil and had no IE
+// to remove, as that is then unchanged.
+func withNationalLanguage(udh, nl tpdu.UserDataHeader) (tpdu.UserDataHeader, bool) {
+	h := make(tpdu.UserDataHeader, 0, len(udh)+len(nl))
+	for _, ie := range udh {
+		if ie.ID != tpdu.IEINationalLanguageLockingShift &&
+			ie.ID != tpdu.IEINationalLanguageSingleShift {
+			h = append(h, ie)
+		}
+	}
+	if len(h) == len(udh) && len(nl) == 0 {
+		return udh, false
+	}
+	h = append(h, nl...)
+	if len(h) == 0 {
+		return nil, true
+	}
+	return h, true
 }
 
 // Counter is an implementation of the tpdu.Counter interface.
