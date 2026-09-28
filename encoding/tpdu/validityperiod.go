@@ -209,11 +209,19 @@ const (
 	// All other values currently reserved.
 )
 
+// durationToRelative converts a duration into the TP-VP relative format
+// defined in 3GPP TS 23.040 Section 9.2.3.12.1, rounding down to the
+// resolution of the format:
+//
+//	0 to 143:   (TP-VP + 1) x 5 minutes
+//	144 to 167: 12 hours + ((TP-VP - 143) x 30 minutes)
+//	168 to 196: (TP-VP - 166) x 1 day
+//	197 to 255: (TP-VP - 192) x 1 week
 func durationToRelative(d time.Duration) byte {
 	switch {
 	case d < time.Hour*12:
 		t := byte(d / (time.Minute * 5))
-		if t > 1 {
+		if t > 0 {
 			t--
 		}
 		return t

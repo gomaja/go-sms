@@ -10,6 +10,7 @@ import (
 	"github.com/gomaja/go-sms/encoding/bcd"
 	"github.com/gomaja/go-sms/encoding/tpdu"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestVPEnhancedFormat(t *testing.T) {
@@ -92,6 +93,55 @@ func TestVPMarshalBinary(t *testing.T) {
 				Duration: 11 * time.Hour},
 			[]byte{0x83},
 			nil},
+		// 3GPP TS 23.040 Section 9.2.3.12.1: TP-VP 0 is (0+1) x 5 minutes.
+		{"relative5m",
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfRelative,
+				Duration: 5 * time.Minute},
+			[]byte{0x00},
+			nil},
+		{"relative5mRoundedDown",
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfRelative,
+				Duration: 10*time.Minute - time.Second},
+			[]byte{0x00},
+			nil},
+		{"relative10m",
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfRelative,
+				Duration: 10 * time.Minute},
+			[]byte{0x01},
+			nil},
+		{"relative12h",
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfRelative,
+				Duration: 12 * time.Hour},
+			[]byte{0x8f},
+			nil},
+		{"relative12h30m",
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfRelative,
+				Duration: 12*time.Hour + 30*time.Minute},
+			[]byte{0x90},
+			nil},
+		{"relative24h",
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfRelative,
+				Duration: 24 * time.Hour},
+			[]byte{0xa7},
+			nil},
+		{"relative30d",
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfRelative,
+				Duration: 30 * 24 * time.Hour},
+			[]byte{0xc4},
+			nil},
+		{"relative5w",
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfRelative,
+				Duration: 5 * 7 * 24 * time.Hour},
+			[]byte{0xc5},
+			nil},
 		{"relativeHours",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfRelative,
@@ -124,8 +174,9 @@ func TestVPMarshalBinary(t *testing.T) {
 			nil},
 		{"enhancedRelative5m",
 			tpdu.ValidityPeriod{
-				Format: tpdu.VpfEnhanced,
-				EFI:    byte(tpdu.EvpfRelative)},
+				Format:   tpdu.VpfEnhanced,
+				EFI:      byte(tpdu.EvpfRelative),
+				Duration: 5 * time.Minute},
 			[]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 			nil},
 		{"enhancedRelative10m",
@@ -310,6 +361,29 @@ func TestVPUnmarshalBinary(t *testing.T) {
 			assert.Equal(t, p.out, s)
 		}
 		t.Run(p.name, f)
+	}
+}
+
+func TestVPRelativeRoundTrip(t *testing.T) {
+	// Every TP-VP value in 3GPP TS 23.040 Section 9.2.3.12.1 is a distinct
+	// period, so decoding and re-encoding must reproduce it, in both the
+	// relative format and the relative sub-format of the enhanced format.
+	for i := 0; i < 256; i++ {
+		var v tpdu.ValidityPeriod
+		n, err := v.UnmarshalBinary([]byte{byte(i)}, tpdu.VpfRelative)
+		require.Nil(t, err)
+		require.Equal(t, 1, n)
+		b, err := v.MarshalBinary()
+		require.Nil(t, err)
+		assert.Equal(t, []byte{byte(i)}, b, "relative %d (%v)", i, v.Duration)
+
+		e := []byte{byte(tpdu.EvpfRelative), byte(i), 0, 0, 0, 0, 0}
+		n, err = v.UnmarshalBinary(e, tpdu.VpfEnhanced)
+		require.Nil(t, err)
+		require.Equal(t, 7, n)
+		b, err = v.MarshalBinary()
+		require.Nil(t, err)
+		assert.Equal(t, e, b, "enhanced relative %d (%v)", i, v.Duration)
 	}
 }
 
