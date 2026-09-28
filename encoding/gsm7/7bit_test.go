@@ -205,6 +205,18 @@ var (
 			[]byte("47"),
 		},
 		{
+			// 3 septets end mid-octet, so the final octet 0x0d is data, and
+			// the <CR> in the octet before it is not a filler either
+			"reply 144",
+			[]byte{0x31, 0x1a, 0x0d},
+			[]byte("144"),
+		},
+		{
+			"two xi",
+			[]byte{0x1a, 0x0d},
+			[]byte{0x1a, 0x1a}, // "ΞΞ"
+		},
+		{
 			"message0",
 			[]byte{0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			[]byte("message\x00"),
