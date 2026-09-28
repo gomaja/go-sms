@@ -105,12 +105,18 @@ func From(number string) EncoderOption {
 	return templateOption{tpdu.WithOA(addr)}
 }
 
-// AllCharsetsOption specifies that all charactersets are available for encoding.
+// AllCharsetsOption specifies that all character sets are available for
+// encoding or decoding.
 type AllCharsetsOption struct{}
 
 // ApplyEncoderOption applies the AllCharsetsOption to an Encoder.
 func (o AllCharsetsOption) ApplyEncoderOption(e *Encoder) {
 	e.eopts = append(e.eopts, tpdu.WithAllCharsets)
+}
+
+// ApplyDecodeOption applies the AllCharsetsOption to decoding.
+func (o AllCharsetsOption) ApplyDecodeOption(cc *DecodeConfig) {
+	cc.dopts = append(cc.dopts, tpdu.WithAllCharsets)
 }
 
 // WithCharset creates an CharsetOption.

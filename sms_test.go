@@ -211,6 +211,28 @@ func TestDecode(t *testing.T) {
 	}
 }
 
+// WithAllCharsets is a decode option as well as an encode option, and adds
+// every character set to those given by other options.
+func TestDecodeWithAllCharsets(t *testing.T) {
+	in := []*tpdu.TPDU{
+		{
+			UDH: tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Urdu)}},
+			},
+			UD: []byte("hello \x03"),
+		},
+	}
+	out, err := sms.Decode(in, sms.WithCharset(charset.Turkish))
+	assert.NoError(t, err)
+	assert.Equal(t, "hello ¥", string(out))
+	out, err = sms.Decode(in, sms.WithCharset(charset.Turkish), sms.WithAllCharsets)
+	assert.NoError(t, err)
+	assert.Equal(t, "hello ٻ", string(out))
+	out, err = sms.Decode(in, sms.WithAllCharsets)
+	assert.NoError(t, err)
+	assert.Equal(t, "hello ٻ", string(out))
+}
+
 // ucs2Segment returns a UCS2 segment of a concatenated message holding the
 // UD.
 func ucs2Segment(ud ...byte) *tpdu.TPDU {
