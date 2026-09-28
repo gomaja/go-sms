@@ -101,7 +101,10 @@ func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, erro
 		return e.pdu.Segment(msg, sopts...), nil
 	default:
 		// encode as GSM7, or failing that UCS2...
-		d, udh, alpha := tpdu.EncodeUserData(msg, e.eopts...)
+		d, udh, alpha, err := tpdu.EncodeUserData(msg, e.eopts...)
+		if err != nil {
+			return nil, err
+		}
 		dcs, err := e.pdu.DCS.WithAlphabet(alpha)
 		if err != nil {
 			return nil, ErrDcsConflict

@@ -4,6 +4,8 @@ package tpdu
 
 import (
 	"encoding/binary"
+	"errors"
+	"unicode/utf8"
 
 	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
@@ -431,10 +433,16 @@ const (
 // no benefit at all.
 //
 // Failing GSM7 conversion it falls back to UCS2/UTF16.
-func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHeader, Alphabet) {
+//
+// ErrInvalidUTF8 is returned if the message is not valid UTF8, rather than
+// replacing the invalid octets with U+FFFD.
+func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHeader, Alphabet, error) {
+	if !utf8.Valid(msg) {
+		return nil, nil, Alpha7Bit, ErrInvalidUTF8
+	}
 	enc, err := gsm7.Encode([]byte(msg)) // default charset
 	if err == nil {
-		return enc, nil, Alpha7Bit
+		return enc, nil, Alpha7Bit, nil
 	}
 	cfg := udEncodeConfig{}
 	for _, option := range options {
@@ -447,7 +455,7 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 			return enc, UserDataHeader{
 					InformationElement{ID: IEINationalLanguageLockingShift, Data: []byte{byte(nli)}},
 				},
-				Alpha7Bit
+				Alpha7Bit, nil
 		}
 	}
 	// try default with language shift tables
@@ -457,7 +465,7 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 			return enc, UserDataHeader{
 					InformationElement{ID: IEINationalLanguageSingleShift, Data: []byte{byte(nli)}},
 				},
-				Alpha7Bit
+				Alpha7Bit, nil
 		}
 	}
 	// try combination of locking AND shift for same charset
@@ -472,7 +480,7 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 						InformationElement{ID: IEINationalLanguageLockingShift, Data: []byte{byte(nli)}},
 						InformationElement{ID: IEINationalLanguageSingleShift, Data: []byte{byte(nli)}},
 					},
-					Alpha7Bit
+					Alpha7Bit, nil
 			}
 		}
 	}
@@ -480,5 +488,8 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 
 	// fallback to ucs-2
 	enc = ucs2.Encode([]rune(string(msg)))
-	return enc, nil, AlphaUCS2
+	return enc, nil, AlphaUCS2, nil
 }
+
+// ErrInvalidUTF8 indicates that a message to be encoded is not valid UTF8.
+var ErrInvalidUTF8 = errors.New("invalid UTF8")

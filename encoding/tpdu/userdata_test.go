@@ -975,13 +975,35 @@ func TestEncodeUserData(t *testing.T) {
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			ud, udh, alpha := tpdu.EncodeUserData(p.msg, p.options...)
+			ud, udh, alpha, err := tpdu.EncodeUserData(p.msg, p.options...)
+			require.Nil(t, err)
 			assert.Equal(t, p.ud, ud)
 			assert.Equal(t, p.udh, udh)
 			assert.Equal(t, p.alpha, alpha)
 		}
 		t.Run(p.name, f)
 	}
+}
+
+func TestEncodeUserDataInvalidUTF8(t *testing.T) {
+	for _, msg := range [][]byte{
+		{'h', 0xff, 'i'},
+		{0xc3},
+		{0xed, 0xa0, 0x80},       // encoded surrogate
+		{0xf4, 0x90, 0x80, 0x80}, // beyond U+10FFFF
+		[]byte("hello \xf0\x9f\x98"),
+	} {
+		ud, udh, _, err := tpdu.EncodeUserData(msg, tpdu.WithAllCharsets)
+		assert.Equal(t, tpdu.ErrInvalidUTF8, err, "% x", msg)
+		assert.Nil(t, ud, "% x", msg)
+		assert.Nil(t, udh, "% x", msg)
+	}
+	// U+FFFD is valid UTF8 and is encoded as UCS2
+	ud, udh, alpha, err := tpdu.EncodeUserData([]byte("h\uFFFDi"))
+	require.Nil(t, err)
+	assert.Nil(t, udh)
+	assert.Equal(t, tpdu.AlphaUCS2, alpha)
+	assert.Equal(t, tpdu.UserData{0x00, 'h', 0xff, 0xfd, 0x00, 'i'}, ud)
 }
 
 func TestNationalLanguageIEIWire(t *testing.T) {
@@ -1015,7 +1037,8 @@ func TestNationalLanguageIEIWire(t *testing.T) {
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			_, udh, alpha := tpdu.EncodeUserData(p.msg, p.options...)
+			_, udh, alpha, err := tpdu.EncodeUserData(p.msg, p.options...)
+			require.Nil(t, err)
 			assert.Equal(t, tpdu.Alpha7Bit, alpha)
 			b, err := udh.MarshalBinary()
 			require.Nil(t, err)

@@ -453,6 +453,25 @@ func TestEncode(t *testing.T) {
 	}
 }
 
+func TestEncodeInvalidUTF8(t *testing.T) {
+	for _, msg := range [][]byte{
+		{'h', 0xff, 'i'},
+		{0xc3},
+		{0xed, 0xa0, 0x80}, // encoded surrogate
+		[]byte("hello \xf0\x9f\x98"),
+	} {
+		out, err := sms.Encode(msg)
+		assert.Equal(t, tpdu.ErrInvalidUTF8, err, "% x", msg)
+		assert.Nil(t, out, "% x", msg)
+	}
+	// U+FFFD itself is valid UTF-8, and is encoded as UCS2
+	out, err := sms.Encode([]byte("h�i"))
+	assert.Nil(t, err)
+	if assert.Len(t, out, 1) {
+		assert.Equal(t, tpdu.UserData{0x00, 'h', 0xff, 0xfd, 0x00, 'i'}, out[0].UD)
+	}
+}
+
 func TestEncodeReturnsTemplateOptionError(t *testing.T) {
 	errTemplate := errors.New("template option failed")
 	out, err := sms.Encode([]byte("hello"), sms.WithTemplateOption(badTPDUOption{err: errTemplate}))
