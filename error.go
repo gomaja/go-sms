@@ -28,8 +28,4 @@ var (
 	// Collector gives for a segment of a concatenated message that was not
 	// received.
 	ErrMissingSegment = errors.New("missing segment")
-	// ErrReassemblyInconsistency indicates a segment has arrived for a
-	// reassembly that has a seqno greater than the number of segments in the
-	// reassembly.
-	ErrReassemblyInconsistency = errors.New("reassembly inconsistency")
 )

@@ -727,6 +727,120 @@ func TestCollectorPipes(t *testing.T) {
 	}
 }
 
+// A concatenation IE whose total is 0, or whose sequence number is 0 or
+// greater than the total, is ignored, as required by 3GPP TS 23.040 Sections
+// 9.2.3.24.1 and 9.2.3.24.8, so the SM is delivered on its own, and every
+// valid sequence number is collected. This covers every total and sequence
+// number of both IEs.
+func TestCollectorConcatIEValues(t *testing.T) {
+	for _, ref16 := range []bool{false, true} {
+		for total := 0; total < 256; total++ {
+			c := sms.NewCollector()
+			for seqno := 0; seqno < 256; seqno++ {
+				ie := tpdu.InformationElement{ID: 0, Data: []byte{7, byte(total), byte(seqno)}}
+				if ref16 {
+					ie = tpdu.InformationElement{ID: 8, Data: []byte{0, 7, byte(total), byte(seqno)}}
+				}
+				p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}}
+				p.SetUDH(tpdu.UserDataHeader{ie})
+				out, err := c.Collect(p)
+				require.NoError(t, err, "ref16 %t total %d seqno %d", ref16, total, seqno)
+				switch {
+				case seqno == 0 || seqno > total || total == 1:
+					require.Len(t, out, 1, "ref16 %t total %d seqno %d", ref16, total, seqno)
+					require.True(t, sms.IsCompleteMessage(out))
+				case seqno == total:
+					require.Len(t, out, total, "ref16 %t total %d seqno %d", ref16, total, seqno)
+					require.True(t, sms.IsCompleteMessage(out))
+				default:
+					require.Nil(t, out, "ref16 %t total %d seqno %d", ref16, total, seqno)
+				}
+			}
+			require.Empty(t, c.Pipes())
+			c.Close()
+		}
+	}
+}
+
+// Segments with the same reference but different totals belong to different
+// messages.
+func TestCollectorKeyIncludesTotal(t *testing.T) {
+	c := sms.NewCollector()
+	defer c.Close()
+	seg := func(total, seqno byte) tpdu.TPDU {
+		p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}}
+		p.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{7, total, seqno}}})
+		return p
+	}
+	for _, p := range []tpdu.TPDU{seg(2, 2), seg(3, 3), seg(3, 1)} {
+		out, err := c.Collect(p)
+		require.NoError(t, err)
+		require.Nil(t, out)
+	}
+	out, err := c.Collect(seg(2, 1))
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.True(t, sms.IsCompleteMessage(out))
+	out, err = c.Collect(seg(3, 2))
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	assert.True(t, sms.IsCompleteMessage(out))
+	assert.Empty(t, c.Pipes())
+}
+
+// The same from the wire: the TPDUs are unmarshalled, and an ignored IE does
+// not hide a valid one.
+func TestCollectorIgnoresInvalidConcatIE(t *testing.T) {
+	c := sms.NewCollector()
+	defer c.Close()
+	// SMS-DELIVER from 1234 with UDHI and the UDH given, then "hello" in 8
+	// bit.
+	deliver := func(udh ...byte) []byte {
+		b := []byte{0x44, 0x04, 0x91, 0x21, 0x43, 0x00, 0x04,
+			0x62, 0x80, 0x92, 0x10, 0x00, 0x00, 0x00}
+		b = append(b, byte(1+len(udh)+5), byte(len(udh)))
+		b = append(b, udh...)
+		return append(b, "hello"...)
+	}
+	for _, udh := range [][]byte{
+		{0x00, 0x03, 0x09, 0x02, 0x00},             // seqno 0
+		{0x00, 0x03, 0x09, 0x02, 0x03},             // seqno beyond total
+		{0x00, 0x03, 0x09, 0x00, 0x01},             // total 0
+		{0x08, 0x04, 0x00, 0x09, 0x02, 0x00},       // 16-bit seqno 0
+		{0x08, 0x04, 0x00, 0x09, 0x02, 0x09},       // 16-bit seqno beyond total
+		{0x00, 0x02, 0x09, 0x02},                   // wrong length
+		{0x08, 0x03, 0x00, 0x09, 0x02},             // 16-bit wrong length
+		{0x00, 0x03, 0x09, 0x01, 0x01, 0x05, 0x00}, // total 1, and an empty IE
+	} {
+		pdu, err := sms.Unmarshal(deliver(udh...))
+		require.NoError(t, err, "% x", udh)
+		out, err := c.Collect(*pdu)
+		require.NoError(t, err, "% x", udh)
+		require.Len(t, out, 1, "% x", udh)
+		assert.True(t, sms.IsCompleteMessage(out), "% x", udh)
+		msg, err := sms.Decode(out)
+		require.NoError(t, err, "% x", udh)
+		assert.Equal(t, "hello", string(msg), "% x", udh)
+	}
+	// An invalid 8-bit IE before a valid 16-bit one: the 16-bit one is used.
+	for seqno := byte(1); seqno <= 2; seqno++ {
+		pdu, err := sms.Unmarshal(deliver(0x00, 0x03, 0x09, 0x02, 0x00, 0x08, 0x04, 0x01, 0x09, 0x02, seqno))
+		require.NoError(t, err)
+		out, err := c.Collect(*pdu)
+		require.NoError(t, err)
+		if seqno == 1 {
+			assert.Nil(t, out)
+			continue
+		}
+		require.Len(t, out, 2)
+		assert.True(t, sms.IsCompleteMessage(out))
+		msg, err := sms.Decode(out)
+		require.NoError(t, err)
+		assert.Equal(t, "hellohello", string(msg))
+	}
+	assert.Empty(t, c.Pipes())
+}
+
 // Only SMS-SUBMIT and SMS-DELIVER are reassembled. Any other type is
 // rejected before the Collector stores anything, so segments of reports from
 // different parties are never merged, and nothing expires.

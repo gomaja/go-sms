@@ -105,15 +105,17 @@ func (c *Collector) Collect(pdu tpdu.TPDU) ([]*tpdu.TPDU, error) {
 	default:
 		return nil, tpdu.ErrUnsupportedSmsType(st)
 	}
+	// ConcatInfo ignores an IE whose total is 0 or whose sequence number is 0
+	// or greater than the total, as 3GPP TS 23.040 Sections 9.2.3.24.1 and
+	// 9.2.3.24.8 require, so the TPDU is then on its own, and the sequence
+	// number always indexes the segments of the reassembly, whose key
+	// includes the total.
 	ci, ok := pdu.ConcatInfo()
 	if !ok || ci.Total < 2 {
 		// short circuit single segment - no need for a pipe
 		return []*tpdu.TPDU{&pdu}, nil
 	}
 	segments, seqno := ci.Total, ci.Seqno
-	if seqno < 1 || seqno > segments {
-		return nil, ErrReassemblyInconsistency
-	}
 	key := pduKey(pdu, ci)
 	p, ok := c.pipes[key]
 	if ok {
