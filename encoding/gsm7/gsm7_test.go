@@ -371,6 +371,20 @@ func TestTeluguEuro(t *testing.T) {
 	assert.Nil(t, out)
 }
 
+// TestUnknownLanguage checks that a reserved or unknown national language
+// identifier selects the default tables, as a receiver ignores it (3GPP TS
+// 23.038 Section 6.2.1.2.5).
+func TestUnknownLanguage(t *testing.T) {
+	for _, nli := range []int{-1, charset.End, 0xff} {
+		out, err := gsm7.Encode([]byte("Ø€"), gsm7.WithCharset(nli), gsm7.WithExtCharset(nli))
+		assert.NoError(t, err, "%d", nli)
+		assert.Equal(t, []byte{0x0b, 0x1b, 0x65}, out, "%d", nli)
+		dec, err := gsm7.Decode(out, gsm7.WithCharset(nli), gsm7.WithExtCharset(nli), gsm7.Strict)
+		assert.NoError(t, err, "%d", nli)
+		assert.Equal(t, "Ø€", string(dec), "%d", nli)
+	}
+}
+
 // TestHindi round trips Hindi text through the Hindi locking and single shift
 // tables. The septets are taken from 3GPP TS 23.038 V20.0.0 Annex A.3.6,
 // where 0x00-0x02 hold the Devanagari signs candrabindu, anusvara and visarga

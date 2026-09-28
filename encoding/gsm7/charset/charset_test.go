@@ -173,6 +173,18 @@ func TestExtUndefinedCodes(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// TestUnknownLanguage checks that a reserved or unknown national language
+// identifier gives the default tables, as a receiver ignores it (3GPP TS
+// 23.038 Section 6.2.1.2.5).
+func TestUnknownLanguage(t *testing.T) {
+	for _, nli := range []int{-1, charset.End, 0x0e, 0x7f, 0xff} {
+		assert.Equal(t, charset.DefaultDecoder(), charset.NewDecoder(nli), "%d", nli)
+		assert.Equal(t, charset.DefaultExtDecoder(), charset.NewExtDecoder(nli), "%d", nli)
+		assert.Equal(t, charset.DefaultEncoder(), charset.NewEncoder(nli), "%d", nli)
+		assert.Equal(t, charset.DefaultExtEncoder(), charset.NewExtEncoder(nli), "%d", nli)
+	}
+}
+
 func TestDecoder(t *testing.T) {
 	for _, l := range languageTests {
 		d := charset.NewDecoder(l.nli)

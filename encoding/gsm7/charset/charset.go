@@ -15,6 +15,10 @@ func DefaultDecoder() Decoder {
 }
 
 // NewDecoder returns the mapping table from GSM7 to UTF8 for the given language.
+//
+// It returns the default table for Spanish, which has no locking shift table
+// (3GPP TS 23.038 Annex A.3.2 is Void), and for an identifier that is
+// reserved or unknown, as a receiver ignores those (Section 6.2.1.2.5).
 func NewDecoder(nli int) Decoder {
 	if d, ok := decoders[nli]; ok {
 		return maps.Clone(d)
@@ -28,6 +32,9 @@ func DefaultExtDecoder() Decoder {
 }
 
 // NewExtDecoder returns the extension mapping table from GSM7 to UTF8 for the given language.
+//
+// It returns the default table for an identifier that is reserved or
+// unknown, as a receiver ignores those (3GPP TS 23.038 Section 6.2.1.2.5).
 func NewExtDecoder(nli int) Decoder {
 	if d, ok := extDecoders[nli]; ok {
 		return maps.Clone(d)
@@ -41,6 +48,8 @@ func DefaultEncoder() Encoder {
 }
 
 // NewEncoder returns the mapping table from UTF8 to GSM7 for the given language.
+//
+// It returns the default table where NewDecoder does.
 func NewEncoder(nli int) Encoder {
 	if e, ok := encoders[nli]; ok {
 		return maps.Clone(e)
@@ -54,6 +63,8 @@ func DefaultExtEncoder() Encoder {
 }
 
 // NewExtEncoder returns the extension mapping table from UTF8 to GSM7 for the given language.
+//
+// It returns the default table where NewExtDecoder does.
 func NewExtEncoder(nli int) Encoder {
 	if e, ok := extEncoders[nli]; ok {
 		return maps.Clone(e)
