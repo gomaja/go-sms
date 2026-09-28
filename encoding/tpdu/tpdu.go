@@ -42,7 +42,11 @@ type TPDU struct {
 	// Only applies to SMS-DELIVER
 	OA Address
 
-	// FCS contains the TP-FCS Failure Cause field.
+	// FCS contains the TP-FCS Failure Cause field, as received.
+	//
+	// A receiver takes it as FailureCause returns it, which is 0xFF,
+	// "Unspecified error cause", for a report with an unused bit set in its
+	// first octet.
 	//
 	// Only applies to an SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT with an
 	// RPMessage of RPError. MarshalBinary returns an error if it is set for
@@ -159,6 +163,14 @@ type TPDU struct {
 	// Section 9.2.3.24), so these octets are marshalled while UDH is left
 	// empty, and dropped by SetUDH.
 	ignoredUDH []byte
+
+	// unexamined holds the octets that follow the TP-FCS of an
+	// SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT for RP-ERROR that was
+	// unmarshalled with an unused bit set in its first octet, whose fields
+	// a receiver "shall not examine" (3GPP TS 23.040 Sections 9.2.2.1a and
+	// 9.2.2.2a). They are marshalled in place of the fields while those are
+	// left empty, as described for keepsUnexamined.
+	unexamined []byte
 
 	// zeroPI is set for an SMS-STATUS-REPORT that was unmarshalled with a
 	// TP-PI of 0, which is then marshalled although it is optional, so the
@@ -657,14 +669,72 @@ func addressOctets(a *Address) int {
 	return len(b)
 }
 
+// FailureCause returns the TP-FCS of an SMS-DELIVER-REPORT or
+// SMS-SUBMIT-REPORT as a receiver is to take it.
+//
+// For a report for RP-ERROR whose first octet has any of bits 7 and 5 to 2
+// set, it is 0xFF, "Unspecified error cause" (3GPP TS 23.040 Section
+// 9.2.3.22), whatever the FCS holds, as Sections 9.2.2.1a and 9.2.2.2a say:
+// "Bits 7 and 5 - 2 in octet 1 are presently unused and the sender shall set
+// them to zero. If any of these bits is non-zero, the receiver shall not
+// examine the other field and shall treat the TP-Failure-Cause as
+// "Unspecified error cause"". Otherwise it is the FCS, reserved values
+// included.
+func (t *TPDU) FailureCause() byte {
+	if t.unusedReportBits() {
+		return 0xff
+	}
+	return t.FCS
+}
+
+// foReportUnused masks the unused bits, 7 and 5 to 2, of the first octet of
+// an SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT (3GPP TS 23.040 Sections
+// 9.2.2.1a and 9.2.2.2a).
+const foReportUnused FirstOctet = 0xbc
+
+// unusedReportBits reports whether the TPDU is an SMS-DELIVER-REPORT or
+// SMS-SUBMIT-REPORT for RP-ERROR with an unused bit of its first octet set,
+// whose fields other than the TP-FCS a receiver does not examine. In a report
+// for RP-ACK the receiver ignores those bits instead.
+func (t *TPDU) unusedReportBits() bool {
+	switch t.SmsType() {
+	case SmsDeliverReport, SmsSubmitReport:
+		return t.RPMessage == RPError && t.FirstOctet&foReportUnused != 0
+	default:
+		return false
+	}
+}
+
+// keepsUnexamined reports whether the TPDU marshals the octets that followed
+// the TP-FCS of the report it was unmarshalled from, rather than its fields,
+// which it does while it is still a report whose fields are not examined,
+// and those fields are left empty.
+//
+// It is called on the TPDU with its flags derived, as described for
+// MarshalBinary, whose PI is not 0 if the PID, DCS, UDH or UD is set.
+func (t *TPDU) keepsUnexamined() bool {
+	return t.unexamined != nil && t.unusedReportBits() &&
+		t.PI == 0 && len(t.PIExt) == 0 && t.SCTS == (Timestamp{})
+}
+
+// withUnexamined returns the octets of a report whose fields are not
+// examined: its first octet, its TP-FCS and the octets that followed it.
+func (t *TPDU) withUnexamined(fcs []byte) []byte {
+	b := make([]byte, 0, 1+len(fcs)+len(t.unexamined))
+	b = append(b, byte(t.FirstOctet))
+	b = append(b, fcs...)
+	return append(b, t.unexamined...)
+}
+
 // UDHI returns the User Data Header Indicator bit from the SMS TPDU first
 // octet, as held.
 //
 // After SetUDH it is set exactly when the UDH is not nil. After
 // UnmarshalBinary it is the bit as received, which, for a TPDU that has a
 // TP-UD, is set exactly when the UDH is not nil. A TPDU that has no TP-UD,
-// such as one with a TP-UDL of 0, or a report whose TP-PI announces no
-// TP-UDL, has no header to decode, so its UDH is nil whatever the bit. To
+// such as one with a TP-UDL of 0, a report whose TP-PI announces no TP-UDL,
+// or one whose fields are not examined, as described for UnmarshalBinary,
+// has no header to decode, so its UDH is nil whatever the bit. To
 // find whether a TPDU has a header, test the UDH rather than this bit.
 //
 // MarshalBinary derives the bit from the UDH and UD where they are written,
@@ -832,6 +902,9 @@ func (t *TPDU) marshalDeliverReport() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if t.keepsUnexamined() {
+		return t.withUnexamined(fcs), nil
+	}
 	pi := t.piOctets()
 	opt, err := t.marshalOptionals(PI(pi[0]))
 	if err != nil {
@@ -960,6 +1033,9 @@ func (t *TPDU) marshalSubmitReport() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if t.keepsUnexamined() {
+		return t.withUnexamined(fcs), nil
+	}
 	pi := t.piOctets()
 	opt, err := t.marshalOptionals(PI(pi[0]))
 	if err != nil {
@@ -980,6 +1056,14 @@ func (t *TPDU) marshalSubmitReport() ([]byte, error) {
 // calling UnmarshalBinary, as the octets alone do not identify the type of
 // the TPDU, nor whether a report has a TP-FCS. Every other field is reset
 // before decoding, so no field of a TPDU previously held by t survives.
+//
+// Of an SMS-DELIVER-REPORT or SMS-SUBMIT-REPORT for RP-ERROR with any of
+// bits 7 and 5 to 2 of its first octet set, only the first octet and the
+// TP-FCS are decoded, as "the receiver shall not examine the other field"
+// (3GPP TS 23.040 Sections 9.2.2.1a and 9.2.2.2a), so whatever follows the
+// TP-FCS is accepted, and FailureCause returns 0xFF. Those octets are kept,
+// and MarshalBinary writes them back while the fields they would have
+// decoded to are left empty.
 //
 // In the case of error the TPDU will be partially unmarshalled, up to the
 // point that the decoding error was detected.
@@ -1192,10 +1276,23 @@ func (t *TPDU) unmarshalFCS(src []byte) (int, error) {
 	}
 }
 
+// unmarshalUnexamined keeps the octets that follow the TP-FCS, at src[ri:],
+// of a report whose fields are not examined, and reports whether it is one.
+func (t *TPDU) unmarshalUnexamined(src []byte, ri int) bool {
+	if !t.unusedReportBits() {
+		return false
+	}
+	t.unexamined = append([]byte{}, src[ri:]...)
+	return true
+}
+
 func (t *TPDU) unmarshalDeliverReport(src []byte) error {
 	ri, err := t.unmarshalFCS(src)
 	if err != nil {
 		return err
+	}
+	if t.unmarshalUnexamined(src, ri) {
+		return nil
 	}
 	ri, err = t.unmarshalPI(src, ri)
 	if err != nil {
@@ -1288,6 +1385,9 @@ func (t *TPDU) unmarshalSubmitReport(src []byte) error {
 	ri, err := t.unmarshalFCS(src)
 	if err != nil {
 		return err
+	}
+	if t.unmarshalUnexamined(src, ri) {
+		return nil
 	}
 	ri, err = t.unmarshalPI(src, ri)
 	if err != nil {

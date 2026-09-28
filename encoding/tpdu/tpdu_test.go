@@ -2685,6 +2685,124 @@ func TestReportRPErrorDecode(t *testing.T) {
 	}
 }
 
+// TestReportRPErrorUnusedBits checks the receiver rule for a report for
+// RP-ERROR whose first octet has an unused bit set: its fields after the
+// TP-FCS are not examined, so the report decodes whatever they hold, the
+// TP-FCS is taken as "Unspecified error cause", and the octets are kept, so
+// the report marshals back to them.
+//
+// TS 23.040 9.2.2.1a (i) and 9.2.2.2a (i): "Bits 7 and 5 - 2 in octet 1 are
+// presently unused and the sender shall set them to zero. If any of these
+// bits is non-zero, the receiver shall not examine the other field and shall
+// treat the TP-Failure-Cause as "Unspecified error cause"", which 9.2.3.22
+// codes as FF.
+func TestReportRPErrorUnusedBits(t *testing.T) {
+	patterns := []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+		fcs  byte
+	}{
+		// a TP-PI announcing fields that are missing
+		{"deliver report bit 2", tpdu.MO, "04 d0 07", 0xd0},
+		{"submit report bit 2", tpdu.MT, "05 c0 07", 0xc0},
+		// a TP-SCTS that is missing
+		{"submit report bit 3", tpdu.MT, "09 c0 00 5150", 0xc0},
+		{"deliver report bit 7", tpdu.MO, "80 d0 ff ff", 0xd0},
+		{"deliver report bit 5 nothing after fcs", tpdu.MO, "20 d0", 0xd0},
+		{"deliver report bit 4 with udhi", tpdu.MO, "50 d2 04 01 00", 0xd2},
+		{"submit report all unused bits", tpdu.MT, "bd ff 00 51507132200523", 0xff},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError}
+			require.NoError(t, d.UnmarshalBinary(in))
+			assert.Equal(t, p.fcs, d.FCS)
+			assert.Equal(t, byte(0xff), d.FailureCause())
+			// no field after the TP-FCS is examined
+			assert.Zero(t, d.PI)
+			assert.Nil(t, d.PIExt)
+			assert.Zero(t, d.SCTS)
+			assert.Nil(t, d.UDH)
+			assert.Nil(t, d.UD)
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, b)
+			// the octets are those of the TPDU, not of the fields, so once
+			// any field is set the TPDU marshals as one built with it.
+			for i, set := range []func(*tpdu.TPDU){
+				func(d *tpdu.TPDU) { d.PI = tpdu.PiPID },
+				func(d *tpdu.TPDU) { d.PIExt = []byte{0x00} },
+				func(d *tpdu.TPDU) { d.SCTS = tpdu.Timestamp{Time: time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)} },
+				func(d *tpdu.TPDU) { d.PID = 0x7f },
+				func(d *tpdu.TPDU) { d.DCS = tpdu.Dcs8BitData },
+				func(d *tpdu.TPDU) { d.UDH = tpdu.UserDataHeader{} },
+				func(d *tpdu.TPDU) { d.UD = []byte("A") },
+			} {
+				c := d
+				set(&c)
+				built := tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError, FirstOctet: d.FirstOctet, FCS: d.FCS}
+				set(&built)
+				want, err := built.MarshalBinary()
+				require.NoError(t, err, i)
+				b, err = c.MarshalBinary()
+				require.NoError(t, err, i)
+				assert.Equal(t, want, b, i)
+			}
+			r := tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError}
+			// as are the fields when the unused bits are cleared
+			d = tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError}
+			require.NoError(t, d.UnmarshalBinary(in))
+			d.FirstOctet &= 0x43
+			b, err = d.MarshalBinary()
+			require.NoError(t, err)
+			require.NoError(t, r.UnmarshalBinary(b))
+			assert.Equal(t, p.fcs, r.FailureCause())
+		}
+		t.Run(p.name, f)
+	}
+
+	// The TP-FCS itself is still required.
+	d := tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}
+	err := d.UnmarshalBinary(unhex(t, "04"))
+	assert.Equal(t, tpdu.NewDecodeError("SmsDeliverReport.fcs", 1, tpdu.ErrUnderflow), err)
+
+	// The rule is for RP-ERROR: in a report for RP-ACK, which has no
+	// TP-FCS, the receiver "shall ignore them" (9.2.2.1a (ii), 9.2.2.2a
+	// (ii)), so the report is decoded as any other.
+	d = tpdu.TPDU{Direction: tpdu.MO}
+	require.NoError(t, d.UnmarshalBinary(unhex(t, "04 01 7f")))
+	assert.Equal(t, byte(0x7f), d.PID)
+	assert.Equal(t, byte(0), d.FailureCause())
+	d = tpdu.TPDU{Direction: tpdu.MO}
+	err = d.UnmarshalBinary(unhex(t, "04 07"))
+	assert.Equal(t, tpdu.NewDecodeError("SmsDeliverReport.pid", 2, tpdu.ErrUnderflow), err)
+
+	// Without an unused bit the TP-FCS is taken as received, reserved
+	// values included, and the fields are examined.
+	d = tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}
+	require.NoError(t, d.UnmarshalBinary(unhex(t, "40 d0 00")))
+	assert.Equal(t, byte(0xd0), d.FailureCause())
+	err = d.UnmarshalBinary(unhex(t, "00 d0 07"))
+	assert.Equal(t, tpdu.NewDecodeError("SmsDeliverReport.pid", 3, tpdu.ErrUnderflow), err)
+
+	// FailureCause applies the rule to a report that was not unmarshalled.
+	for _, p := range []struct {
+		t     tpdu.TPDU
+		cause byte
+	}{
+		{tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FirstOctet: 0x04, FCS: 0xd0}, 0xff},
+		{tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FirstOctet: 0x40, FCS: 0xd0}, 0xd0},
+		{tpdu.TPDU{FirstOctet: 0x81, RPMessage: tpdu.RPError, FCS: 0xc0}, 0xff},
+		{tpdu.TPDU{FirstOctet: 0x81, RPMessage: tpdu.RPAck}, 0},
+		// the rule is for the reports only
+		{tpdu.TPDU{FirstOctet: 0x04, RPMessage: tpdu.RPError, FCS: 0xd0}, 0xd0},
+	} {
+		assert.Equal(t, p.cause, p.t.FailureCause(), "%+v", p.t)
+	}
+}
+
 func TestReportFCSMarshal(t *testing.T) {
 	// An FCS cannot be carried in a report for RP-ACK.
 	for _, st := range []tpdu.SmsType{tpdu.SmsDeliverReport, tpdu.SmsSubmitReport} {
@@ -4126,6 +4244,9 @@ func FuzzUnmarshalBinary(f *testing.F) {
 		dlvHeadUDHI + " 20 " + scts + " 09 050003010201 81ff01",
 		dlvHead + " 80 " + scts + " 08 c8303a8c0ea3c3",
 		"07 04 91 3619 00 00 51507132200523 01 41",
+		// reports for RP-ERROR with unused bits set
+		"04 d0 07",
+		"05 c0 07 12",
 		// ignored UDH, alphanumeric address
 		"41 00 04 91 3619 00 04 06 05 04 01 03 01 02",
 		"04 07 d0 e1f1d8 00 00 51507132200523 00",
