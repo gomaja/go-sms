@@ -228,14 +228,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	urduEncoder    Encoder
-	urduExtEncoder Encoder
+	urduEncoder    = generateEncoder(urduDecoder)
+	urduExtEncoder = generateEncoder(urduExtDecoder)
 )
-
-func generateUrduEncoder() Encoder {
-	return generateEncoder(urduDecoder)
-}
-
-func generateUrduExtEncoder() Encoder {
-	return generateEncoder(urduExtDecoder)
-}

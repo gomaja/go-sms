@@ -225,14 +225,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	hindiEncoder    Encoder
-	hindiExtEncoder Encoder
+	hindiEncoder    = generateEncoder(hindiDecoder)
+	hindiExtEncoder = generateEncoder(hindiExtDecoder)
 )
-
-func generateHindiEncoder() Encoder {
-	return generateEncoder(hindiDecoder)
-}
-
-func generateHindiExtEncoder() Encoder {
-	return generateEncoder(hindiExtDecoder)
-}

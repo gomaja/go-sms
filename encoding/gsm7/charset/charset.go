@@ -1,82 +1,74 @@
 // SPDX-License-Identifier: MIT
 
 // Package charset provides encoders and decoders for GSM character sets.
+//
+// The tables are built once, when the package is initialised, and are never
+// handed out. Each function returns a new copy of its table, so a caller may
+// change the table it gets without affecting any other caller.
 package charset
+
+import "maps"
 
 // DefaultDecoder returns the default mapping table from GSM7 to UTF8.
 func DefaultDecoder() Decoder {
-	if defaultDecoder == nil {
-		defaultDecoder = generateDefaultDecoder()
-	}
-	return defaultDecoder
+	return maps.Clone(defaultDecoder)
 }
 
 // NewDecoder returns the mapping table from GSM7 to UTF8 for the given language.
 func NewDecoder(nli int) Decoder {
-	if di, ok := decoder[nli]; ok {
-		if *di.e == nil {
-			*di.e = di.g()
-		}
-		return *di.e
+	if d, ok := decoders[nli]; ok {
+		return maps.Clone(d)
 	}
 	return DefaultDecoder()
 }
 
 // DefaultExtDecoder returns the default extension mapping table from GSM7 to UTF8.
 func DefaultExtDecoder() Decoder {
-	return defaultExtDecoder
+	return maps.Clone(defaultExtDecoder)
 }
 
 // NewExtDecoder returns the extension mapping table from GSM7 to UTF8 for the given language.
 func NewExtDecoder(nli int) Decoder {
-	if di, ok := extDecoder[nli]; ok {
-		return *di.e
+	if d, ok := extDecoders[nli]; ok {
+		return maps.Clone(d)
 	}
 	return DefaultExtDecoder()
 }
 
 // DefaultEncoder returns the default mapping table from UTF8 to GSM7.
 func DefaultEncoder() Encoder {
-	if defaultEncoder == nil {
-		defaultEncoder = generateDefaultEncoder()
-	}
-	return defaultEncoder
+	return maps.Clone(defaultEncoder)
 }
 
 // NewEncoder returns the mapping table from UTF8 to GSM7 for the given language.
 func NewEncoder(nli int) Encoder {
-	if ei, ok := encoder[nli]; ok {
-		if *ei.e == nil {
-			*ei.e = ei.g()
-		}
-		return *ei.e
+	if e, ok := encoders[nli]; ok {
+		return maps.Clone(e)
 	}
 	return DefaultEncoder()
 }
 
 // DefaultExtEncoder returns the default extension mapping table from UTF8 to GSM7.
 func DefaultExtEncoder() Encoder {
-	if defaultExtEncoder == nil {
-		defaultExtEncoder = generateDefaultExtEncoder()
-	}
-	return defaultExtEncoder
+	return maps.Clone(defaultExtEncoder)
 }
 
 // NewExtEncoder returns the extension mapping table from UTF8 to GSM7 for the given language.
 func NewExtEncoder(nli int) Encoder {
-	if ei, ok := extEncoder[nli]; ok {
-		if *ei.e == nil {
-			*ei.e = ei.g()
-		}
-		return *ei.e
+	if e, ok := extEncoders[nli]; ok {
+		return maps.Clone(e)
 	}
 	return DefaultExtEncoder()
 }
 
 // Decoder provides a mapping from GSM7 byte to UTF8 rune.
+//
+// A Decoder returned by this package is a copy that belongs to the caller.
 type Decoder map[byte]rune
 
 // Encoder provides a mapping from UTF8 rune to GSM7 byte.
+//
+// An Encoder returned by this package is a copy that belongs to the caller.
 type Encoder map[rune]byte
 
 // NationalLanguageIdentifier indicates the character set in use, as defined in
@@ -149,79 +141,65 @@ func generateDecoderFromRunes(runes []rune) Decoder {
 	return dset
 }
 
-type decoderGenerator func() Decoder
-
-type decoderNGen struct {
-	e *Decoder
-	g decoderGenerator
-}
-
-type encoderGenerator func() Encoder
-
-type encoderNGen struct {
-	e *Encoder
-	g encoderGenerator
-}
-
 var (
-	decoder = map[int]decoderNGen{
-		Turkish: {&turkishDecoder, generateTurkishDecoder},
+	decoders = map[int]Decoder{
+		Turkish: turkishDecoder,
 		// Spanish uses default
-		Portuguese: {&portugueseDecoder, generatePortugueseDecoder},
-		Bengali:    {&bengaliDecoder, nil},
-		Gujaranti:  {&gujaratiDecoder, nil},
-		Hindi:      {&hindiDecoder, nil},
-		Kannada:    {&kannadaDecoder, nil},
-		Malayalam:  {&malayalamDecoder, nil},
-		Oriya:      {&oriyaDecoder, nil},
-		Punjabi:    {&punjabiDecoder, nil},
-		Tamil:      {&tamilDecoder, nil},
-		Telugu:     {&teluguDecoder, nil},
-		Urdu:       {&urduDecoder, nil},
+		Portuguese: portugueseDecoder,
+		Bengali:    bengaliDecoder,
+		Gujaranti:  gujaratiDecoder,
+		Hindi:      hindiDecoder,
+		Kannada:    kannadaDecoder,
+		Malayalam:  malayalamDecoder,
+		Oriya:      oriyaDecoder,
+		Punjabi:    punjabiDecoder,
+		Tamil:      tamilDecoder,
+		Telugu:     teluguDecoder,
+		Urdu:       urduDecoder,
 	}
-	extDecoder = map[int]decoderNGen{
-		Turkish:    {&turkishExtDecoder, nil},
-		Spanish:    {&spanishExtDecoder, nil},
-		Portuguese: {&portugueseExtDecoder, nil},
-		Bengali:    {&bengaliExtDecoder, nil},
-		Gujaranti:  {&gujaratiExtDecoder, nil},
-		Hindi:      {&hindiExtDecoder, nil},
-		Kannada:    {&kannadaExtDecoder, nil},
-		Malayalam:  {&malayalamExtDecoder, nil},
-		Oriya:      {&oriyaExtDecoder, nil},
-		Punjabi:    {&punjabiExtDecoder, nil},
-		Tamil:      {&tamilExtDecoder, nil},
-		Telugu:     {&teluguExtDecoder, nil},
-		Urdu:       {&urduExtDecoder, nil},
+	extDecoders = map[int]Decoder{
+		Turkish:    turkishExtDecoder,
+		Spanish:    spanishExtDecoder,
+		Portuguese: portugueseExtDecoder,
+		Bengali:    bengaliExtDecoder,
+		Gujaranti:  gujaratiExtDecoder,
+		Hindi:      hindiExtDecoder,
+		Kannada:    kannadaExtDecoder,
+		Malayalam:  malayalamExtDecoder,
+		Oriya:      oriyaExtDecoder,
+		Punjabi:    punjabiExtDecoder,
+		Tamil:      tamilExtDecoder,
+		Telugu:     teluguExtDecoder,
+		Urdu:       urduExtDecoder,
 	}
-	encoder = map[int]encoderNGen{
-		Turkish: {&turkishEncoder, generateTurkishEncoder},
+	encoders = map[int]Encoder{
+		Turkish: turkishEncoder,
 		// Spanish uses default
-		Portuguese: {&portugueseEncoder, generatePortugueseEncoder},
-		Bengali:    {&bengaliEncoder, generateBengaliEncoder},
-		Gujaranti:  {&gujaratiEncoder, generateGujaratiEncoder},
-		Hindi:      {&hindiEncoder, generateHindiEncoder},
-		Kannada:    {&kannadaEncoder, generateKannadaEncoder},
-		Malayalam:  {&malayalamEncoder, generateMalayalamEncoder},
-		Oriya:      {&oriyaEncoder, generateOriyaEncoder},
-		Punjabi:    {&punjabiEncoder, generatePunjabiEncoder},
-		Tamil:      {&tamilEncoder, generateTamilEncoder},
-		Telugu:     {&teluguEncoder, generateTeluguEncoder},
-		Urdu:       {&urduEncoder, generateUrduEncoder},
+		Portuguese: portugueseEncoder,
+		Bengali:    bengaliEncoder,
+		Gujaranti:  gujaratiEncoder,
+		Hindi:      hindiEncoder,
+		Kannada:    kannadaEncoder,
+		Malayalam:  malayalamEncoder,
+		Oriya:      oriyaEncoder,
+		Punjabi:    punjabiEncoder,
+		Tamil:      tamilEncoder,
+		Telugu:     teluguEncoder,
+		Urdu:       urduEncoder,
 	}
-	extEncoder = map[int]encoderNGen{
-		Turkish:    {&turkishExtEncoder, generateTurkishExtEncoder},
-		Spanish:    {&spanishExtEncoder, generateSpanishExtEncoder},
-		Portuguese: {&portugueseExtEncoder, generatePortugueseExtEncoder},
-		Bengali:    {&bengaliExtEncoder, generateBengaliExtEncoder},
-		Gujaranti:  {&gujaratiExtEncoder, generateGujaratiExtEncoder},
-		Hindi:      {&hindiExtEncoder, generateHindiExtEncoder},
-		Kannada:    {&kannadaExtEncoder, generateKannadaExtEncoder},
-		Malayalam:  {&malayalamExtEncoder, generateMalayalamExtEncoder},
-		Oriya:      {&oriyaExtEncoder, generateOriyaExtEncoder},
-		Punjabi:    {&punjabiExtEncoder, generatePunjabiExtEncoder},
-		Tamil:      {&tamilExtEncoder, generateTamilExtEncoder},
-		Telugu:     {&teluguExtEncoder, generateTeluguExtEncoder},
-		Urdu:       {&urduExtEncoder, generateUrduExtEncoder},
+	extEncoders = map[int]Encoder{
+		Turkish:    turkishExtEncoder,
+		Spanish:    spanishExtEncoder,
+		Portuguese: portugueseExtEncoder,
+		Bengali:    bengaliExtEncoder,
+		Gujaranti:  gujaratiExtEncoder,
+		Hindi:      hindiExtEncoder,
+		Kannada:    kannadaExtEncoder,
+		Malayalam:  malayalamExtEncoder,
+		Oriya:      oriyaExtEncoder,
+		Punjabi:    punjabiExtEncoder,
+		Tamil:      tamilExtEncoder,
+		Telugu:     teluguExtEncoder,
+		Urdu:       urduExtEncoder,
 	}
 )

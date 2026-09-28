@@ -208,14 +208,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	teluguEncoder    Encoder
-	teluguExtEncoder Encoder
+	teluguEncoder    = generateEncoder(teluguDecoder)
+	teluguExtEncoder = generateEncoder(teluguExtDecoder)
 )
-
-func generateTeluguEncoder() Encoder {
-	return generateEncoder(teluguDecoder)
-}
-
-func generateTeluguExtEncoder() Encoder {
-	return generateEncoder(teluguExtDecoder)
-}

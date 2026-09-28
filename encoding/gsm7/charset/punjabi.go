@@ -196,14 +196,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	punjabiEncoder    Encoder
-	punjabiExtEncoder Encoder
+	punjabiEncoder    = generateEncoder(punjabiDecoder)
+	punjabiExtEncoder = generateEncoder(punjabiExtDecoder)
 )
-
-func generatePunjabiEncoder() Encoder {
-	return generateEncoder(punjabiDecoder)
-}
-
-func generatePunjabiExtEncoder() Encoder {
-	return generateEncoder(punjabiExtDecoder)
-}

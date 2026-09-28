@@ -206,14 +206,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	bengaliEncoder    Encoder
-	bengaliExtEncoder Encoder
+	bengaliEncoder    = generateEncoder(bengaliDecoder)
+	bengaliExtEncoder = generateEncoder(bengaliExtDecoder)
 )
-
-func generateBengaliEncoder() Encoder {
-	return generateEncoder(bengaliDecoder)
-}
-
-func generateBengaliExtEncoder() Encoder {
-	return generateEncoder(bengaliExtDecoder)
-}

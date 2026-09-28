@@ -14,6 +14,37 @@ const (
 	sp  byte = 0x20
 )
 
+// The character set tables used by the Encoders and Decoders of this package,
+// indexed by national language identifier. They are built once from the
+// copies the charset package returns, and are never handed out or changed,
+// so every Encoder and Decoder can share them.
+var (
+	decoders    = tables(charset.NewDecoder)
+	extDecoders = tables(charset.NewExtDecoder)
+	encoders    = tables(charset.NewEncoder)
+	extEncoders = tables(charset.NewExtEncoder)
+
+	// noExt is the extension table of WithoutExtCharset.
+	noExt = charset.Decoder{}
+)
+
+// tables builds the table for every national language identifier.
+func tables[T any](f func(nli int) T) (t [charset.End]T) {
+	for nli := range t {
+		t[nli] = f(nli)
+	}
+	return t
+}
+
+// table returns the table for the national language identifier nli, or the
+// default table for an identifier that has none.
+func table[T any](t *[charset.End]T, nli int) T {
+	if nli < 0 || nli >= len(t) {
+		nli = charset.Default
+	}
+	return t[nli]
+}
+
 // Decoder converts from GSM7 to UTF-8 using a particular character set.
 type Decoder struct {
 	set    charset.Decoder
@@ -44,10 +75,10 @@ func NewDecoder(options ...DecoderOption) Decoder {
 		option.applyDecoderOption(&d)
 	}
 	if d.set == nil {
-		d.set = charset.DefaultDecoder()
+		d.set = decoders[charset.Default]
 	}
 	if d.ext == nil {
-		d.ext = charset.DefaultExtDecoder()
+		d.ext = extDecoders[charset.Default]
 	}
 	return d
 }
@@ -59,10 +90,10 @@ func NewEncoder(options ...EncoderOption) Encoder {
 		option.applyEncoderOption(&e)
 	}
 	if e.set == nil {
-		e.set = charset.DefaultEncoder()
+		e.set = encoders[charset.Default]
 	}
 	if e.ext == nil {
-		e.ext = charset.DefaultExtEncoder()
+		e.ext = extEncoders[charset.Default]
 	}
 	return e
 }
@@ -130,11 +161,11 @@ type CharsetOption struct {
 }
 
 func (o CharsetOption) applyDecoderOption(d *Decoder) {
-	d.set = charset.NewDecoder(o.nli)
+	d.set = table(&decoders, o.nli)
 }
 
 func (o CharsetOption) applyEncoderOption(e *Encoder) {
-	e.set = charset.NewEncoder(o.nli)
+	e.set = table(&encoders, o.nli)
 }
 
 // ExtCharsetOption specifies the extension character set to be used for
@@ -144,11 +175,11 @@ type ExtCharsetOption struct {
 }
 
 func (o ExtCharsetOption) applyDecoderOption(d *Decoder) {
-	d.ext = charset.NewExtDecoder(o.nli)
+	d.ext = table(&extDecoders, o.nli)
 }
 
 func (o ExtCharsetOption) applyEncoderOption(e *Encoder) {
-	e.ext = charset.NewExtEncoder(o.nli)
+	e.ext = table(&extEncoders, o.nli)
 }
 
 // WithCharset specifies the character set map used for encoding or decoding.
@@ -166,7 +197,7 @@ func WithExtCharset(nli int) ExtCharsetOption {
 type NullDecoder struct{}
 
 func (o NullDecoder) applyDecoderOption(d *Decoder) {
-	d.ext = make(charset.Decoder)
+	d.ext = noExt
 }
 
 // StrictOption specifies that the decoder should return an error rather than

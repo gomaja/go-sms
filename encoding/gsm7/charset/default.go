@@ -3,7 +3,7 @@
 package charset
 
 var (
-	defaultDecoder    Decoder
+	defaultDecoder    = generateDecoderFromRunes(defaultRunes)
 	defaultExtDecoder = Decoder{
 		0x0a: '\f',
 		0x0d: '\n',
@@ -17,21 +17,9 @@ var (
 		0x40: '|',
 		0x65: '€',
 	}
-	defaultEncoder    Encoder
-	defaultExtEncoder Encoder
+	defaultEncoder    = generateEncoderFromRunes(defaultRunes)
+	defaultExtEncoder = generateEncoder(defaultExtDecoder)
 	defaultRunes      = []rune(
 		"@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
 			"¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà")
 )
-
-func generateDefaultEncoder() Encoder {
-	return generateEncoderFromRunes(defaultRunes)
-}
-
-func generateDefaultDecoder() Decoder {
-	return generateDecoderFromRunes(defaultRunes)
-}
-
-func generateDefaultExtEncoder() Encoder {
-	return generateEncoder(defaultExtDecoder)
-}

@@ -4,6 +4,8 @@ package charset_test
 
 import (
 	"fmt"
+	"maps"
+	"sync"
 	"testing"
 
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
@@ -39,6 +41,82 @@ type language struct {
 	extDuplicates   int
 	lockingPatterns []testPattern
 	shiftPatterns   []testPattern
+}
+
+// TestConcurrentFirstUse calls every constructor from several goroutines at
+// once. Run it with -race. It is the first test in the package so that it is
+// also the first use of the tables.
+func TestConcurrentFirstUse(t *testing.T) {
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for nli := charset.Default; nli < charset.End; nli++ {
+				_ = charset.NewDecoder(nli)[0x41]
+				_ = charset.NewExtDecoder(nli)[0x65]
+				_ = charset.NewEncoder(nli)['A']
+				_ = charset.NewExtEncoder(nli)['€']
+			}
+			_ = charset.DefaultDecoder()[0x41]
+			_ = charset.DefaultExtDecoder()[0x65]
+			_ = charset.DefaultEncoder()['A']
+			_ = charset.DefaultExtEncoder()['€']
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
+// TestTablesAreCopies checks that changing a table returned by the package
+// changes nothing for any other caller.
+func TestTablesAreCopies(t *testing.T) {
+	for nli := charset.Default; nli < charset.End; nli++ {
+		n := charsetName[nli]
+		t.Run(n+" decoder", func(t *testing.T) {
+			assertCopies(t, func() charset.Decoder { return charset.NewDecoder(nli) }, 0x7f, 'X')
+		})
+		t.Run(n+" ext decoder", func(t *testing.T) {
+			assertCopies(t, func() charset.Decoder { return charset.NewExtDecoder(nli) }, 0x7f, 'X')
+		})
+		t.Run(n+" encoder", func(t *testing.T) {
+			assertCopies(t, func() charset.Encoder { return charset.NewEncoder(nli) }, 'X', 0x7f)
+		})
+		t.Run(n+" ext encoder", func(t *testing.T) {
+			assertCopies(t, func() charset.Encoder { return charset.NewExtEncoder(nli) }, 'X', 0x7f)
+		})
+	}
+	t.Run("default decoder", func(t *testing.T) {
+		assertCopies(t, charset.DefaultDecoder, 0x7f, 'X')
+	})
+	t.Run("default ext decoder", func(t *testing.T) {
+		assertCopies(t, charset.DefaultExtDecoder, 0x7f, 'X')
+	})
+	t.Run("default encoder", func(t *testing.T) {
+		assertCopies(t, charset.DefaultEncoder, 'X', 0x7f)
+	})
+	t.Run("default ext encoder", func(t *testing.T) {
+		assertCopies(t, charset.DefaultExtEncoder, 'X', 0x7f)
+	})
+}
+
+// assertCopies overwrites every entry of a table returned by get, and adds
+// k, then checks that get still returns the original table.
+func assertCopies[M ~map[K]V, K comparable, V any](t *testing.T, get func() M, k K, v V) {
+	want := maps.Clone(get())
+	got := get()
+	t.Cleanup(func() {
+		// put back anything the test changed, in case got is shared
+		clear(got)
+		maps.Copy(got, want)
+	})
+	for key := range got {
+		got[key] = v
+	}
+	got[k] = v
+	assert.Equal(t, want, get())
 }
 
 func TestDecoder(t *testing.T) {

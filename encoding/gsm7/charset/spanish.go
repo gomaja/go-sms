@@ -25,9 +25,5 @@ var (
 		0x6f: 'ó',
 		0x75: 'ú',
 	}
-	spanishExtEncoder Encoder
+	spanishExtEncoder = generateEncoder(spanishExtDecoder)
 )
-
-func generateSpanishExtEncoder() Encoder {
-	return generateEncoder(spanishExtDecoder)
-}

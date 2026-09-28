@@ -3,7 +3,7 @@
 package charset
 
 var (
-	portugueseDecoder    Decoder
+	portugueseDecoder    = generateDecoderFromRunes(portugueseRunes)
 	portugueseExtDecoder = Decoder{
 		0x05: 'ê',
 		0x09: 'ç',
@@ -44,21 +44,9 @@ var (
 		0x7c: 'õ',
 		0x7f: 'â',
 	}
-	portugueseEncoder    Encoder
-	portugueseExtEncoder Encoder
+	portugueseEncoder    = generateEncoderFromRunes(portugueseRunes)
+	portugueseExtEncoder = generateEncoder(portugueseExtDecoder)
 	portugueseRunes      = []rune(
 		"@£$¥êéúíóç\nÔô\rÁáΔ_ªÇÀ∞^\\€Ó|\x1bÂâÊÉ !\"#º%&'()*+,-./0123456789:;<=>?" +
 			"ÍABCDEFGHIJKLMNOPQRSTUVWXYZÃÕÚÜ§~abcdefghijklmnopqrstuvwxyzãõ`üà")
 )
-
-func generatePortugueseEncoder() Encoder {
-	return generateEncoderFromRunes(portugueseRunes)
-}
-
-func generatePortugueseDecoder() Decoder {
-	return generateDecoderFromRunes(portugueseRunes)
-}
-
-func generatePortugueseExtEncoder() Encoder {
-	return generateEncoder(portugueseExtDecoder)
-}

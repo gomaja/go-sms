@@ -201,14 +201,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	oriyaEncoder    Encoder
-	oriyaExtEncoder Encoder
+	oriyaEncoder    = generateEncoder(oriyaDecoder)
+	oriyaExtEncoder = generateEncoder(oriyaExtDecoder)
 )
-
-func generateOriyaEncoder() Encoder {
-	return generateEncoder(oriyaDecoder)
-}
-
-func generateOriyaExtEncoder() Encoder {
-	return generateEncoder(oriyaExtDecoder)
-}

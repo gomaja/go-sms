@@ -212,14 +212,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	malayalamEncoder    Encoder
-	malayalamExtEncoder Encoder
+	malayalamEncoder    = generateEncoder(malayalamDecoder)
+	malayalamExtEncoder = generateEncoder(malayalamExtDecoder)
 )
-
-func generateMalayalamEncoder() Encoder {
-	return generateEncoder(malayalamDecoder)
-}
-
-func generateMalayalamExtEncoder() Encoder {
-	return generateEncoder(malayalamExtDecoder)
-}

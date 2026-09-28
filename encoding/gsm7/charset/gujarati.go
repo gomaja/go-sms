@@ -200,14 +200,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	gujaratiEncoder    Encoder
-	gujaratiExtEncoder Encoder
+	gujaratiEncoder    = generateEncoder(gujaratiDecoder)
+	gujaratiExtEncoder = generateEncoder(gujaratiExtDecoder)
 )
-
-func generateGujaratiEncoder() Encoder {
-	return generateEncoder(gujaratiDecoder)
-}
-
-func generateGujaratiExtEncoder() Encoder {
-	return generateEncoder(gujaratiExtDecoder)
-}

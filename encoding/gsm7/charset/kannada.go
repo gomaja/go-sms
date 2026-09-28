@@ -203,14 +203,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	kannadaEncoder    Encoder
-	kannadaExtEncoder Encoder
+	kannadaEncoder    = generateEncoder(kannadaDecoder)
+	kannadaExtEncoder = generateEncoder(kannadaExtDecoder)
 )
-
-func generateKannadaEncoder() Encoder {
-	return generateEncoder(kannadaDecoder)
-}
-
-func generateKannadaExtEncoder() Encoder {
-	return generateEncoder(kannadaExtDecoder)
-}

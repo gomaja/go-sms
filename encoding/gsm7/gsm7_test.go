@@ -4,6 +4,7 @@ package gsm7_test
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/gomaja/go-sms/encoding/gsm7"
@@ -46,6 +47,54 @@ func testEncoder(t *testing.T, e gsm7.Encoder, patterns []encoderPattern) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+// TestConcurrentUse encodes and decodes with every character set from
+// several goroutines at once. Run it with -race. It is the first test in the
+// package to use the character sets, so it is also their first use.
+func TestConcurrentUse(t *testing.T) {
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for nli := charset.Default; nli < charset.End; nli++ {
+				_, _ = gsm7.Encode([]byte("A1 €"), gsm7.WithCharset(nli), gsm7.WithExtCharset(nli))
+				_, _ = gsm7.Decode([]byte{0x41, 0x1b, 0x65}, gsm7.WithCharset(nli), gsm7.WithExtCharset(nli))
+			}
+			_, _ = gsm7.Encode([]byte("A1 €"))
+			_, _ = gsm7.Decode([]byte{0x41, 0x1b, 0x65})
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
+// TestCharsetTablesAreNotShared checks that a caller changing a table it got
+// from the charset package does not change what this package encodes or
+// decodes.
+func TestCharsetTablesAreNotShared(t *testing.T) {
+	ext := charset.DefaultExtDecoder()
+	ext[0x65] = '$'
+	t.Cleanup(func() { ext[0x65] = '€' })
+	set := charset.DefaultEncoder()
+	set['X'] = 0x00
+	t.Cleanup(func() { set['X'] = 0x58 })
+	tr := charset.NewDecoder(charset.Turkish)
+	tr[0x00] = 'Z'
+	t.Cleanup(func() { tr[0x00] = '@' })
+
+	out, err := gsm7.Decode([]byte{0x1b, 0x65})
+	require.NoError(t, err)
+	assert.Equal(t, "€", string(out))
+	out, err = gsm7.Encode([]byte("X"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0x58}, out)
+	out, err = gsm7.Decode([]byte{0x00}, gsm7.WithCharset(charset.Turkish))
+	require.NoError(t, err)
+	assert.Equal(t, "@", string(out))
 }
 
 func TestDecode(t *testing.T) {

@@ -189,14 +189,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	tamilEncoder    Encoder
-	tamilExtEncoder Encoder
+	tamilEncoder    = generateEncoder(tamilDecoder)
+	tamilExtEncoder = generateEncoder(tamilExtDecoder)
 )
-
-func generateTamilEncoder() Encoder {
-	return generateEncoder(tamilDecoder)
-}
-
-func generateTamilExtEncoder() Encoder {
-	return generateEncoder(tamilExtDecoder)
-}
