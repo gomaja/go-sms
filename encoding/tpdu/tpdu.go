@@ -164,9 +164,25 @@ func NewSubmit(options ...Option) (*TPDU, error) {
 	return New(options...)
 }
 
-// Alphabet returns the alphabet field from the DCS of the SMS TPDU.
+// Alphabet returns the alphabet of the UD, as given by the DCS of the SMS
+// TPDU.
+//
+// An SMS-COMMAND has no TP-DCS, and its TP-CD is octets, as 3GPP TS 23.040
+// Section 9.2.3.20 says: "The TP-Command-Data-Length field is used to
+// indicate the number of octets contained within the TP-Command-Data field".
+// So for an SMS-COMMAND Alphabet returns Alpha8Bit, whatever the DCS.
 func (t *TPDU) Alphabet() Alphabet {
+	if t.SmsType() == SmsCommand {
+		return Alpha8Bit
+	}
 	return t.DCS.Alphabet()
+}
+
+// udCoding returns the coding of the TP-UD, or the TP-CD of an SMS-COMMAND,
+// which determines how its length is counted and whether it is packed:
+// Alpha7Bit for septets, and Alpha8Bit or AlphaUCS2 for octets.
+func (t *TPDU) udCoding() Alphabet {
+	return t.Alphabet()
 }
 
 // ConcatInfo extracts the segmentation info contained in the provided User
@@ -235,7 +251,7 @@ func (t TPDU) Segment(msg []byte, options ...SegmentationOption) []TPDU {
 	t.SetUDH(append(t.UDH, cfg.ief(0, 0, 0)))
 	bs = t.UDBlockSize()
 	t.UDH = t.UDH[:len(t.UDH)-1]
-	alpha := t.Alphabet()
+	alpha := t.udCoding()
 	chunks := chunk(msg, alpha, bs)
 	count := len(chunks)
 	pdus := make([]TPDU, count)
@@ -368,7 +384,7 @@ func (t *TPDU) UDBlockSize() int {
 		bs = 131 // conservative
 		// precise answer depends on variable length fields...
 	}
-	alpha := t.Alphabet()
+	alpha := t.udCoding()
 	udhl := t.UDHL()
 	if alpha == Alpha7Bit {
 		// work in septets
@@ -461,9 +477,6 @@ func (t *TPDU) MarshalBinary() (dst []byte, err error) {
 // The TP-VPF is derived by marshalSubmit, once the VP has been validated.
 func (t *TPDU) withDerivedFlags(st SmsType) *TPDU {
 	w := *t
-	if st == SmsCommand {
-		return &w
-	}
 	// 3GPP TS 23.040 Section 9.2.3.23: TP-UDHI "1 The beginning of the TP-UD
 	// field contains a Header in addition to the short message."
 	switch {
@@ -495,13 +508,18 @@ func (t *TPDU) marshalCommand() ([]byte, error) {
 	if err != nil {
 		return nil, NewEncodeError("da", err)
 	}
-	cdl := len(t.UD)
-	l := 6 + len(da) + cdl
-	b := make([]byte, 0, l)
+	// The TP-CDL and TP-CD are coded as a TP-UDL and TP-UD of 8 bit data, so
+	// the TP-CD may start with a header, as 3GPP TS 23.040 Section 9.2.2.4
+	// says of the TP-UDHI: "Parameter indicating that the TP-CD field
+	// contains a Header".
+	cd, err := t.encodeUserData()
+	if err != nil {
+		return nil, NewEncodeError("ud", err)
+	}
+	b := make([]byte, 0, 5+len(da)+len(cd))
 	b = append(b, byte(t.FirstOctet), t.MR, t.PID, t.CT, t.MN)
 	b = append(b, da...)
-	b = append(b, byte(cdl))
-	b = append(b, t.UD...)
+	b = append(b, cd...)
 	return b, nil
 }
 
@@ -727,7 +745,6 @@ func (t *TPDU) unmarshalCommand(src []byte) error {
 		return NewDecodeError("da", ri, err)
 	}
 	ri += n
-	t.DCS = Dcs8BitData // force TPDU to interpret UD as 8bit, if not set already
 	n, err = t.decodeUserData(src[ri:])
 	if err != nil {
 		return NewDecodeError("ud", ri, err)
@@ -1014,7 +1031,7 @@ func (t *TPDU) decodeUserData(src []byte) (int, error) {
 	var udh UserDataHeader
 	sml7 := 0
 	ri := 1
-	alphabet := t.Alphabet()
+	alphabet := t.udCoding()
 	if alphabet == Alpha7Bit {
 		sml7 = udl
 		// length is septets - convert to octets
@@ -1103,7 +1120,7 @@ func (t *TPDU) encodeUserData() (b []byte, err error) {
 		return nil, NewEncodeError("udh", err)
 	}
 	ud := t.UD
-	alphabet := t.Alphabet()
+	alphabet := t.udCoding()
 	udl := len(t.UD) // assume octets
 	switch alphabet {
 	case Alpha7Bit:

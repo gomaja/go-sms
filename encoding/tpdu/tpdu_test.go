@@ -89,6 +89,11 @@ func TestAlphabet(t *testing.T) {
 			d.DCS = tpdu.DCS(p.in)
 			c := d.Alphabet()
 			assert.Equal(t, p.out, c)
+			// TS 23.040 9.2.3.20: an SMS-COMMAND has no TP-DCS, and its
+			// TP-CD is octets.
+			d.Direction = tpdu.MO
+			d.FirstOctet = tpdu.FirstOctet(tpdu.MtCommand)
+			assert.Equal(t, tpdu.Alpha8Bit, d.Alphabet())
 		}
 		t.Run(fmt.Sprintf("%02x", p.in), f)
 	}
@@ -1174,12 +1179,12 @@ func TestUDBlockSize(t *testing.T) {
 		out  int
 	}{
 		{
-			"command 7bit",
+			"command dcs 0",
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
 			},
-			166,
+			146, // TS 23.040 9.2.3.20: TP-CDL counts octets
 		},
 		{
 			"command 8bit",
@@ -1409,7 +1414,6 @@ func TestUnmarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x02,
-				DCS:        0x04,
 				PID:        0xab,
 				UD:         []byte("a command"),
 				MR:         0x42,
@@ -1487,7 +1491,6 @@ func TestUnmarshalBinary(t *testing.T) {
 				Direction:  tpdu.MO,
 				FirstOctet: 0x02,
 				PID:        0xab,
-				DCS:        0x04,
 				MR:         0x42,
 				CT:         0x89,
 				MN:         0x34,
@@ -2894,6 +2897,82 @@ func TestUDHIRoundTrip(t *testing.T) {
 		require.NoError(t, err, in)
 		assert.Equal(t, b, out, in)
 	}
+}
+
+// TestCommandData checks the TP-CD of an SMS-COMMAND, which counts octets
+// whatever the DCS, which a command does not have, and may hold a header.
+//
+// TS 23.040 9.2.2.4: TP-UDHI "Parameter indicating that the TP-CD field
+// contains a Header"; 9.2.3.20: "The TP-Command-Data-Length field is used to
+// indicate the number of octets contained within the TP-Command-Data field."
+func TestCommandData(t *testing.T) {
+	patterns := []struct {
+		name string
+		in   string
+		udh  tpdu.UserDataHeader
+		ud   []byte
+	}{
+		{"concat header", "42 42 00 00 34 04 91 3619 07 05 00 03 01 02 01 41",
+			tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}}, []byte("A")},
+		{"port header", "42 01 00 01 02 04 91 2143 08 06 05 04 0b 84 23 f0 78",
+			tpdu.UserDataHeader{{ID: 5, Data: []byte{0x0b, 0x84, 0x23, 0xf0}}}, []byte{0x78}},
+		{"header only", "42 01 00 01 02 04 91 2143 06 05 00 03 01 02 01",
+			tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}}, nil},
+		{"empty header", "42 01 00 01 02 04 91 2143 02 00 78",
+			tpdu.UserDataHeader{}, []byte{0x78}},
+		{"udhi without cd", "42 01 00 01 02 04 91 2143 00", nil, nil},
+		{"octets above 7f", "02 01 00 01 02 04 91 2143 03 80 ff 7f",
+			nil, []byte{0x80, 0xff, 0x7f}},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{Direction: tpdu.MO}
+			require.NoError(t, d.UnmarshalBinary(in))
+			assert.Equal(t, tpdu.SmsCommand, d.SmsType())
+			assert.Equal(t, p.udh, d.UDH)
+			assert.Equal(t, p.ud, []byte(d.UD))
+			// a command has no TP-DCS
+			assert.Equal(t, tpdu.DCS(0), d.DCS)
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, b)
+		}
+		t.Run(p.name, f)
+	}
+
+	// A command built with SetUDH, whose DCS is 0, is not packed as septets.
+	c, err := tpdu.New(tpdu.SmsCommand)
+	require.NoError(t, err)
+	c.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}})
+	c.UD = []byte("xy")
+	b, err := c.MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, unhex(t, "42 00 00 00 00 00 80 08 05 00 03 01 02 01 7879"), b)
+	d := tpdu.TPDU{Direction: tpdu.MO}
+	require.NoError(t, d.UnmarshalBinary(b))
+	assert.Equal(t, c.UDH, d.UDH)
+	assert.Equal(t, c.UD, d.UD)
+
+	// The TP-UDHI is derived from the UDH, as for the other types.
+	c = &tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02,
+		UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}}, UD: []byte("xy")}
+	b, err = c.MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, unhex(t, "42 00 00 00 00 00 00 08 05 00 03 01 02 01 7879"), b)
+	c = &tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x42, UD: []byte("xy")}
+	b, err = c.MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, unhex(t, "02 00 00 00 00 00 00 02 7879"), b)
+
+	// UDBlockSize counts octets.
+	c, err = tpdu.New(tpdu.SmsCommand)
+	require.NoError(t, err)
+	bs := c.UDBlockSize()
+	c.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}})
+	assert.Equal(t, bs-6, c.UDBlockSize())
+	c.DCS = tpdu.DcsUCS2Data
+	assert.Equal(t, bs-6, c.UDBlockSize())
 }
 
 // counter is an implementation of the tpdu.Counter interface.
