@@ -95,23 +95,25 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 
 // Encode builds a set of TPDUs containing the message.
 //
-// Long messages are split into multiple concatenated TPDUs, while short
-// messages may fit in one.
+// The TPDUs are copies of the template, an SMS-DELIVER unless the options say
+// otherwise, each carrying a segment of the message in its UD. A message that
+// fits in one TPDU, including an empty message, results in one TPDU, and a
+// longer one is split into concatenated segments, as for
+// tpdu.TPDU.Segment. The options apply to this call only.
 //
-// By default messages are encoded into SMS-DELIVER TPDUs.  This behaviour may
-// be overridden via options, either to NewEncoder or Encode.
+// How the message is taken depends on the alphabet of the template:
 //
-// For 8-bit encoding the message is encoded as is. This includes the TP-CD of
-// an SMS-COMMAND, which is octets whatever the DCS.
-//
-// For 7-bit encoding the message is assumed to contain UTF-8.
-//
-// For explicit UCS-2 encoding the message is assumed to contain UTF-16,
-// encoded as an array of bytes.  This can be created from an array of UTF-16
-// runes using ucs2.Encode.
-//
-// For implicit UCS-2 encoding (the fallback with 7-bit fails) the message is
-// assumed to contain UTF-8.
+//   - 8 bit, which the TP-CD of an SMS-COMMAND always is, whatever the DCS:
+//     the message is octets, and is used as it is.
+//   - UCS2: the message is UTF-16, big endian, so two octets for each code
+//     point up to U+FFFF and four, a surrogate pair, for each above it, as
+//     ucs2.Encode returns for a slice of code points. It is used as it is.
+//   - GSM 7 bit, which includes the reserved codings: the message is UTF-8,
+//     which the Encoder codes in the GSM 7 bit default alphabet, or in the
+//     national language tables that the charset options make available, or,
+//     failing those, in UCS2, and sets the alphabet of the DCS to match.
+//     tpdu.ErrInvalidUTF8 is returned if the message is not valid UTF-8, and
+//     ErrDcsConflict if the DCS cannot indicate the alphabet.
 //
 // The Encoder does not compress, so ErrCompressedUserData is returned if the
 // DCS of the template, or the DCS the Encoder would send, indicates compressed
@@ -122,6 +124,13 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 // IE in the template UDH by those of the tables it chose, as defined in 3GPP
 // TS 23.040 Sections 9.2.3.24.15 and 9.2.3.24.16. The other IEs of the
 // template UDH, such as application port addressing, are kept in every TPDU.
+//
+// The errors of tpdu.TPDU.Segment are returned too, and can be matched with
+// errors.Is or errors.As: tpdu.ErrOddUCS2Length for a UCS2 message of odd length,
+// tpdu.ErrOverlength if the template UDH leaves no room for the message,
+// tpdu.ErrTooManySegments if the message needs more than 255 segments, and a
+// tpdu.ErrUnsupportedSmsType if the template is of no TPDU type. No TPDU is
+// returned with an error, and no counter is drawn from.
 //
 // The TPDUs returned share no memory with the Encoder, its template or the
 // message, so the caller may change them, and reuse the message.
