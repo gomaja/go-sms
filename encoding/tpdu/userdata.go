@@ -263,19 +263,22 @@ func DecodeUserData(ud UserData, udh UserDataHeader, alpha Alphabet, options ...
 }
 
 // nationalLanguage returns the NLI of the last national language IE with the
-// given id whose NLI is in the supported set.
+// given id whose NLI identifies a language and is in the supported set.
 //
 // An IE indicating "a reserved value or a value that is not supported by the
 // receiving entity" is ignored, as per 3GPP TS 23.038 Section 6.2.1.2.5, i.e.
 // skipped over, as per 3GPP TS 23.040 Sections 9.2.3.24.15 and 9.2.3.24.16,
-// and of the remaining IEs "the last occurrence of the IE" is used.
+// and of the remaining IEs "the last occurrence of the IE" is used. NLI 0 is
+// reserved (3GPP TS 23.038 Table 6.2.1.2.4.1), so it is ignored even if
+// charset.Default is in the supported set.
 func (udh UserDataHeader) nationalLanguage(id byte, supported map[int]bool) (int, bool) {
 	for i := len(udh) - 1; i >= 0; i-- {
 		ie := udh[i]
 		if ie.ID != id || len(ie.Data) < 1 {
 			continue
 		}
-		if nli := int(ie.Data[0]); supported[nli] {
+		nli := int(ie.Data[0])
+		if nli >= charset.Start && nli < charset.End && supported[nli] {
 			return nli, true
 		}
 	}
