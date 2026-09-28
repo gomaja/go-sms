@@ -10,6 +10,13 @@ import (
 
 // ValidityPeriod represents the validity period as defined in 3GPP TS 23.040
 // Section 9.2.3.12.
+//
+// When marshalled, a relative Duration is rounded down to the resolution of
+// its format, and must lie within the range of the format:
+//
+//	VpfRelative, EvpfRelative: 5 minutes to 63 weeks
+//	EvpfRelativeSeconds:        1 to 255 seconds (0 is reserved)
+//	EvpfRelativeHHMMSS:         0 to 99:59:59
 type ValidityPeriod struct {
 	Format   ValidityPeriodFormat
 	Time     Timestamp     // for VpfAbsolute
@@ -31,6 +38,8 @@ func (v *ValidityPeriod) SetAbsolute(t Timestamp) {
 }
 
 // SetRelative sets the validity period to a relative time.
+//
+// The duration must be from 5 minutes to 63 weeks to be marshalled.
 func (v *ValidityPeriod) SetRelative(d time.Duration) {
 	v.Format = VpfRelative
 	v.Duration = d
@@ -38,8 +47,11 @@ func (v *ValidityPeriod) SetRelative(d time.Duration) {
 	v.EFI = 0
 }
 
-// SetEnhanced sets the validity period to an enhnaced format as determined
+// SetEnhanced sets the validity period to an enhanced format as determined
 // from the functionality identifier (efi).
+//
+// The range of durations that can be marshalled depends on the format, as
+// described for ValidityPeriod.
 func (v *ValidityPeriod) SetEnhanced(d time.Duration, efi byte) {
 	v.Format = VpfEnhanced
 	v.Duration = d
@@ -61,15 +73,22 @@ func (v *ValidityPeriod) MarshalBinary() ([]byte, error) {
 		dst[0] = v.EFI
 		switch evpf {
 		case EvpfRelative:
-			dst[1] = durationToRelative(v.Duration)
-		case EvpfRelativeSeconds:
-			secs := v.Duration / time.Second
-			if secs > 255 {
-				secs = 255
+			t, err := durationToRelative(v.Duration)
+			if err != nil {
+				return nil, err
 			}
-			dst[1] = byte(secs)
+			dst[1] = t
+		case EvpfRelativeSeconds:
+			if v.Duration < minSecondsVP || v.Duration > maxSecondsVP {
+				return nil, EncodeError("duration", ErrInvalid)
+			}
+			dst[1] = byte(v.Duration / time.Second)
 		case EvpfRelativeHHMMSS:
-			f := []int{int(v.Duration.Hours()) % 100, int(v.Duration.Minutes()) % 60, int(v.Duration.Seconds()) % 60}
+			if v.Duration < 0 || v.Duration > maxHHMMSSVP {
+				return nil, EncodeError("duration", ErrInvalid)
+			}
+			d := v.Duration
+			f := []int{int(d / time.Hour), int(d / time.Minute % 60), int(d / time.Second % 60)}
 			for i, tf := range f {
 				t, err := bcd.Encode(tf)
 				// this should never trip, as the encoded values should always be valid, but just in case...
@@ -81,7 +100,10 @@ func (v *ValidityPeriod) MarshalBinary() ([]byte, error) {
 		}
 		return dst, nil
 	case VpfRelative:
-		t := durationToRelative(v.Duration)
+		t, err := durationToRelative(v.Duration)
+		if err != nil {
+			return nil, err
+		}
 		return []byte{t}, nil
 	case VpfNotPresent:
 		return nil, nil
@@ -209,6 +231,16 @@ const (
 	// All other values currently reserved.
 )
 
+// The range of each relative format, as defined in 3GPP TS 23.040 Sections
+// 9.2.3.12.1 and 9.2.3.12.3.
+const (
+	minRelativeVP = 5 * time.Minute
+	maxRelativeVP = 63 * 7 * 24 * time.Hour
+	minSecondsVP  = time.Second // TP-VP 0 is reserved
+	maxSecondsVP  = 255 * time.Second
+	maxHHMMSSVP   = 99*time.Hour + 59*time.Minute + 59*time.Second
+)
+
 // durationToRelative converts a duration into the TP-VP relative format
 // defined in 3GPP TS 23.040 Section 9.2.3.12.1, rounding down to the
 // resolution of the format:
@@ -217,22 +249,20 @@ const (
 //	144 to 167: 12 hours + ((TP-VP - 143) x 30 minutes)
 //	168 to 196: (TP-VP - 166) x 1 day
 //	197 to 255: (TP-VP - 192) x 1 week
-func durationToRelative(d time.Duration) byte {
+//
+// An error is returned if the duration is outside the range of the format.
+func durationToRelative(d time.Duration) (byte, error) {
 	switch {
+	case d < minRelativeVP || d > maxRelativeVP:
+		return 0, EncodeError("duration", ErrInvalid)
 	case d < time.Hour*12:
-		t := byte(d / (time.Minute * 5))
-		if t > 0 {
-			t--
-		}
-		return t
+		return byte(d/(time.Minute*5)) - 1, nil
 	case d < time.Hour*24:
-		return 119 + byte(d/(time.Minute*30))
+		return 119 + byte(d/(time.Minute*30)), nil
 	case d < time.Hour*24*30:
-		return 166 + byte(d/(time.Hour*24))
-	case d < time.Hour*24*7*63:
-		return 192 + byte(d/(time.Hour*24*7))
+		return 166 + byte(d/(time.Hour*24)), nil
 	default:
-		return 255
+		return 192 + byte(d/(time.Hour*24*7)), nil
 	}
 }
 
