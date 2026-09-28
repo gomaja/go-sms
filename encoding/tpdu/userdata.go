@@ -5,6 +5,7 @@ package tpdu
 import (
 	"encoding/binary"
 	"errors"
+	"slices"
 	"unicode/utf8"
 
 	"github.com/gomaja/go-sms/encoding/gsm7"
@@ -389,25 +390,28 @@ var WithAllCharsets = AllCharsetsOption{}
 
 // WithCharset sets the set of character sets available to encode or decode.
 //
-// These are in addition to the default character set.
+// These are in addition to the default character set. The identifiers are
+// copied, so the caller may go on to change its slice.
 func WithCharset(nli ...int) CharsetOption {
-	return CharsetOption{nli}
+	return CharsetOption{slices.Clone(nli)}
 }
 
 // WithLockingCharset sets the set of locking character sets available to
 // encode or decode.
 //
-// These are in addition to the default character set.
+// These are in addition to the default character set. The identifiers are
+// copied, so the caller may go on to change its slice.
 func WithLockingCharset(nli ...int) LockingCharsetOption {
-	return LockingCharsetOption{nli}
+	return LockingCharsetOption{slices.Clone(nli)}
 }
 
 // WithShiftCharset sets the set of shift character sets available to
 // encode or decode.
 //
-// These are in addition to the default character set.
+// These are in addition to the default character set. The identifiers are
+// copied, so the caller may go on to change its slice.
 func WithShiftCharset(nli ...int) ShiftCharsetOption {
-	return ShiftCharsetOption{nli}
+	return ShiftCharsetOption{slices.Clone(nli)}
 }
 
 // Information Element Identifiers interpreted by this package.

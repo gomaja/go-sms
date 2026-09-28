@@ -1209,3 +1209,28 @@ func TestUserDataHeaderIgnoredRoundTrip(t *testing.T) {
 		t.Run(p.name, f)
 	}
 }
+
+// The charset options copy the national language identifiers they are given,
+// so a later write by the caller to its slice does not change them.
+func TestCharsetOptionsCopyIdentifiers(t *testing.T) {
+	nli := []int{charset.Urdu}
+	options := []tpdu.UDEncodeOption{tpdu.WithCharset(nli...), tpdu.WithLockingCharset(nli...)}
+	decode := []tpdu.UDDecodeOption{tpdu.WithCharset(nli...), tpdu.WithLockingCharset(nli...)}
+	snli := []int{charset.Turkish}
+	shift := tpdu.WithShiftCharset(snli...)
+	nli[0] = charset.Spanish
+	snli[0] = charset.Spanish
+	for i, o := range options {
+		ud, udh, alpha, err := tpdu.EncodeUserData([]byte("hello ٻ"), o)
+		require.NoError(t, err)
+		assert.Equal(t, tpdu.Alpha7Bit, alpha)
+		assert.Equal(t, tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Urdu)}}, udh[0])
+		msg, err := tpdu.DecodeUserData(ud, udh, alpha, decode[i])
+		require.NoError(t, err)
+		assert.Equal(t, "hello ٻ", string(msg))
+	}
+	_, udh, alpha, err := tpdu.EncodeUserData([]byte("hello ş"), shift)
+	require.NoError(t, err)
+	assert.Equal(t, tpdu.Alpha7Bit, alpha)
+	assert.Equal(t, tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{byte(charset.Turkish)}}, udh[0])
+}

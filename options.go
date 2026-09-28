@@ -2,7 +2,11 @@
 
 package sms
 
-import "github.com/gomaja/go-sms/encoding/tpdu"
+import (
+	"slices"
+
+	"github.com/gomaja/go-sms/encoding/tpdu"
+)
 
 // EncoderOption is an optional mutator for the Encoder.
 type EncoderOption interface {
@@ -182,8 +186,10 @@ func (o AllCharsetsOption) ApplyDecodeOption(cc *DecodeConfig) {
 }
 
 // WithCharset creates an CharsetOption.
+//
+// The identifiers are copied, so the caller may go on to change its slice.
 func WithCharset(nli ...int) CharsetOption {
-	return CharsetOption{nli}
+	return CharsetOption{slices.Clone(nli)}
 }
 
 // CharsetOption defines the character sets available for encoding or decoding.
@@ -202,8 +208,10 @@ func (o CharsetOption) ApplyDecodeOption(cc *DecodeConfig) {
 }
 
 // WithLockingCharset creates an LockingCharsetOption.
+//
+// The identifiers are copied, so the caller may go on to change its slice.
 func WithLockingCharset(nli ...int) LockingCharsetOption {
-	return LockingCharsetOption{nli}
+	return LockingCharsetOption{slices.Clone(nli)}
 }
 
 // LockingCharsetOption defines the locking character sets available for
@@ -223,8 +231,10 @@ func (o LockingCharsetOption) ApplyDecodeOption(cc *DecodeConfig) {
 }
 
 // WithShiftCharset creates an ShiftCharsetOption.
+//
+// The identifiers are copied, so the caller may go on to change its slice.
 func WithShiftCharset(nli ...int) ShiftCharsetOption {
-	return ShiftCharsetOption{nli}
+	return ShiftCharsetOption{slices.Clone(nli)}
 }
 
 // ShiftCharsetOption defines the shift character sets available for encoding
