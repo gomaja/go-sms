@@ -3,6 +3,7 @@
 package tpdu_test
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 	"time"
@@ -442,6 +443,63 @@ func TestVPUnmarshalBinary(t *testing.T) {
 			tpdu.VpfEnhanced, 2,
 			tpdu.ValidityPeriod{},
 			tpdu.NewDecodeError("enhanced", 2, tpdu.ErrNonZero)},
+		{"enhancedSingleShot",
+			[]byte{0x41, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00},
+			tpdu.VpfEnhanced, 7,
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfEnhanced,
+				EFI:      0x41,
+				Duration: 30 * time.Minute},
+			nil},
+		{"enhancedHHMMSSMax",
+			[]byte{0x03, 0x99, 0x95, 0x95, 0x00, 0x00, 0x00},
+			tpdu.VpfEnhanced, 7,
+			tpdu.ValidityPeriod{
+				Format:   tpdu.VpfEnhanced,
+				EFI:      byte(tpdu.EvpfRelativeHHMMSS),
+				Duration: 99*time.Hour + 59*time.Minute + 59*time.Second,
+			},
+			nil},
+		// 3GPP TS 23.040 Section 9.2.3.12.3: "Any reserved/unused bits or
+		// octets must be set to zero."
+		{"reserved bits enhanced",
+			[]byte{0x09, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00},
+			tpdu.VpfEnhanced, 0,
+			tpdu.ValidityPeriod{},
+			tpdu.NewDecodeError("enhanced", 0, tpdu.ErrNonZero)},
+		{"reserved bits extension",
+			[]byte{0x81, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00},
+			tpdu.VpfEnhanced, 1,
+			tpdu.ValidityPeriod{},
+			tpdu.NewDecodeError("enhanced", 1, tpdu.ErrNonZero)},
+		{"unterminated extension",
+			[]byte{0x81, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80},
+			tpdu.VpfEnhanced, 7,
+			tpdu.ValidityPeriod{},
+			tpdu.NewDecodeError("enhanced", 7, tpdu.ErrUnderflow)},
+		{"extension leaves no room",
+			[]byte{0x83, 0x80, 0x80, 0x80, 0x80, 0x00, 0x10},
+			tpdu.VpfEnhanced, 6,
+			tpdu.ValidityPeriod{},
+			tpdu.NewDecodeError("enhanced", 6, tpdu.ErrUnderflow)},
+		// "A TP-VP value of zero is undefined and reserved for future use."
+		{"reserved enhancedRelativeSeconds",
+			[]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+			tpdu.VpfEnhanced, 1,
+			tpdu.ValidityPeriod{},
+			tpdu.NewDecodeError("enhanced", 1, tpdu.ErrInvalid)},
+		// HHMMSS uses the representation of the SCTS, so minutes and seconds
+		// are 00 to 59.
+		{"minutes enhancedHHMMSS",
+			[]byte{0x03, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00},
+			tpdu.VpfEnhanced, 1,
+			tpdu.ValidityPeriod{},
+			tpdu.NewDecodeError("enhanced", 1, tpdu.ErrInvalid)},
+		{"seconds enhancedHHMMSS",
+			[]byte{0x03, 0x00, 0x00, 0x99, 0x00, 0x00, 0x00},
+			tpdu.VpfEnhanced, 1,
+			tpdu.ValidityPeriod{},
+			tpdu.NewDecodeError("enhanced", 1, tpdu.ErrInvalid)},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -457,6 +515,139 @@ func TestVPUnmarshalBinary(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+func TestVPEnhancedExtension(t *testing.T) {
+	// 3GPP TS 23.040 Section 9.2.3.12.3: with bit 7 of the functionality
+	// indicator set, the next octet is an extension of the indicator, and the
+	// VP value follows the last indicator octet.
+	patterns := []struct {
+		name     string
+		in       []byte
+		efi      byte
+		duration time.Duration
+	}{
+		{"relative",
+			[]byte{0x81, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00},
+			0x81,
+			30 * time.Minute,
+		},
+		{"relative chained",
+			[]byte{0xc1, 0x80, 0x00, 0xff, 0x00, 0x00, 0x00},
+			0xc1,
+			63 * 7 * 24 * time.Hour,
+		},
+		{"seconds",
+			[]byte{0x82, 0x00, 0x2d, 0x00, 0x00, 0x00, 0x00},
+			0x82,
+			45 * time.Second,
+		},
+		{"hhmmss",
+			[]byte{0x83, 0x80, 0x80, 0x00, 0x10, 0x20, 0x30},
+			0x83,
+			time.Hour + 2*time.Minute + 3*time.Second,
+		},
+		{"not present",
+			[]byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+			0x80,
+			0,
+		},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			var v tpdu.ValidityPeriod
+			n, err := v.UnmarshalBinary(p.in, tpdu.VpfEnhanced)
+			require.Nil(t, err)
+			assert.Equal(t, 7, n)
+			assert.Equal(t, tpdu.VpfEnhanced, v.Format)
+			assert.Equal(t, p.efi, v.EFI)
+			assert.Equal(t, p.duration, v.Duration)
+			b, err := v.MarshalBinary()
+			require.Nil(t, err)
+			assert.Equal(t, p.in, b)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+func TestVPEnhancedMarshalFI(t *testing.T) {
+	patterns := []struct {
+		name string
+		efi  byte
+		out  []byte
+		err  error
+	}{
+		{"single shot", 0x41, []byte{0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, nil},
+		{"reserved bit 3", 0x09, nil, tpdu.EncodeError("fi", tpdu.ErrInvalid)},
+		{"reserved bit 5", 0x21, nil, tpdu.EncodeError("fi", tpdu.ErrInvalid)},
+		// the extension octets are not known
+		{"extension", 0x81, nil, tpdu.EncodeError("fi", tpdu.ErrInvalid)},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			var v tpdu.ValidityPeriod
+			v.SetEnhanced(5*time.Minute, p.efi)
+			b, err := v.MarshalBinary()
+			assert.Equal(t, p.err, err)
+			assert.Equal(t, p.out, b)
+		}
+		t.Run(p.name, f)
+	}
+	// SetEnhanced drops the extension octets of a decoded VP
+	var v tpdu.ValidityPeriod
+	_, err := v.UnmarshalBinary([]byte{0x81, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00}, tpdu.VpfEnhanced)
+	require.Nil(t, err)
+	v.SetEnhanced(5*time.Minute, 0x01)
+	b, err := v.MarshalBinary()
+	require.Nil(t, err)
+	assert.Equal(t, []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, b)
+	v.SetEnhanced(5*time.Minute, 0x81)
+	b, err = v.MarshalBinary()
+	assert.Equal(t, tpdu.EncodeError("fi", tpdu.ErrInvalid), err)
+	assert.Nil(t, b)
+}
+
+// FuzzValidityPeriodUnmarshalBinary checks that a VP decoded in the relative
+// or enhanced format marshals back to the octets it was decoded from.
+func FuzzValidityPeriodUnmarshalBinary(f *testing.F) {
+	for _, seed := range [][]byte{
+		{0x00}, {0x8f}, {0x90}, {0xa7}, {0xc4}, {0xff},
+	} {
+		f.Add(byte(tpdu.VpfRelative), seed)
+	}
+	for _, seed := range [][]byte{
+		{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		{0x41, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00},
+		{0x02, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00},
+		{0x03, 0x30, 0x21, 0x54, 0x00, 0x00, 0x00},
+		{0x03, 0x99, 0x95, 0x95, 0x00, 0x00, 0x00},
+		{0x81, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00},
+		{0x83, 0x80, 0x80, 0x00, 0x10, 0x20, 0x30},
+		{0x09, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00},
+		{0x07, 0x01, 0x2d, 0x54, 0x00, 0x00, 0x00},
+	} {
+		f.Add(byte(tpdu.VpfEnhanced), seed)
+	}
+	f.Add(byte(tpdu.VpfNotPresent), []byte{})
+	f.Fuzz(func(t *testing.T, vpf byte, src []byte) {
+		format := tpdu.ValidityPeriodFormat(vpf % 3) // not absolute
+		var v tpdu.ValidityPeriod
+		n, err := v.UnmarshalBinary(src, format)
+		if err != nil {
+			return
+		}
+		if n > len(src) {
+			t.Fatalf("%v % x: read %d octets", format, src, n)
+		}
+		b, err := v.MarshalBinary()
+		if err != nil {
+			t.Fatalf("%v % x: marshal error %v", format, src, err)
+		}
+		if !bytes.Equal(src[:n], b) {
+			t.Fatalf("%v % x: remarshalled to % x", format, src[:n], b)
+		}
+	})
 }
 
 func TestVPRelativeRoundTrip(t *testing.T) {
