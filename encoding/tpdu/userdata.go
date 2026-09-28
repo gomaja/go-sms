@@ -233,8 +233,10 @@ type UDDecodeOption interface {
 // encoded then it is translated to UTF8 with the default character set, or
 // with the character set specified in the UDH, assuming the corresponding
 // language has been registered with the UDDecoder. If the UDH specifies a
-// character set that has not been registered then the translation will fall
-// back to the default character set.
+// character set that has not been registered then that IE is ignored, as
+// required by 3GPP TS 23.038 Section 6.2.1.2.5, and the translation uses the
+// character set of an earlier IE of the same type, or failing that falls back
+// to the default character set.
 func DecodeUserData(ud UserData, udh UserDataHeader, alpha Alphabet, options ...UDDecodeOption) ([]byte, error) {
 	switch alpha {
 	case AlphaUCS2:
@@ -250,24 +252,34 @@ func DecodeUserData(ud UserData, udh UserDataHeader, alpha Alphabet, options ...
 			cfg = option.applyDecodeOption(cfg)
 		}
 		options := []gsm7.DecoderOption{}
-		if ie, ok := udh.IE(IEINationalLanguageLockingShift); ok {
-			if len(ie.Data) >= 1 {
-				nli := int(ie.Data[0])
-				if _, ok := cfg.locking[nli]; ok {
-					options = append(options, gsm7.WithCharset(nli))
-				}
-			}
+		if nli, ok := udh.nationalLanguage(IEINationalLanguageLockingShift, cfg.locking); ok {
+			options = append(options, gsm7.WithCharset(nli))
 		}
-		if ie, ok := udh.IE(IEINationalLanguageSingleShift); ok {
-			if len(ie.Data) >= 1 {
-				nli := int(ie.Data[0])
-				if _, ok := cfg.shift[nli]; ok {
-					options = append(options, gsm7.WithExtCharset(nli))
-				}
-			}
+		if nli, ok := udh.nationalLanguage(IEINationalLanguageSingleShift, cfg.shift); ok {
+			options = append(options, gsm7.WithExtCharset(nli))
 		}
 		return gsm7.Decode(ud, options...)
 	}
+}
+
+// nationalLanguage returns the NLI of the last national language IE with the
+// given id whose NLI is in the supported set.
+//
+// An IE indicating "a reserved value or a value that is not supported by the
+// receiving entity" is ignored, as per 3GPP TS 23.038 Section 6.2.1.2.5, i.e.
+// skipped over, as per 3GPP TS 23.040 Sections 9.2.3.24.15 and 9.2.3.24.16,
+// and of the remaining IEs "the last occurrence of the IE" is used.
+func (udh UserDataHeader) nationalLanguage(id byte, supported map[int]bool) (int, bool) {
+	for i := len(udh) - 1; i >= 0; i-- {
+		ie := udh[i]
+		if ie.ID != id || len(ie.Data) < 1 {
+			continue
+		}
+		if nli := int(ie.Data[0]); supported[nli] {
+			return nli, true
+		}
+	}
+	return 0, false
 }
 
 type udEncodeConfig struct {
