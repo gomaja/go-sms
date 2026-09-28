@@ -126,6 +126,24 @@ func (o concatRefOption) ApplyEncoderOption(e *Encoder) {
 	e.ConcatRef = o.c
 }
 
+// With16BitConcatRef specifies that concatenated messages carry the
+// Concatenated short messages, 16-bit reference number IE, as defined in 3GPP
+// TS 23.040 Section 9.2.3.24.8, rather than the 8-bit one of Section
+// 9.2.3.24.1.
+//
+// The references are those of the ConcatRef counter modulo 65536, rather
+// than modulo 256, so there are more of them, but the IE takes an octet more
+// of each segment.
+var With16BitConcatRef EncoderOption = segmentationOption{tpdu.With16BitConcatRef}
+
+type segmentationOption struct {
+	o tpdu.SegmentationOption
+}
+
+func (o segmentationOption) ApplyEncoderOption(e *Encoder) {
+	e.sopts = append(e.sopts, o.o)
+}
+
 // To specifies the DA for a SMS-SUBMIT TPDU.
 func To(number string) EncoderOption {
 	addr := tpdu.NewAddress(tpdu.FromNumber(number))
