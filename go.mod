@@ -11,3 +11,8 @@ require (
 )
 
 go 1.23
+
+retract (
+	v1.0.2 // Published only to retract v1.0.1; depend on the main branch.
+	v1.0.1 // Predates the fixes and the current API; depend on the main branch.
+)

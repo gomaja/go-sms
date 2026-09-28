@@ -58,8 +58,8 @@ func TestReadmeExamples(t *testing.T) {
 }
 
 // Every go get or go install of the module in the README names the main
-// branch, as a plain one, or one at @latest, may resolve to the obsolete
-// v1.0.1 cached by the Go module proxy.
+// branch, the only supported version of the module, whose tagged versions
+// are all retracted.
 func TestReadmeInstallNamesMain(t *testing.T) {
 	md, err := os.ReadFile("../../README.md")
 	require.NoError(t, err)

@@ -28,9 +28,13 @@ and install the command line tools from it the same way, such as:
 go install github.com/gomaja/go-sms/cmd/smsdecode@main
 ```
 
-Name the branch: a plain `go get github.com/gomaja/go-sms`, or one at
-`@latest`, may resolve to v1.0.1, an obsolete version cached by the Go module
-proxy, which predates the current API and its fixes.
+The main branch is the only supported version. The only versions ever tagged,
+v1.0.1 and v1.0.2, are retracted: v1.0.1 predates the current API and its
+fixes, and v1.0.2 was published only to retract it. The go command does not
+offer them, so a plain `go get github.com/gomaja/go-sms`, or one at `@latest`,
+also resolves to the main branch. A project that still requires v1.0.1 is
+warned that it is retracted, and moves to the main branch with the command
+above.
 
 ## Standards scope
 
