@@ -105,17 +105,29 @@ func TestAddressMarshalBinary(t *testing.T) {
 			[]byte{0x00, 0x00},
 			nil,
 		},
-		// test characters only available in the extension table - which should
-		// be unavailable.
-		{"invalid alpha euro",
+		// The characters of the extension table of the default alphabet
+		// are coded as escape sequences, of two septets each (TS 23.040
+		// 9.1.2.5, TS 23.038 6.2.1.1).
+		{"alpha euro",
 			tpdu.Address{Addr: "a euro €32", TOA: 0xd1},
+			[]byte{20, 0xd1, 0x61, 0x50, 0xb9, 0x2e, 0x7f, 0x83, 0x36, 0xe5, 0x99, 0x0c},
 			nil,
-			tpdu.NewEncodeError("addr", gsm7.ErrUnencodable{Offset: 7, Rune: '€'}),
 		},
-		{"invalid alpha bar",
+		{"alpha bar",
 			tpdu.Address{Addr: "a bar | ", TOA: 0xd1},
+			[]byte{16, 0xd1, 0x61, 0x90, 0x38, 0x2c, 0x07, 0x6d, 0x80, 0x20},
 			nil,
-			tpdu.NewEncodeError("addr", gsm7.ErrUnencodable{Offset: 6, Rune: '|'}),
+		},
+		{"max alpha escape",
+			tpdu.Address{Addr: "Hello Wor€", TOA: 0xd0},
+			[]byte{20, 0xd0, 0xc8, 0x32, 0x9b, 0xfd, 0x06, 0x5d, 0xdf, 0xf2, 0x4d, 0x19},
+			nil,
+		},
+		// 10 characters, but 12 septets.
+		{"overlength alpha escape",
+			tpdu.Address{Addr: "Hello Worl€", TOA: 0xd0},
+			nil,
+			tpdu.NewEncodeError("addr", tpdu.ErrOverlength),
 		},
 		// test characters not available in the default character set at all.
 		{"invalid alpha",
@@ -202,11 +214,43 @@ func TestAddressUnmarshalBinary(t *testing.T) {
 			8,
 			tpdu.NewDecodeError("addr", 2, tpdu.ErrUnderflow),
 		},
-		{"invalid alpha bar",
+		// An alphanumeric address is in the GSM 7 bit default alphabet,
+		// which includes its extension table (TS 23.040 9.1.2.5, TS 23.038
+		// 6.2.1.1).
+		{"alpha bar",
 			[]byte{10, 0xd1, 0xED, 0xF2, 0x7C, 0x03, 0x9c, 0x87, 0xCF, 0xE5, 0x39},
-			tpdu.Address{},
-			2,
-			tpdu.NewDecodeError("addr", 2, gsm7.ErrInvalidSeptet{Offset: 4, Septet: 0x40, Escaped: true}),
+			tpdu.Address{Addr: "mes|", TOA: 0xd1},
+			7,
+			nil,
+		},
+		{"alpha euro",
+			[]byte{6, 0xd0, 0xc1, 0x4d, 0x19},
+			tpdu.Address{Addr: "A€", TOA: 0xd0},
+			5,
+			nil,
+		},
+		// TS 23.038 6.2.1.1: an escaped septet with no character in the
+		// extension table is displayed as the character of the main table.
+		{"alpha unknown escape",
+			[]byte{6, 0xd0, 0xc1, 0x4d, 0x10},
+			tpdu.Address{Addr: "AA", TOA: 0xd0},
+			5,
+			nil,
+		},
+		// TS 23.038 6.2.1 Note 1: a receiver that does not understand an
+		// escape "shall display it as a space character", and 6.2.1.1 Note
+		// 1 reserves an escape after an escape.
+		{"alpha trailing escape",
+			[]byte{4, 0xd0, 0xc1, 0x0d},
+			tpdu.Address{Addr: "A ", TOA: 0xd0},
+			4,
+			nil,
+		},
+		{"alpha escape escape",
+			[]byte{7, 0xd0, 0xc1, 0xcd, 0x46, 0x08},
+			tpdu.Address{Addr: "A B", TOA: 0xd0},
+			6,
+			nil,
 		},
 		{"underflow alpha",
 			[]byte{10, 0xd1, 0xCF, 0xE5, 0x39},
@@ -340,9 +384,10 @@ func midFill(value []byte) bool {
 // The exceptions are a semi-octet address with a fill semi-octet before the
 // last, which is ignored (3GPP TS 23.040 Section 9.1.2.3), and an
 // alphanumeric address, where an Address-Length that does not match the
-// number of septets, or non-zero fill bits, carry no information. Neither is
-// retained, so such an address must re-marshal to one that decodes to the
-// same Address, and is no longer.
+// number of septets, or non-zero fill bits, carry no information, and an
+// escape that has no character is read as a substitute (3GPP TS 23.038
+// Sections 6.2.1 and 6.2.1.1). None is retained, so such an address must
+// re-marshal to one that decodes to the same Address, and is no longer.
 func FuzzAddressUnmarshalBinary(f *testing.F) {
 	for _, seed := range [][]byte{
 		{0, 0},
@@ -356,6 +401,10 @@ func FuzzAddressUnmarshalBinary(f *testing.F) {
 		{21, 0x91, 0x21, 0x43, 0x65, 0x87, 0x09, 0x21, 0x43, 0x65, 0x87, 0x09, 0xf1},
 		{11, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0x09},
 		{11, 0x91, 0x16, 0x04, 0x26, 0xf9, 0x89, 0x56},
+		{20, 0xd1, 0x61, 0x50, 0xb9, 0x2e, 0x7f, 0x83, 0x36, 0xe5, 0x99, 0x0c},
+		{4, 0xd0, 0xc1, 0x0d},
+		{7, 0xd0, 0xc1, 0xcd, 0x46, 0x08},
+		{6, 0xd0, 0xc1, 0x4d, 0x10},
 	} {
 		f.Add(seed)
 	}

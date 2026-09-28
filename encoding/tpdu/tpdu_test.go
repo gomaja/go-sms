@@ -1398,6 +1398,59 @@ func TestUDHI(t *testing.T) {
 	}
 }
 
+// TestAlphanumericAddressEscapes checks that a TPDU with an alphanumeric
+// address holding an escape sequence decodes, rather than losing the short
+// message over its address.
+//
+// TS 23.040 9.1.2.5 codes an alphanumeric address "according to 3GPP TS
+// 23.038 GSM 7-bit default alphabet", which has an extension table reached by
+// the escape 0x1B (TS 23.038 6.2.1.1), and TS 23.038 gives a receiver a
+// character to display for an escape it does not understand.
+func TestAlphanumericAddressEscapes(t *testing.T) {
+	euro := tpdu.Address{Addr: "A€", TOA: 0xd0}
+	patterns := []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+		addr func(*tpdu.TPDU) tpdu.Address
+		want tpdu.Address
+		out  string // if not the same as in
+	}{
+		{"deliver", tpdu.MT, "04 06 d0 c14d19 00 00 51507132200523 01 41",
+			func(d *tpdu.TPDU) tpdu.Address { return d.OA }, euro, ""},
+		{"submit", tpdu.MO, "01 00 06 d0 c14d19 00 00 01 41",
+			func(d *tpdu.TPDU) tpdu.Address { return d.DA }, euro, ""},
+		{"command", tpdu.MO, "02 42 00 00 34 06 d0 c14d19 00",
+			func(d *tpdu.TPDU) tpdu.Address { return d.DA }, euro, ""},
+		{"status report", tpdu.MT, "02 42 06 d0 c14d19 51507132200523 51408132200542 ab",
+			func(d *tpdu.TPDU) tpdu.Address { return d.RA }, euro, ""},
+		// an escape with no septet after it is displayed as a space, which
+		// is sent as a space.
+		{"deliver trailing escape", tpdu.MT, "04 04 d0 c10d 00 00 51507132200523 01 41",
+			func(d *tpdu.TPDU) tpdu.Address { return d.OA }, tpdu.Address{Addr: "A ", TOA: 0xd0},
+			"04 04 d0 4110 00 00 51507132200523 01 41"},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{Direction: p.dirn}
+			require.NoError(t, d.UnmarshalBinary(in))
+			assert.Equal(t, p.want, p.addr(&d))
+			if d.SmsType() != tpdu.SmsStatusReport && d.SmsType() != tpdu.SmsCommand {
+				assert.Equal(t, []byte("A"), []byte(d.UD))
+			}
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			out := in
+			if p.out != "" {
+				out = unhex(t, p.out)
+			}
+			assert.Equal(t, out, b)
+		}
+		t.Run(p.name, f)
+	}
+}
+
 // TestUDHIWithoutUD checks that a TPDU received with the TP-UDHI set but no
 // TP-UD has no UDH, as there is no header to decode, and keeps the bit, so
 // it marshals back to the octets it came from.

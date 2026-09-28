@@ -43,15 +43,23 @@ func FromNumber(number string) AddressOption {
 // 3GPP TS 23.040 Section 9.1.2.5: "The maximum length of the full address
 // field (Address-Length, Type-of-Address and Address-Value) is 12 octets", so
 // the Address-Value is at most 10 octets, which holds 20 digits or 11
-// alphanumeric characters.
+// septets of alphanumeric characters.
 const maxAddressLength = 20
 
 // MarshalBinary marshals an Address into binary.
 //
 // It returns the marshalled address and any error detected
 // while marshalling.
-// An address longer than 20 digits, or 11 alphanumeric characters, cannot be
-// encoded and results in an ErrOverlength error.
+//
+// An alphanumeric address, one with a TypeOfNumber of TonAlphanumeric, is
+// coded in the GSM 7 bit default alphabet (3GPP TS 23.040 Sections 9.1.2.4
+// and 9.1.2.5), including its extension table, whose characters, such as
+// '€' and '|', are coded as an escape sequence of two septets (3GPP TS
+// 23.038 Section 6.2.1.1). The Address-Length is the number of semi-octets
+// its septets use.
+//
+// An address longer than 20 digits, or 11 septets, cannot be encoded and
+// results in an ErrOverlength error.
 // The TOA is encoded as is, so an empty Address encodes to a zero length
 // address with a zero TOA.
 func (a *Address) MarshalBinary() (dst []byte, err error) {
@@ -60,7 +68,7 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 	var l int // is digits and ignores the toa
 	switch ton {
 	case TonAlphanumeric:
-		e := gsm7.NewEncoder().WithExtCharset(nil) // without escapes
+		e := gsm7.NewEncoder() // the default alphabet and its extension table
 		addr, err = e.Encode([]byte(a.Addr))
 		if err != nil {
 			return nil, NewEncodeError("addr", err)
@@ -95,6 +103,14 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 // while unmarshalling.
 // An Address-Length greater than 20 exceeds the maximum length of the address
 // field and results in an ErrOverlength error.
+//
+// An alphanumeric address is decoded from the GSM 7 bit default alphabet and
+// its extension table, as for MarshalBinary, and never results in an error,
+// so the TPDU it is in is not lost over its address. Where the tables have
+// no character, the address is decoded as 3GPP TS 23.038 has a receiver
+// display it, as gsm7.Decoder.Decode describes: an escaped septet that has
+// no character in the extension table as the character of the main table,
+// and an escape followed by another escape, or by nothing, as a space.
 func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 	if len(src) < 2 {
 		return 0, NewDecodeError("addr", 0, ErrUnderflow)
@@ -117,7 +133,7 @@ func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 			// drop septet of fill
 			u = u[:len(u)-1]
 		}
-		d := gsm7.NewDecoder().WithExtCharset(nil).Strict() // without escapes
+		d := gsm7.NewDecoder() // the default alphabet and its extension table
 		baddr, err := d.Decode(u)
 		if err != nil {
 			return ri, NewDecodeError("addr", ri, err)

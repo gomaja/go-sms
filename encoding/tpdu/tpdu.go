@@ -683,7 +683,10 @@ func (t *TPDU) UDHL() int {
 //   - An address in another form than the one it marshals to: one with a
 //     fill semi-octet, 1111, before its last (Section 9.1.2.3), or an
 //     alphanumeric one whose Address-Length counts more semi-octets than its
-//     septets use, or whose unused bits are not zero (Section 9.1.2.5).
+//     septets use, whose unused bits are not zero (Section 9.1.2.5), or that
+//     has an escape with no character, which is decoded as a substitute
+//     (3GPP TS 23.038 Sections 6.2.1 and 6.2.1.1), as Address.UnmarshalBinary
+//     describes.
 //
 // MarshalBinary does not change the TPDU.
 func (t *TPDU) MarshalBinary() (dst []byte, err error) {
