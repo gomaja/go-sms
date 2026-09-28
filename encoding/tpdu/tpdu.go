@@ -141,6 +141,14 @@ type TPDU struct {
 	// For compressed data, as indicated by the DCS, UD contains the compressed
 	// octets, as defined in 3GPP TS 23.042, whatever the Alphabet.
 	UD UserData
+
+	// ignoredUDH holds the octets of a UDH, including its UDHL, that was
+	// ignored when unmarshalling, leaving UDH empty. "Irrespective of whether
+	// any part of the User Data Header is ignored or discarded, the MS shall
+	// always store the entire TPDU exactly as received" (3GPP TS 23.040
+	// Section 9.2.3.24), so these octets are marshalled while UDH is left
+	// empty, and dropped by SetUDH.
+	ignoredUDH []byte
 }
 
 // New creates a new TPDU
@@ -432,8 +440,11 @@ func (t *TPDU) SetUD(ud UserData) {
 }
 
 // SetUDH sets the User Data Header of the TPDU and the TP-UDHI flag.
+//
+// It replaces any UDH that was ignored when unmarshalling.
 func (t *TPDU) SetUDH(udh UserDataHeader) {
 	t.UDH = udh
+	t.ignoredUDH = nil
 	if udh == nil {
 		t.FirstOctet &^= FoUDHI
 	} else {
@@ -468,7 +479,25 @@ func (t *TPDU) SetSmsType(st SmsType) error {
 //
 // The size is negative if the UDH alone does not fit in the TPDU.
 func (t *TPDU) UDBlockSize() int {
+	if t.keepsIgnoredUDH() {
+		return t.blockSize(len(t.ignoredUDH))
+	}
 	return t.blockSize(udhOctets(t.UDH))
+}
+
+// keepsIgnoredUDH reports whether the TPDU marshals the octets of a UDH that
+// was ignored when unmarshalling, which it does while UDH is left empty.
+func (t *TPDU) keepsIgnoredUDH() bool {
+	return t.ignoredUDH != nil && t.UDH != nil && len(t.UDH) == 0
+}
+
+// marshalUDH returns the octets of the UDH, including its UDHL, which are
+// those of a UDH that was ignored when unmarshalling if it is kept.
+func (t *TPDU) marshalUDH() ([]byte, error) {
+	if t.keepsIgnoredUDH() {
+		return append([]byte(nil), t.ignoredUDH...), nil
+	}
+	return t.UDH.MarshalBinary()
 }
 
 // udhOctets returns the number of octets taken in the TP-UD by the UDH,
@@ -576,7 +605,12 @@ func (t *TPDU) UDHI() bool {
 }
 
 // UDHL returns the encoded length of the UDH, not including the UDHL itself.
+//
+// For a UDH that was ignored when unmarshalling it is the UDHL as received.
 func (t *TPDU) UDHL() int {
+	if t.keepsIgnoredUDH() {
+		return len(t.ignoredUDH) - 1
+	}
 	return t.UDH.UDHL()
 }
 
@@ -1212,6 +1246,10 @@ func (t *TPDU) decodeUserData(src []byte) (int, error) {
 		if err != nil {
 			return 0, NewDecodeError("udh", ri, err)
 		}
+		if len(udh) == 0 && l > 1 {
+			// the UDH was ignored, but its octets are kept
+			t.ignoredUDH = append([]byte(nil), src[ri:ri+l]...)
+		}
 		udhl = l
 		ri += udhl
 	}
@@ -1281,7 +1319,7 @@ func decode7Bit(sml, udhl int, src []byte) ([]byte, error) {
 // which are packed after the UDH and its fill bits. Otherwise, including for
 // compressed data, the UD is encoded as is.
 func (t *TPDU) encodeUserData() (b []byte, err error) {
-	udh, err := t.UDH.MarshalBinary()
+	udh, err := t.marshalUDH()
 	if err != nil {
 		return nil, NewEncodeError("udh", err)
 	}

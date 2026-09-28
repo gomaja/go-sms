@@ -1151,3 +1151,61 @@ func TestNationalLanguageIEIDeliver(t *testing.T) {
 	require.Nil(t, err)
 	assert.Equal(t, "ş", string(msg))
 }
+
+// TestUserDataHeaderIgnoredRoundTrip checks that a TPDU whose UDH is ignored
+// still marshals to the octets it was decoded from, as "irrespective of
+// whether any part of the User Data Header is ignored or discarded, the MS
+// shall always store the entire TPDU exactly as received" (3GPP TS 23.040
+// Section 9.2.3.24).
+func TestUserDataHeaderIgnoredRoundTrip(t *testing.T) {
+	scts := []byte{0x71, 0x80, 0x13, 0x11, 0x12, 0x45, 0x23}
+	oa := []byte{0x0b, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9}
+	deliver := func(dcs byte, tpud ...byte) []byte {
+		b := append([]byte{0x44}, oa...)
+		b = append(b, 0x00, dcs)
+		b = append(b, scts...)
+		return append(b, tpud...)
+	}
+	patterns := []struct {
+		name string
+		dirn tpdu.Direction
+		in   []byte
+		udhl int
+		bs   int // room left by the UDH as received
+		ud   tpdu.UserData
+	}{
+		{"submit 8bit ie overruns udhl", tpdu.MO,
+			[]byte{0x41, 0x00, 0x00, 0x80, 0x00, 0x04, 0x05, 0x03, 0x00, 0x02, 0x01, 0x41},
+			3, 140 - 4, tpdu.UserData{0x41}},
+		{"deliver 8bit ie overruns udhl", tpdu.MT,
+			deliver(0x04, 0x07, 0x02, 0x00, 0x03, 0x07, 0x02, 0x01, 0x41),
+			2, 140 - 3, tpdu.UserData{0x07, 0x02, 0x01, 0x41}},
+		{"deliver 7bit ie cut short", tpdu.MT,
+			deliver(0x00, 0x0b, 0x04, 0x00, 0x03, 0x01, 0x02, 0xa0, 0xcb, 0x6c, 0xf6, 0x1b),
+			4, 160 - 6, tpdu.UserData("hello")},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			pdu := tpdu.TPDU{Direction: p.dirn}
+			require.Nil(t, pdu.UnmarshalBinary(p.in))
+			assert.Equal(t, tpdu.UserDataHeader{}, pdu.UDH)
+			assert.Equal(t, p.ud, pdu.UD)
+			assert.Equal(t, p.udhl, pdu.UDHL())
+			assert.Equal(t, p.bs, pdu.UDBlockSize())
+			out, err := pdu.MarshalBinary()
+			require.Nil(t, err)
+			assert.Equal(t, p.in, out)
+
+			// the header octets are only kept while the UDH is left as
+			// decoded
+			pdu.SetUDH(tpdu.UserDataHeader{})
+			out, err = pdu.MarshalBinary()
+			require.Nil(t, err)
+			assert.NotEqual(t, p.in, out)
+			again := tpdu.TPDU{Direction: p.dirn}
+			require.Nil(t, again.UnmarshalBinary(out))
+			assert.Equal(t, p.ud, again.UD)
+		}
+		t.Run(p.name, f)
+	}
+}

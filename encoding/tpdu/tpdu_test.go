@@ -3794,8 +3794,6 @@ func piReserved(d tpdu.TPDU) bool {
 //   - a reserved TP-PI bit is set, as the octets that follow the TP-UD are
 //     then discarded (9.2.3.27).
 //   - an SMS-STATUS-REPORT has a TP-PI of 0, which is optional (9.2.2.3).
-//   - a UDH was ignored as malformed, and so is marshalled as an empty UDH
-//     (9.2.3.24).
 //   - an address is not in the form it marshals to, such as one with a fill
 //     semi-octet other than the last (9.1.2.3).
 //   - a 7 bit UDH with no text has a TP-UDL of fewer septets than the UDH
@@ -3872,9 +3870,6 @@ func checkRemarshal(t *testing.T, d tpdu.TPDU, src, out []byte, label string) {
 		udhl := -1 // the UDHL of the received UDH
 		if d.UDH != nil {
 			udhl = int(src[udl+1])
-		}
-		if d.UDH != nil && len(d.UDH) == 0 && udhl != 0 {
-			return // an ignored UDH
 		}
 		if d.SmsType() != tpdu.SmsCommand && !d.DCS.Compressed() && d.DCS.Alphabet() == tpdu.Alpha7Bit {
 			octs := (n*7 + 7) / 8
