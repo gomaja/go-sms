@@ -4036,12 +4036,20 @@ func FuzzSegment(f *testing.F) {
 				c.UDH = append(append(tpdu.UserDataHeader{}, tmpl.UDH...), ie)
 				bs := c.UDBlockSize()
 				require.Greater(t, len(msg), tmpl.UDBlockSize())
+				// a segment must hold the longest character, which is an
+				// escape sequence or a surrogate pair only if the message
+				// has one, and may then be a unit short of the room.
 				unit, shrink := 1, 0
-				if sevenBit {
+				if sevenBit && bytes.IndexByte(msg, 0x1b) >= 0 {
 					unit, shrink = 2, 1
 				}
 				if ucs {
-					unit, shrink = 4, 2
+					unit = 2
+					for i := 0; i+1 < len(msg); i += 2 {
+						if msg[i]&0xfc == 0xd8 {
+							unit, shrink = 4, 2
+						}
+					}
 				}
 				if errors.Is(err, tpdu.ErrOverlength) {
 					require.Less(t, bs, unit)
@@ -4134,4 +4142,56 @@ type counter struct {
 func (c *counter) Count() int {
 	c.c++
 	return c.c
+}
+
+// TestSegmentMinimalRoom checks Segment only needs room for the characters
+// the message has: 3GPP TS 23.040 Section 9.2.3.24.1 says "A character
+// represented by an escape-sequence shall not be split in the middle" and "A
+// UCS2 character shall not be split in the middle", so a segment must hold an
+// escape sequence, or a surrogate pair, only if the message contains one.
+func TestSegmentMinimalRoom(t *testing.T) {
+	// a template UDH that, with the concatenation IE, leaves room for one
+	// septet, or one UCS2 code unit, in each segment.
+	template := func(dcs tpdu.DCS, head int) tpdu.TPDU {
+		d, err := tpdu.NewSubmit(tpdu.WithDA(tpdu.NewAddress(tpdu.FromNumber("123"))))
+		require.NoError(t, err)
+		d.SetDCS(byte(dcs))
+		d.SetUDH(tpdu.UserDataHeader{{ID: 0x70, Data: make([]byte, head)}})
+		return *d
+	}
+	patterns := []struct {
+		name  string
+		t     tpdu.TPDU
+		msg   []byte
+		count int // 0 for an error
+	}{
+		// without the concatenation IE, the template leaves room for 6
+		// septets, or 3 UCS2 code units, so these need segmenting.
+		{"7bit", template(0x00, 131), []byte("AAAAAAAAAA"), 10},
+		{"7bit escape", template(0x00, 131), []byte("AAAAAAAA\x1b\x65"), 0},
+		{"ucs2", template(tpdu.DcsUCS2Data, 130), []byte("\x00A\x00B\x00C\x00D"), 4},
+		{"ucs2 surrogate pair", template(tpdu.DcsUCS2Data, 130), []byte("\x00A\x00B\x00C\xd8\x3d\xde\x01"), 0},
+		{"ucs2 lone high surrogate", template(tpdu.DcsUCS2Data, 130), []byte("\x00A\x00B\x00C\xd8\x3d\x00D"), 0},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			pdus, err := p.t.Segment(p.msg)
+			if p.count == 0 {
+				assert.ErrorIs(t, err, tpdu.ErrOverlength)
+				assert.Nil(t, pdus)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, pdus, p.count)
+			var got []byte
+			for i := range pdus {
+				b, err := pdus[i].MarshalBinary()
+				require.NoError(t, err)
+				assert.LessOrEqual(t, len(b), 164)
+				got = append(got, pdus[i].UD...)
+			}
+			assert.Equal(t, p.msg, got)
+		}
+		t.Run(p.name, f)
+	}
 }

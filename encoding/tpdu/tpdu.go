@@ -5,6 +5,7 @@
 package tpdu
 
 import (
+	"bytes"
 	"encoding/binary"
 
 	"github.com/gomaja/go-sms/encoding/gsm7"
@@ -313,7 +314,7 @@ func (t TPDU) Segment(msg []byte, options ...SegmentationOption) ([]TPDU, error)
 		udho = 1
 	}
 	bs = t.blockSize(udho + cfg.ief(0, 0, 0).marshalledLen())
-	if bs < minBlockSize(coding) {
+	if bs < minBlockSize(msg, coding) {
 		return nil, NewEncodeError("udh", ErrOverlength)
 	}
 	chunks := chunk(msg, coding, bs)
@@ -363,15 +364,27 @@ func checkMessage(msg []byte, coding Alphabet) error {
 	return nil
 }
 
-// minBlockSize returns the smallest block that can hold any character of the
-// coding: an escape sequence of 2 septets for GSM 7 bit, a surrogate pair of
-// 4 octets for UCS2, and an octet otherwise.
-func minBlockSize(coding Alphabet) int {
+// minBlockSize returns the smallest block that can hold every character of
+// the message, as "A character represented by an escape-sequence shall not be
+// split in the middle" and "A UCS2 character shall not be split in the
+// middle" (3GPP TS 23.040 Section 9.2.3.24.1). That is 2 septets if a GSM 7
+// bit message has an escape and 1 otherwise, 4 octets if a UCS2 message has a
+// high surrogate, which may start a surrogate pair, and 2 otherwise, and an
+// octet for other data.
+func minBlockSize(msg []byte, coding Alphabet) int {
 	switch coding {
 	case Alpha7Bit:
-		return 2
+		if bytes.IndexByte(msg, esc) >= 0 {
+			return 2
+		}
+		return 1
 	case AlphaUCS2:
-		return 4
+		for i := 0; i+1 < len(msg); i += 2 {
+			if u := int(msg[i])<<8 | int(msg[i+1]); u >= surrHighStart && u < surrLowStart {
+				return 4
+			}
+		}
+		return 2
 	default:
 		return 1
 	}
@@ -1571,7 +1584,7 @@ const (
 //
 // The bs must be at least minBlockSize, and chunk returns nil if it is not.
 func chunk(msg []byte, alpha Alphabet, bs int) [][]byte {
-	if bs < minBlockSize(alpha) {
+	if bs < minBlockSize(msg, alpha) {
 		return nil
 	}
 	switch alpha {
@@ -1585,7 +1598,7 @@ func chunk(msg []byte, alpha Alphabet, bs int) [][]byte {
 }
 
 // chunk7Bit splits a GSM7 message into chunks that are not larger than bs,
-// which must be at least 2.
+// which must be at least 2 if the message has an escape, and at least 1.
 //
 // Escape sequences are not split across blocks, so the resulting blocks may
 // be one septet shorter than bs. An escape followed by an escape is itself an
