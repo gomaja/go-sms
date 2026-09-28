@@ -151,10 +151,10 @@ func TestEncodeKeepsTemplateUDH(t *testing.T) {
 		f := func(t *testing.T) {
 			tmpl := make(tpdu.UserDataHeader, len(p.udh), len(p.udh)+4)
 			copy(tmpl, p.udh)
-			options := append([]sms.EncoderOption{
+			options := append(freshCounters(
 				sms.To("1234"),
 				sms.WithTemplateOption(tpdu.WithUDH(tmpl)),
-			}, p.options...)
+			), p.options...)
 			out, err := sms.Encode([]byte(p.msg), options...)
 			require.NoError(t, err)
 			require.Len(t, out, len(p.out))

@@ -3,6 +3,7 @@
 package sms
 
 import (
+	"math/rand/v2"
 	"slices"
 	"sync/atomic"
 
@@ -11,27 +12,29 @@ import (
 
 // Encode builds a set of TPDUs containing the message.
 //
-// Long messages are split into multiple concatenated TPDUs, while short
-// messages may fit in one.
+// It is the same as NewEncoder(options...).Encode(msg), except that the
+// TPDUs are SMS-SUBMIT unless the options say otherwise.
 //
-// By default messages are encoded into SMS-SUBMIT TPDUs.  This behaviour may
-// be overridden via options.
-//
-// For 8-bit encoding the message is encoded as is.
-//
-// For 7-bit encoding the message is assumed to contain UTF-8.
-//
-// For explicit UCS-2 encoding the message is assumed to contain UTF-16,
-// encoded as an array of bytes.  This can be created from an array of UTF-16
-// runes using ucs2.Encode.
-//
-// For implicit UCS-2 encoding (the fallback with 7-bit fails) the message is
-// assumed to contain UTF-8.
+// The TP-MR and concatenation references are drawn from the counters shared
+// by all Encoders created without WithMR or WithConcatRef, as described for
+// NewEncoder, so consecutive calls do not reuse a reference.
 func Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, error) {
 	options = append([]EncoderOption{AsSubmit}, options...)
 	e := NewEncoder(options...)
 	return e.Encode(msg)
 }
+
+// The counters shared by the Encoders created without WithMR or
+// WithConcatRef.
+//
+// The reference counter starts at a random value, so that the references of
+// different runs of a program are unlikely to repeat. It covers the range of
+// the 16-bit references, and so of the 8-bit ones. The value is not a secret,
+// so a cryptographic source is not needed.
+var (
+	sharedMR        = &Counter{}
+	sharedConcatRef = NewCounter(rand.IntN(1 << 16))
+)
 
 // Encoder builds SMS TPDUs from simple inputs such as the destination number
 // and the message in a UTF8 form.
@@ -51,14 +54,29 @@ type Encoder struct {
 
 	err error
 
-	// MsgCount is the number of TPDUs encoded.
+	// MsgCount provides the TP-MR of each TPDU encoded.
 	MsgCount tpdu.Counter
 
-	// ConcatRef is the number of multi-segment messages encoded.
+	// ConcatRef provides the reference of each concatenated message encoded.
 	ConcatRef tpdu.Counter
 }
 
 // NewEncoder creates an Encoder.
+//
+// The Encoder draws the TP-MR of each TPDU from the counter given by WithMR,
+// and the reference of each concatenated message from the counter given by
+// WithConcatRef. Without them it draws from counters shared by all such
+// Encoders, and by Encode, so that consecutive concatenated messages get
+// different references, which 3GPP TS 23.040 Section 9.2.3.24.1 requires to
+// tell them apart, even when an Encoder is created for each message. The
+// shared reference counter starts at a random value, so that different runs
+// of a program, which each start their counters afresh, are unlikely to reuse
+// a reference. The shared TP-MR counter starts at 0, so the first TP-MR is 1.
+//
+// An MS continues the TP-MR from the LastUsedTPMR held by its (U)SIM, as
+// Section 9.2.3.6 requires, which WithMR(NewCounter(lastUsedTPMR)) provides.
+// An application sending on behalf of several originators needs a TP-MR
+// counter for each of them.
 func NewEncoder(options ...EncoderOption) *Encoder {
 	e := Encoder{}
 	for _, option := range options {
@@ -67,10 +85,10 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 	// The options may hold slices the caller goes on to change.
 	e.pdu = cloneTPDU(&e.pdu)
 	if e.MsgCount == nil {
-		e.MsgCount = &Counter{}
+		e.MsgCount = sharedMR
 	}
 	if e.ConcatRef == nil {
-		e.ConcatRef = &Counter{}
+		e.ConcatRef = sharedConcatRef
 	}
 	return &e
 }
@@ -197,11 +215,23 @@ func withNationalLanguage(udh, nl tpdu.UserDataHeader) (tpdu.UserDataHeader, boo
 	return h, true
 }
 
-// Counter is an implementation of the tpdu.Counter interface.
+// Counter is an implementation of the tpdu.Counter interface, which is safe
+// for concurrent use.
+//
+// Its zero value has counted to 0, so its first Count returns 1.
 //
 // It also provides a Read method on the current value for diagnostic purposes.
 type Counter struct {
 	c int64
+}
+
+// NewCounter returns a Counter that has counted to last, so its first Count
+// returns last+1.
+//
+// To continue the TP-MR of a (U)SIM, as 3GPP TS 23.040 Section 9.2.3.6
+// requires, last is its LastUsedTPMR.
+func NewCounter(last int) *Counter {
+	return &Counter{c: int64(last)}
 }
 
 // Count increments and returns the counter.
@@ -209,7 +239,8 @@ func (c *Counter) Count() int {
 	return int(atomic.AddInt64(&c.c, 1))
 }
 
-// Read returns the counter.
+// Read returns the value the counter has counted to, which is the value last
+// returned by Count.
 func (c *Counter) Read() int {
 	return int(atomic.LoadInt64(&c.c))
 }

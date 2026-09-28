@@ -455,10 +455,19 @@ var patterns = []struct {
 	},
 }
 
+// freshCounters makes the TP-MR and concatenation reference of the patterns
+// start at 1, rather than continue those shared by Encode.
+func freshCounters(options ...sms.EncoderOption) []sms.EncoderOption {
+	return append([]sms.EncoderOption{
+		sms.WithMR(&sms.Counter{}),
+		sms.WithConcatRef(&sms.Counter{}),
+	}, options...)
+}
+
 func TestEncode(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			out, err := sms.Encode(p.msg, p.options...)
+			out, err := sms.Encode(p.msg, freshCounters(p.options...)...)
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.out, out)
 		}
@@ -503,7 +512,7 @@ func TestEncoderEncodeReturnsNewEncoderTemplateOptionError(t *testing.T) {
 func TestEncoderEncode(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			e := sms.NewEncoder(sms.AsSubmit)
+			e := sms.NewEncoder(freshCounters(sms.AsSubmit)...)
 			out, err := e.Encode(p.msg, p.options...)
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.out, out)
@@ -513,27 +522,21 @@ func TestEncoderEncode(t *testing.T) {
 }
 
 func TestEncoderCounters(t *testing.T) {
-	e := sms.NewEncoder()
-	msgC, ok := e.MsgCount.(*sms.Counter)
-	assert.True(t, ok)
+	msgC := &sms.Counter{}
+	concatC := &sms.Counter{}
+	e := sms.NewEncoder(sms.WithMR(msgC), sms.WithConcatRef(concatC))
 	assert.Equal(t, 0, msgC.Read())
-	concatC, ok := e.ConcatRef.(*sms.Counter)
-	assert.True(t, ok)
 	assert.Equal(t, 0, concatC.Read())
 
 	p, err := e.Encode([]byte("blah"))
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(p))
-	assert.True(t, ok)
 	assert.Equal(t, 1, msgC.Read())
-	assert.True(t, ok)
 	assert.Equal(t, 0, concatC.Read())
 
 	p, err = e.Encode(twoSegmentMsg)
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(p))
-	assert.True(t, ok)
 	assert.Equal(t, 3, msgC.Read())
-	assert.True(t, ok)
 	assert.Equal(t, 1, concatC.Read())
 }

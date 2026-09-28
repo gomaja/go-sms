@@ -93,6 +93,39 @@ var (
 	WithDefaultCharset = CharsetOption{}
 )
 
+// WithMR specifies the counter that provides the TP-MR of each TPDU.
+//
+// The counter must be safe for concurrent use if the Encoder is used
+// concurrently, as Counter is.
+func WithMR(c tpdu.Counter) EncoderOption {
+	return mrOption{c}
+}
+
+type mrOption struct {
+	c tpdu.Counter
+}
+
+func (o mrOption) ApplyEncoderOption(e *Encoder) {
+	e.MsgCount = o.c
+}
+
+// WithConcatRef specifies the counter that provides the reference of each
+// concatenated message.
+//
+// The counter must be safe for concurrent use if the Encoder is used
+// concurrently, as Counter is.
+func WithConcatRef(c tpdu.Counter) EncoderOption {
+	return concatRefOption{c}
+}
+
+type concatRefOption struct {
+	c tpdu.Counter
+}
+
+func (o concatRefOption) ApplyEncoderOption(e *Encoder) {
+	e.ConcatRef = o.c
+}
+
 // To specifies the DA for a SMS-SUBMIT TPDU.
 func To(number string) EncoderOption {
 	addr := tpdu.NewAddress(tpdu.FromNumber(number))
