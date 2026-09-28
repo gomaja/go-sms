@@ -2562,6 +2562,210 @@ func TestRPMessageOption(t *testing.T) {
 	assert.Equal(t, "Unknown", tpdu.RPMessage(2).String())
 }
 
+// srHead is the part of an SMS-STATUS-REPORT before the TP-PI.
+const srHead = "02 42 04 91 3619 51507132200523 51408132200542 ab"
+
+// TestPIExtension checks the TP-PI extension octets are read, and are not
+// mistaken for the optional fields that follow the TP-PI.
+//
+// TS 23.040 9.2.3.27: "The most significant bit in octet 1 and any other
+// TP-PI octets which may be added later is reserved as an extension bit which
+// when set to a 1 shall indicate that another TP-PI octet follows immediately
+// afterwards."
+func TestPIExtension(t *testing.T) {
+	patterns := []struct {
+		name  string
+		dirn  tpdu.Direction
+		in    string
+		pi    tpdu.PI
+		piext []byte
+		pid   byte
+		ud    []byte
+	}{
+		{"deliver report", tpdu.MO, "00 81 00 7f", 0x81, []byte{0x00}, 0x7f, nil},
+		{"deliver report chain", tpdu.MO, "00 81 80 80 00 7f", 0x81, []byte{0x80, 0x80, 0x00}, 0x7f, nil},
+		{"submit report", tpdu.MT, "01 84 00 51507132200523 01 41", 0x84, []byte{0x00}, 0, []byte("A")},
+		{"status report", tpdu.MT, srHead + " 84 00 01 41", 0x84, []byte{0x00}, 0, []byte("A")},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{Direction: p.dirn}
+			require.NoError(t, d.UnmarshalBinary(in))
+			assert.Equal(t, p.pi, d.PI)
+			assert.Equal(t, p.piext, d.PIExt)
+			assert.Equal(t, p.pid, d.PID)
+			assert.Equal(t, p.ud, []byte(d.UD))
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, b)
+		}
+		t.Run(p.name, f)
+	}
+
+	truncated := []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+		err  error
+	}{
+		{"deliver report", tpdu.MO, "00 81",
+			tpdu.NewDecodeError("SmsDeliverReport.pi", 2, tpdu.ErrUnderflow)},
+		{"deliver report chain", tpdu.MO, "00 81 80",
+			tpdu.NewDecodeError("SmsDeliverReport.pi", 3, tpdu.ErrUnderflow)},
+		{"submit report", tpdu.MT, "01 80",
+			tpdu.NewDecodeError("SmsSubmitReport.pi", 2, tpdu.ErrUnderflow)},
+		{"status report", tpdu.MT, srHead + " 84",
+			tpdu.NewDecodeError("SmsStatusReport.pi", 22, tpdu.ErrUnderflow)},
+	}
+	for _, p := range truncated {
+		f := func(t *testing.T) {
+			d := tpdu.TPDU{Direction: p.dirn}
+			err := d.UnmarshalBinary(unhex(t, p.in))
+			assert.Equal(t, p.err, err)
+		}
+		t.Run("truncated "+p.name, f)
+	}
+
+	// The extension bits are derived from the PIExt on marshal.
+	marshal := []struct {
+		name string
+		in   tpdu.TPDU
+		out  string
+	}{
+		{"ext bit without ext octets",
+			tpdu.TPDU{Direction: tpdu.MO, PI: 0x81, PID: 0x7f}, "00 01 7f"},
+		{"ext octet",
+			tpdu.TPDU{Direction: tpdu.MO, PI: 0x01, PIExt: []byte{0x00}, PID: 0x7f}, "00 81 00 7f"},
+		{"ext octets",
+			tpdu.TPDU{Direction: tpdu.MO, PI: 0x01, PIExt: []byte{0x80, 0x00}, PID: 0x7f}, "00 81 80 00 7f"},
+		{"ext octets without ext bits",
+			tpdu.TPDU{Direction: tpdu.MO, PI: 0x01, PIExt: []byte{0x00, 0x00}, PID: 0x7f}, "00 81 80 00 7f"},
+		{"last ext octet with ext bit",
+			tpdu.TPDU{Direction: tpdu.MO, PI: 0x01, PIExt: []byte{0x80}, PID: 0x7f}, "00 81 00 7f"},
+		{"status report pi omitted",
+			tpdu.TPDU{FirstOctet: 0x02, PI: 0x80, RA: tpdu.Address{Addr: "6391", TOA: 0x91}},
+			"02 00 04 91 3619 00000000000000 00000000000000 00"},
+		{"status report ext octet only",
+			tpdu.TPDU{FirstOctet: 0x02, PIExt: []byte{0x00}, RA: tpdu.Address{Addr: "6391", TOA: 0x91}},
+			"02 00 04 91 3619 00000000000000 00000000000000 00 80 00"},
+	}
+	for _, p := range marshal {
+		f := func(t *testing.T) {
+			b, err := p.in.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, unhex(t, p.out), b)
+		}
+		t.Run("marshal "+p.name, f)
+	}
+}
+
+// TestPIReservedBits checks that octets following the TP-UD are discarded
+// when a reserved TP-PI bit is set, and rejected otherwise.
+//
+// TS 23.040 9.2.3.27: "If a Reserved bit is set to "1" then the receiving
+// entity shall ignore the setting. The setting of this bit shall mean that
+// additional information will follow the TP-User-Data, so a receiving entity
+// shall discard any octets following the TP-User-Data."
+func TestPIReservedBits(t *testing.T) {
+	patterns := []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+		out  string // the octets without the discarded ones
+		ud   []byte
+	}{
+		{"status report", tpdu.MT, srHead + " 0c 01 41 aa bb", srHead + " 0c 01 41", []byte("A")},
+		{"status report bit 6", tpdu.MT, srHead + " 44 01 41 aa", srHead + " 44 01 41", []byte("A")},
+		{"deliver report", tpdu.MO, "00 14 01 41 de ad", "00 14 01 41", []byte("A")},
+		{"deliver report udl 0", tpdu.MO, "00 24 00 de ad", "00 24 00", nil},
+		{"deliver report no ud", tpdu.MO, "00 08 de ad", "00 08", nil},
+		{"submit report", tpdu.MT, "01 44 51507132200523 01 41 ff", "01 44 51507132200523 01 41", []byte("A")},
+		{"reserved bit in ext octet", tpdu.MO, "00 80 01 de ad", "00 80 01", nil},
+		{"reserved bit in ext octet with ud", tpdu.MO, "00 84 40 01 41 de ad", "00 84 40 01 41", []byte("A")},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			d := tpdu.TPDU{Direction: p.dirn}
+			require.NoError(t, d.UnmarshalBinary(unhex(t, p.in)))
+			assert.Equal(t, p.ud, []byte(d.UD))
+			// the reserved bits are kept, but not the discarded octets.
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, unhex(t, p.out), b)
+		}
+		t.Run(p.name, f)
+	}
+
+	// Without a reserved bit set, trailing octets are not expected.
+	rejected := []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+		err  error
+	}{
+		{"deliver report after ud", tpdu.MO, "00 04 01 41 de",
+			tpdu.NewDecodeError("SmsDeliverReport.ud", 4, tpdu.ErrOverlength)},
+		{"deliver report after udl 0", tpdu.MO, "00 04 00 de",
+			tpdu.NewDecodeError("SmsDeliverReport.ud", 3, tpdu.ErrOverlength)},
+		{"deliver report without ud", tpdu.MO, "00 00 de",
+			tpdu.NewDecodeError("SmsDeliverReport.ud", 2, tpdu.ErrOverlength)},
+		{"deliver report after ext octet", tpdu.MO, "00 81 00 7f de",
+			tpdu.NewDecodeError("SmsDeliverReport.ud", 4, tpdu.ErrOverlength)},
+		{"submit report", tpdu.MT, "01 00 51507132200523 de",
+			tpdu.NewDecodeError("SmsSubmitReport.ud", 9, tpdu.ErrOverlength)},
+		{"status report", tpdu.MT, srHead + " 00 de",
+			tpdu.NewDecodeError("SmsStatusReport.ud", 22, tpdu.ErrOverlength)},
+		// TS 23.040 9.2.3.16: "If this field is zero, the TP-User-Data
+		// field shall not be present."
+		{"deliver udl 0", tpdu.MT, "04 04 91 3619 00 00 51507132200523 00 41",
+			tpdu.NewDecodeError("SmsDeliver.ud", 15, tpdu.ErrOverlength)},
+		{"submit udl 0", tpdu.MO, "01 23 04 91 3619 00 00 00 aa bb",
+			tpdu.NewDecodeError("SmsSubmit.ud", 9, tpdu.ErrOverlength)},
+		{"submit after ud", tpdu.MO, "01 23 04 91 3619 00 04 01 41 42",
+			tpdu.NewDecodeError("SmsSubmit.ud", 10, tpdu.ErrOverlength)},
+		{"command cdl 0", tpdu.MO, "02 42 00 00 00 00 00 00 aa",
+			tpdu.NewDecodeError("SmsCommand.ud", 8, tpdu.ErrOverlength)},
+	}
+	for _, p := range rejected {
+		f := func(t *testing.T) {
+			d := tpdu.TPDU{Direction: p.dirn}
+			err := d.UnmarshalBinary(unhex(t, p.in))
+			assert.Equal(t, p.err, err)
+			assert.ErrorIs(t, err, tpdu.ErrOverlength)
+		}
+		t.Run("reject "+p.name, f)
+	}
+}
+
+// TestPIDCSAbsent checks the DCS is 0x00 when the TP-PI announces a TP-UDL
+// but not a TP-DCS, whatever the TPDU held before.
+//
+// TS 23.040 9.2.3.27: "If the TP-UDL bit is set to "1" but the TP-DCS bit is
+// set to "0" then the receiving entity shall for TP-DCS assume a value of
+// 0x00, i.e. the 7bit default alphabet."
+func TestPIDCSAbsent(t *testing.T) {
+	patterns := []struct {
+		name string
+		dirn tpdu.Direction
+		in   string
+	}{
+		{"deliver report", tpdu.MO, "00 04 02 c1 20"},
+		{"submit report", tpdu.MT, "01 04 51507132200523 02 c1 20"},
+		{"status report", tpdu.MT, srHead + " 04 02 c1 20"},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			d := tpdu.TPDU{Direction: p.dirn, DCS: tpdu.DcsUCS2Data, PID: 0x7f}
+			require.NoError(t, d.UnmarshalBinary(unhex(t, p.in)))
+			assert.Equal(t, tpdu.DCS(0), d.DCS)
+			assert.Equal(t, byte(0), d.PID)
+			assert.Equal(t, []byte("AA"), []byte(d.UD))
+		}
+		t.Run(p.name, f)
+	}
+}
+
 // counter is an implementation of the tpdu.Counter interface.
 //
 // It is never used in a multi-threaded setting and so is not MT safe.

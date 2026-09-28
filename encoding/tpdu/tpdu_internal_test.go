@@ -16,6 +16,7 @@ func TestDecodeUserData(t *testing.T) {
 		inSrc  []byte
 		outUD  UserData
 		outUDH UserDataHeader
+		n      int
 		err    error
 	}{
 		{"nil",
@@ -23,6 +24,7 @@ func TestDecodeUserData(t *testing.T) {
 			nil,
 			nil,
 			nil,
+			0,
 			NewDecodeError("udl", 0, ErrUnderflow),
 		},
 		{"empty",
@@ -30,6 +32,7 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0},
 			nil,
 			nil,
+			1,
 			nil,
 		},
 		{"7bit",
@@ -37,6 +40,7 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			[]byte("message"),
 			nil,
+			8,
 			nil,
 		},
 		{"sm overlength 7bit",
@@ -44,6 +48,7 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0xf1},
 			nil,
 			nil,
+			0,
 			NewDecodeError("sm", 1, ErrOverlength),
 		},
 		{"sm underflow",
@@ -51,6 +56,7 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97},
 			nil,
 			nil,
+			0,
 			NewDecodeError("sm", 1, ErrUnderflow),
 		},
 		{"7bit udh",
@@ -61,6 +67,7 @@ func TestDecodeUserData(t *testing.T) {
 			},
 			[]byte("message"),
 			UserDataHeader([]InformationElement{{ID: 0, Data: []byte{1, 2, 3}}}),
+			14,
 			nil,
 		},
 		{"8bit",
@@ -68,6 +75,7 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			[]byte{0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			nil,
+			8,
 			nil,
 		},
 		{"ucs2",
@@ -81,6 +89,7 @@ func TestDecodeUserData(t *testing.T) {
 				0x00, 0x67, 0x00, 0x65,
 			},
 			nil,
+			15,
 			nil,
 		},
 		{"odd ucs2",
@@ -91,6 +100,7 @@ func TestDecodeUserData(t *testing.T) {
 			},
 			nil,
 			nil,
+			0,
 			NewDecodeError("sm", 1, ErrOddUCS2Length),
 		},
 		{"udh only",
@@ -98,6 +108,7 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x06, 0x05, 0x01, 0x03, 0x01, 0x02, 0x03},
 			nil,
 			UserDataHeader([]InformationElement{{ID: 1, Data: []byte{1, 2, 3}}}),
+			7,
 			nil,
 		},
 		{"reserved dcs",
@@ -105,20 +116,31 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			[]byte("message"),
 			nil,
+			8,
 			nil,
 		},
-		{"overlength",
-			TPDU{FirstOctet: 0x40},
+		{"trailing octet left to caller",
+			TPDU{FirstOctet: 0x40, DCS: 0xf4},
 			[]byte{0x06, 0x05, 0x01, 0x03, 0x01, 0x02, 0x03, 0x04},
 			nil,
+			UserDataHeader([]InformationElement{{ID: 1, Data: []byte{1, 2, 3}}}),
+			7,
 			nil,
-			NewDecodeError("ud", 1, ErrOverlength),
+		},
+		{"trailing octets after udl 0 left to caller",
+			TPDU{},
+			[]byte{0x00, 0x41},
+			nil,
+			nil,
+			1,
+			nil,
 		},
 		{"short udh",
 			TPDU{FirstOctet: 0x40},
 			[]byte{0x05, 0x05, 0x01, 0x03, 0x01, 0x02},
 			nil,
 			nil,
+			0,
 			NewDecodeError("udh.ie", 2, ErrUnderflow),
 		},
 		{"ignored udh",
@@ -126,13 +148,15 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x05, 0x04, 0x01, 0x03, 0x01, 0x02},
 			nil,
 			UserDataHeader{},
+			6,
 			nil,
 		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			err := p.inPDU.decodeUserData(p.inSrc)
+			n, err := p.inPDU.decodeUserData(p.inSrc)
 			require.Equal(t, p.err, err)
+			assert.Equal(t, p.n, n)
 			assert.Equal(t, p.outUDH, p.inPDU.UDH)
 			assert.Equal(t, p.outUD, p.inPDU.UD)
 		}
