@@ -3,6 +3,7 @@
 package sms_test
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -839,6 +840,92 @@ func TestCollectorIgnoresInvalidConcatIE(t *testing.T) {
 		assert.Equal(t, "hellohello", string(msg))
 	}
 	assert.Empty(t, c.Pipes())
+}
+
+// Pipes returns a snapshot: a later Collect does not change it, and changing
+// it does not change the reassembly.
+func TestCollectorPipesSnapshot(t *testing.T) {
+	c := sms.NewCollector()
+	defer c.Close()
+	seg := func(seqno byte) tpdu.TPDU {
+		p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}, UD: []byte{'a' + seqno}}
+		p.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 3, seqno}}})
+		return p
+	}
+	_, err := c.Collect(seg(1))
+	require.NoError(t, err)
+	snap := c.Pipes()
+	require.Len(t, snap, 1)
+	var segs []*tpdu.TPDU
+	for _, segs = range snap {
+	}
+	require.Len(t, segs, 3)
+	require.Nil(t, segs[1])
+	// a later Collect does not change the snapshot
+	_, err = c.Collect(seg(3))
+	require.NoError(t, err)
+	assert.Nil(t, segs[2])
+	// changing the snapshot does not change the reassembly
+	segs[1] = &tpdu.TPDU{}
+	segs[0].UD[0] = 'X'
+	segs[0].UDH[0].Data[2] = 9
+	segs[0].OA.Addr = "9999"
+	out, err := c.Collect(seg(2))
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	assert.True(t, sms.IsCompleteMessage(out))
+	msg, err := sms.Decode(out)
+	require.NoError(t, err)
+	assert.Equal(t, "bcd", string(msg))
+	assert.Equal(t, "1234", out[0].OA.Addr)
+}
+
+// Pipes may be called while other goroutines Collect.
+func TestCollectorPipesConcurrent(t *testing.T) {
+	c := sms.NewCollector()
+	defer c.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// segments 1 and 2 of 3, so each message stays in a pipe
+		for ref := 0; ref < 200; ref++ {
+			for seqno := byte(1); seqno <= 2; seqno++ {
+				p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}, UD: []byte{'a'}}
+				p.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{byte(ref), 3, seqno}}})
+				_, err := c.Collect(p)
+				assert.NoError(t, err)
+			}
+		}
+	}()
+	for finished := false; !finished; {
+		select {
+		case <-done:
+			finished = true
+		default:
+		}
+		for _, segs := range c.Pipes() {
+			for _, s := range segs {
+				if s != nil {
+					assert.Equal(t, tpdu.UserData("a"), s.UD)
+					assert.Len(t, s.UDH, 1)
+				}
+			}
+		}
+	}
+	assert.Len(t, c.Pipes(), 200)
+}
+
+// The Collector does not export its lock, which a caller could otherwise
+// hold to stall it.
+func TestCollectorLockNotExported(t *testing.T) {
+	typ := reflect.TypeOf(&sms.Collector{})
+	for _, m := range []string{"Lock", "Unlock", "TryLock"} {
+		_, ok := typ.MethodByName(m)
+		assert.False(t, ok, m)
+	}
+	for i := 0; i < typ.Elem().NumField(); i++ {
+		assert.False(t, typ.Elem().Field(i).IsExported(), typ.Elem().Field(i).Name)
+	}
 }
 
 // Only SMS-SUBMIT and SMS-DELIVER are reassembled. Any other type is

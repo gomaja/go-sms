@@ -13,7 +13,7 @@ import (
 // Collector contains reassembly pipes that buffer concatenated TPDUs until a
 // full set is available to be concatenated.
 type Collector struct {
-	sync.Mutex    // covers pipes and closing closed
+	mu            sync.Mutex // covers pipes and closed
 	pipes         map[string]*pipe
 	closed        bool
 	duration      time.Duration
@@ -60,8 +60,8 @@ func NewCollector(options ...CollectorOption) *Collector {
 
 // Close shuts down the Collector and all active pipes.
 func (c *Collector) Close() {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.closed {
 		return
 	}
@@ -75,15 +75,30 @@ func (c *Collector) Close() {
 
 // Pipes returns a snapshot of the reassembly pipes.
 //
-// This is intended for diagnostics.
+// This is intended for diagnostics. The snapshot is a copy, including of the
+// TPDUs, so later calls of Collect do not change it, and changing it does not
+// change the reassembly.
 func (c *Collector) Pipes() map[string][]*tpdu.TPDU {
-	c.Lock()
-	m := map[string][]*tpdu.TPDU{}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := make(map[string][]*tpdu.TPDU, len(c.pipes))
 	for k, v := range c.pipes {
-		m[k] = v.segments
+		m[k] = cloneSegments(v.segments)
 	}
-	c.Unlock()
 	return m
+}
+
+// cloneSegments returns a copy of the segments of a pipe, including of each
+// TPDU, and nil for each missing segment.
+func cloneSegments(segments []*tpdu.TPDU) []*tpdu.TPDU {
+	out := make([]*tpdu.TPDU, len(segments))
+	for i, s := range segments {
+		if s != nil {
+			c := cloneTPDU(s)
+			out[i] = &c
+		}
+	}
+	return out
 }
 
 // Collect adds a TPDU to the collection.
@@ -95,8 +110,8 @@ func (c *Collector) Pipes() map[string][]*tpdu.TPDU {
 // that 3GPP TS 23.040 Section 9.2.3.24.1 concatenates. Any other type is
 // rejected with a tpdu.ErrUnsupportedSmsType, and nothing is stored.
 func (c *Collector) Collect(pdu tpdu.TPDU) ([]*tpdu.TPDU, error) {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.closed {
 		return nil, ErrClosed
 	}
@@ -140,12 +155,12 @@ func (c *Collector) Collect(pdu tpdu.TPDU) ([]*tpdu.TPDU, error) {
 	}
 	if c.duration != 0 {
 		p.cleanup = time.AfterFunc(c.duration, func() {
-			c.Lock()
+			c.mu.Lock()
 			m := c.pipes[key]
 			if m == p {
 				delete(c.pipes, key)
 			}
-			c.Unlock()
+			c.mu.Unlock()
 			if c.expiryHandler != nil {
 				c.expiryHandler(p.segments)
 			}
