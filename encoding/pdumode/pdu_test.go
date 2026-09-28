@@ -3,6 +3,7 @@
 package pdumode_test
 
 import (
+	"encoding"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -109,6 +110,23 @@ func TestUnmarshalHexString(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+// PDU implements encoding.BinaryUnmarshaler, which must copy any data it
+// keeps after returning.
+var _ encoding.BinaryUnmarshaler = (*pdumode.PDU)(nil)
+
+// TestUnmarshalBinaryCopies checks that the decoded TPDU does not share
+// memory with the source, so the caller can reuse its buffer.
+func TestUnmarshalBinaryCopies(t *testing.T) {
+	src := []byte{0x00, 0x01, 0x02}
+	var p pdumode.PDU
+	require.NoError(t, p.UnmarshalBinary(src))
+	q, err := pdumode.UnmarshalBinary(src)
+	require.NoError(t, err)
+	src[1] = 0xff
+	assert.Equal(t, []byte{0x01, 0x02}, p.TPDU)
+	assert.Equal(t, []byte{0x01, 0x02}, q.TPDU)
 }
 
 // TestUnmarshalReuse checks that decoding into a used PDU gives the same

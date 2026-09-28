@@ -42,14 +42,15 @@ func UnmarshalHexString(s string) (p *PDU, err error) {
 // UnmarshalBinary decodes the binary form of the PDU provided by the modem.
 //
 // The PDU is cleared first, so if decoding fails it is left empty rather than
-// holding a previously decoded PDU.
+// holding a previously decoded PDU. The TPDU is copied from src, as
+// encoding.BinaryUnmarshaler requires, so src may be reused afterwards.
 func (p *PDU) UnmarshalBinary(src []byte) error {
 	*p = PDU{}
 	n, err := p.SMSC.UnmarshalBinary(src)
 	if err != nil {
 		return err
 	}
-	p.TPDU = src[n:]
+	p.TPDU = append([]byte(nil), src[n:]...)
 	return nil
 }
 
