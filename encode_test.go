@@ -349,13 +349,13 @@ var patterns = []struct {
 		nil,
 	},
 	{
-		"two segment 7bit with template",
+		"two segment 8bit with template",
 		twoSegmentMsg,
 		[]sms.EncoderOption{
 			sms.To("1234"), // overridden by template
 			sms.WithTemplate(
 				tpdu.TPDU{
-					DCS: 0x34,
+					DCS: 0x14,
 					DA:  tpdu.Address{TOA: 0x91, Addr: "4321"},
 					UDH: tpdu.UserDataHeader{
 						tpdu.InformationElement{ID: 3, Data: []byte{1, 2, 3}},
@@ -369,7 +369,7 @@ var patterns = []struct {
 				FirstOctet: 0x41, // Submit | UDHI
 				MR:         1,
 				PI:         tpdu.PiUDL, // not relevant for Submit, but set as side-effect
-				DCS:        0x34,
+				DCS:        0x14,
 				DA:         tpdu.Address{TOA: 0x91, Addr: "4321"},
 				UDH: tpdu.UserDataHeader{
 					tpdu.InformationElement{ID: 3, Data: []byte{1, 2, 3}},
@@ -382,7 +382,7 @@ var patterns = []struct {
 				FirstOctet: 0x41,
 				MR:         2,
 				PI:         tpdu.PiUDL, // not relevant for Submit, but set as side-effect
-				DCS:        0x34,
+				DCS:        0x14,
 				DA:         tpdu.Address{TOA: 0x91, Addr: "4321"},
 				UDH: tpdu.UserDataHeader{
 					tpdu.InformationElement{ID: 3, Data: []byte{1, 2, 3}},

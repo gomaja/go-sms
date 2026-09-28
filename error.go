@@ -14,7 +14,8 @@ var (
 	// encoding specified in the template TPDU DCS.
 	ErrDcsConflict = errors.New("DCS conflict")
 	// ErrCompressedUserData indicates TP-UD is compressed using the algorithm
-	// defined by 3GPP TS 23.042 and cannot be decoded as clear-text content.
+	// defined by 3GPP TS 23.042, which the library does not implement, so it
+	// cannot be decoded as clear-text content, or encoded.
 	ErrCompressedUserData = errors.New("compressed user data unsupported")
 	// ErrDuplicateSegment indicates a segment has arrived for a reassembly
 	// that already has that segment.

@@ -94,6 +94,10 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 // For implicit UCS-2 encoding (the fallback with 7-bit fails) the message is
 // assumed to contain UTF-8.
 //
+// The Encoder does not compress, so ErrCompressedUserData is returned if the
+// DCS of the template, or the DCS the Encoder would send, indicates compressed
+// data, as defined in 3GPP TS 23.038 Section 4.
+//
 // When the Encoder chooses the alphabet, it also chooses the national language
 // tables, so it replaces any National Language Single Shift or Locking Shift
 // IE in the template UDH by those of the tables it chose, as defined in 3GPP
@@ -128,6 +132,11 @@ func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, erro
 
 // segment codes the message, if required, and segments it into TPDUs.
 func (e *Encoder) segment(msg []byte) ([]tpdu.TPDU, error) {
+	// The Encoder does not compress, so it cannot provide the compressed
+	// data such a DCS indicates.
+	if e.pdu.SmsType() != tpdu.SmsCommand && e.pdu.DCS.Compressed() {
+		return nil, ErrCompressedUserData
+	}
 	sopts := append(e.sopts, tpdu.WithMR(e.MsgCount), tpdu.WithConcatRef(e.ConcatRef))
 	// take the DCS in the template TPDU as a hint...
 	alpha := e.pdu.DCS.Alphabet()
@@ -143,6 +152,12 @@ func (e *Encoder) segment(msg []byte) ([]tpdu.TPDU, error) {
 		dcs, err := e.pdu.DCS.WithAlphabet(alpha)
 		if err != nil {
 			return nil, ErrDcsConflict
+		}
+		// A reserved coding in the template is read as 0x00, which is not
+		// compressed, but setting its alphabet makes its other bits count,
+		// so the DCS that is sent must be checked too.
+		if dcs.Compressed() {
+			return nil, ErrCompressedUserData
 		}
 		if dcs != e.pdu.DCS {
 			e.pdu.SetDCS(byte(dcs))
