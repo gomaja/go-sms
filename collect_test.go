@@ -726,3 +726,38 @@ func TestCollectorPipes(t *testing.T) {
 		assert.Equal(t, p.out, out, p.name)
 	}
 }
+
+// Only SMS-SUBMIT and SMS-DELIVER are reassembled. Any other type is
+// rejected before the Collector stores anything, so segments of reports from
+// different parties are never merged, and nothing expires.
+func TestCollectorRejectsOtherTypes(t *testing.T) {
+	for _, st := range []tpdu.SmsType{
+		tpdu.SmsDeliverReport, tpdu.SmsSubmitReport, tpdu.SmsStatusReport, tpdu.SmsCommand,
+	} {
+		expired := make(chan []*tpdu.TPDU, 2)
+		c := sms.NewCollector(sms.WithReassemblyTimeout(10*time.Millisecond,
+			func(s []*tpdu.TPDU) { expired <- s }))
+		seg := func(ra string, seqno byte) tpdu.TPDU {
+			p := tpdu.TPDU{}
+			require.NoError(t, p.SetSmsType(st))
+			p.RA = tpdu.Address{Addr: ra, TOA: 0x91}
+			p.DA = tpdu.Address{Addr: ra, TOA: 0x91}
+			p.SetUDH(tpdu.UserDataHeader{tpdu.InformationElement{ID: 0, Data: []byte{7, 2, seqno}}})
+			return p
+		}
+		single := tpdu.TPDU{}
+		require.NoError(t, single.SetSmsType(st))
+		for _, p := range []tpdu.TPDU{seg("111", 1), seg("222", 2), seg("111", 1), single} {
+			out, err := c.Collect(p)
+			assert.Equal(t, tpdu.ErrUnsupportedSmsType(st), err, "%s", st)
+			assert.Nil(t, out, "%s", st)
+			assert.Empty(t, c.Pipes(), "%s", st)
+		}
+		select {
+		case s := <-expired:
+			t.Errorf("%s: expired %v", st, s)
+		case <-time.After(50 * time.Millisecond):
+		}
+		c.Close()
+	}
+}

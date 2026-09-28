@@ -90,11 +90,20 @@ func (c *Collector) Pipes() map[string][]*tpdu.TPDU {
 //
 // If all the components of a concatenated TPDU are available then they are
 // returned.
-func (c *Collector) Collect(pdu tpdu.TPDU) (d []*tpdu.TPDU, err error) {
+//
+// Only SMS-SUBMIT and SMS-DELIVER TPDUs are collected, as those are the types
+// that 3GPP TS 23.040 Section 9.2.3.24.1 concatenates. Any other type is
+// rejected with a tpdu.ErrUnsupportedSmsType, and nothing is stored.
+func (c *Collector) Collect(pdu tpdu.TPDU) ([]*tpdu.TPDU, error) {
 	c.Lock()
 	defer c.Unlock()
 	if c.closed {
 		return nil, ErrClosed
+	}
+	switch st := pdu.SmsType(); st {
+	case tpdu.SmsSubmit, tpdu.SmsDeliver:
+	default:
+		return nil, tpdu.ErrUnsupportedSmsType(st)
 	}
 	ci, ok := pdu.ConcatInfo()
 	if !ok || ci.Total < 2 {
@@ -105,7 +114,7 @@ func (c *Collector) Collect(pdu tpdu.TPDU) (d []*tpdu.TPDU, err error) {
 	if seqno < 1 || seqno > segments {
 		return nil, ErrReassemblyInconsistency
 	}
-	key, err := pduKey(pdu, ci)
+	key := pduKey(pdu, ci)
 	p, ok := c.pipes[key]
 	if ok {
 		if p.segments[seqno-1] != nil {
@@ -140,36 +149,22 @@ func (c *Collector) Collect(pdu tpdu.TPDU) (d []*tpdu.TPDU, err error) {
 			}
 		})
 	}
-	return nil, err
+	return nil, nil
 }
 
-func pduKey(pdu tpdu.TPDU, ci tpdu.ConcatInfo) (string, error) {
+// pduKey returns the key of the reassembly of an SMS-SUBMIT or SMS-DELIVER.
+func pduKey(pdu tpdu.TPDU, ci tpdu.ConcatInfo) string {
 	st := pdu.SmsType()
 	// 8-bit and 16-bit references with the same value are distinct.
 	concatRef := fmt.Sprintf("%d", ci.Ref)
 	if ci.Ref16Bit {
 		concatRef += "/16"
 	}
-	var key string
-	switch st {
-	case tpdu.SmsSubmit:
-		key = fmt.Sprintf("%d:%02x:%s:%s:%d",
-			st,
-			pdu.DA.TOA,
-			pdu.DA.Addr,
-			concatRef,
-			ci.Total)
-	case tpdu.SmsDeliver:
-		key = fmt.Sprintf("%d:%02x:%s:%s:%d",
-			st,
-			pdu.OA.TOA,
-			pdu.OA.Addr,
-			concatRef,
-			ci.Total)
-	default:
-		return "", tpdu.ErrUnsupportedSmsType(st)
+	addr := pdu.OA
+	if st == tpdu.SmsSubmit {
+		addr = pdu.DA
 	}
-	return key, nil
+	return fmt.Sprintf("%d:%02x:%s:%s:%d", st, addr.TOA, addr.Addr, concatRef, ci.Total)
 }
 
 // pipe is a buffer that contains the individual TPDUs in a concatenation set
