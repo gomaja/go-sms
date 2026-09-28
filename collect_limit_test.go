@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -144,8 +145,10 @@ func TestCollectorBoundedByDefault(t *testing.T) {
 		pipes := c.Pipes()
 		assert.Len(t, pipes, sms.DefaultReassemblyLimit)
 		assert.Equal(t, fmt.Sprint(1000+199), pipes[len(pipes)-1].Address.Addr)
+		// DefaultReassemblyLimit documents about 12 MiB for this, which
+		// holds only if nothing keeps the abandoned reassemblies.
 		growth := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-		assert.Less(t, growth, int64(32<<20), "heap growth %d", growth)
+		assert.Less(t, growth, int64(20<<20), "heap growth %d", growth)
 		if i == 0 {
 			mu.Lock()
 			assert.Equal(t, 200*256-sms.DefaultReassemblyLimit, abandoned)
@@ -173,4 +176,41 @@ func TestCollectorZeroValue(t *testing.T) {
 	var d sms.Collector
 	d.Close()
 	assert.Empty(t, d.Pipes())
+}
+
+// TestCollectorReleasesAbandoned checks the Collector keeps nothing of a
+// reassembly it has abandoned, so the segments are unreachable once the
+// expiry handler returns, as of the first garbage collection after it. A
+// reassembly has a timer, and a stopped timer can stay in the runtime for a
+// while, so it must not hold the reassembly, or a flood that evicts many
+// reassemblies keeps them all for as long, beyond the memory the limit
+// allows.
+func TestCollectorReleasesAbandoned(t *testing.T) {
+	var abandoned, freed atomic.Int64
+	c := sms.NewCollector(sms.WithExpiryHandler(func(segments []*tpdu.TPDU, reason error) {
+		if reason != sms.ErrReassemblyLimit {
+			return
+		}
+		for _, s := range segments {
+			if s != nil {
+				abandoned.Add(1)
+				runtime.SetFinalizer(s, func(*tpdu.TPDU) { freed.Add(1) })
+			}
+		}
+	}))
+	defer closeWithin(t, c, 5*time.Second)
+	// The default limit holds 4096 reassemblies, each with a running timer,
+	// and the next 1000 abandon the oldest.
+	for i := 0; i < sms.DefaultReassemblyLimit+1000; i++ {
+		_, err := c.Collect(deliverSegment(fmt.Sprint(i), byte(i), 2, 1, "x"))
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(1000), abandoned.Load())
+	runtime.GC()
+	// finalizers run on their own goroutine, after the collection
+	for i := 0; i < 200 && freed.Load() < abandoned.Load(); i++ {
+		runtime.Gosched()
+		time.Sleep(time.Millisecond)
+	}
+	assert.Equal(t, abandoned.Load(), freed.Load())
 }

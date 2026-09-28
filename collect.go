@@ -38,6 +38,9 @@ type Collector struct {
 
 	// done is closed once Close has settled every reassembly.
 	done chan struct{}
+
+	// lastID is the id of the last pipe created.
+	lastID uint64
 }
 
 // CollectorOption alters the behaviour of a Collector.
@@ -439,7 +442,13 @@ func (c *Collector) collect(pdu *tpdu.TPDU, cfg CollectConfig) ([]*tpdu.TPDU, []
 		p.elem = c.order.PushBack(p)
 		if c.timeout > 0 {
 			c.settling.Add(1)
-			p.timer = time.AfterFunc(c.timeout, func() { c.expire(p) })
+			// The timer is given the key and id of the pipe, not the pipe,
+			// as a stopped timer may stay in the runtime for a while, and
+			// must not keep an abandoned reassembly with it.
+			c.lastID++
+			p.id = c.lastID
+			key, id := p.key, p.id
+			p.timer = time.AfterFunc(c.timeout, func() { c.expire(key, id) })
 		}
 	}
 	p.segments[ci.Seqno-1] = &t
@@ -448,12 +457,13 @@ func (c *Collector) collect(pdu *tpdu.TPDU, cfg CollectConfig) ([]*tpdu.TPDU, []
 	return nil, abandoned, nil
 }
 
-// expire abandons the reassembly once its timeout has passed, unless it has
-// been completed or abandoned already.
-func (c *Collector) expire(p *pipe) {
+// expire abandons the reassembly with the key and id once its timeout has
+// passed, unless it has been completed or abandoned already.
+func (c *Collector) expire(key pipeKey, id uint64) {
 	defer c.settling.Done()
 	c.mu.Lock()
-	if c.pipes[p.key] != p {
+	p := c.pipes[key]
+	if p == nil || p.id != id {
 		c.mu.Unlock()
 		return
 	}
@@ -515,6 +525,7 @@ func newPipeKey(t *tpdu.TPDU, originator string, ci tpdu.ConcatInfo) pipeKey {
 // pipe is a buffer that contains the individual TPDUs in a concatenation set
 // until the complete set is available or the reassembly is abandoned.
 type pipe struct {
+	id       uint64 // unique within the Collector
 	key      pipeKey
 	elem     *list.Element // in the order of the Collector
 	timer    *time.Timer
