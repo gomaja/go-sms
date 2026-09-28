@@ -137,6 +137,13 @@ func (o expiryHandlerOption) ApplyCollectorOption(c *Collector) {
 // from one of the Collector's own, and may be called concurrently. It may call Collect
 // and Pipes, but must not call Close, which waits for it to return.
 //
+// The handler should not panic. If it does in a call from Collect or Close,
+// the panic reaches their caller, and the reassemblies that call was yet to
+// pass to the handler are discarded, but the Collector is left consistent:
+// Close does not wait for the call, and every later Close returns. A panic in
+// a call from one of the Collector's own goroutines, for a timeout, is not
+// recovered, so ends the program, as any unrecovered panic does.
+//
 // Without a handler the segments are discarded.
 func WithExpiryHandler(h func(segments []*tpdu.TPDU, reason error)) CollectorOption {
 	return expiryHandlerOption(h)
@@ -198,11 +205,13 @@ func (c *Collector) Close() {
 		c.remove(p)
 	}
 	c.mu.Unlock()
+	// Deferred, so that a panic in the handler does not leave the other
+	// calls of Close waiting for ever.
+	defer close(c.done)
 	c.settling.Wait()
 	for _, p := range pipes {
 		c.settle(p, ErrClosed)
 	}
-	close(c.done)
 }
 
 // Pipe describes a reassembly pipe, which holds the segments of a
@@ -355,9 +364,11 @@ func (c *Collector) Collect(pdu *tpdu.TPDU, options ...CollectOption) ([]*tpdu.T
 		option.ApplyCollectOption(&cfg)
 	}
 	segments, abandoned, err := c.collect(pdu, cfg)
+	// Each abandoned reassembly is marked done even if the handler panics,
+	// so that Close does not wait for it for ever.
+	defer c.settling.Add(-len(abandoned))
 	for _, p := range abandoned {
 		c.settle(p, ErrReassemblyLimit)
-		c.settling.Done()
 	}
 	return segments, err
 }

@@ -73,6 +73,65 @@ func (e *expiry) none(t *testing.T, d time.Duration) {
 	}
 }
 
+// recovered calls f and returns what it panics with, if anything.
+func recovered(f func()) (r any) {
+	defer func() { r = recover() }()
+	f()
+	return nil
+}
+
+// An expiry handler that panics, called by Collect or Close in a goroutine
+// that recovers, as an HTTP server recovers a handler, does not leave the
+// Collector waiting for it: Close returns, and so does every later Close.
+// The reassemblies the panicking call had yet to pass to the handler are
+// discarded.
+func TestCollectorHandlerPanic(t *testing.T) {
+	t.Run("collect", func(t *testing.T) {
+		var calls atomic.Int32
+		c := sms.NewCollector(sms.WithReassemblyLimit(1),
+			sms.WithExpiryHandler(func([]*tpdu.TPDU, error) {
+				calls.Add(1)
+				panic("handler")
+			}))
+		_, err := c.Collect(deliverSegment("1", 1, 2, 1, "a"))
+		require.NoError(t, err)
+		// the segment of 2 abandons the reassembly of 1, to keep within
+		// the limit, and the handler panics.
+		assert.Equal(t, "handler", recovered(func() {
+			_, _ = c.Collect(deliverSegment("2", 1, 2, 1, "b"))
+		}))
+		assert.Equal(t, int32(1), calls.Load())
+		// the Collector goes on, with the segment of 2 held
+		out, err := c.Collect(deliverSegment("2", 1, 2, 2, "c"))
+		require.NoError(t, err)
+		assert.Equal(t, "bc", decoded(t, out))
+		closeWithin(t, c, time.Second)
+		closeWithin(t, c, time.Second)
+		assert.Equal(t, int32(1), calls.Load())
+	})
+	t.Run("close", func(t *testing.T) {
+		var calls atomic.Int32
+		c := sms.NewCollector(sms.WithExpiryHandler(func([]*tpdu.TPDU, error) {
+			calls.Add(1)
+			panic("handler")
+		}))
+		for _, oa := range []string{"1", "2"} {
+			_, err := c.Collect(deliverSegment(oa, 1, 2, 1, "a"))
+			require.NoError(t, err)
+		}
+		assert.Equal(t, "handler", recovered(c.Close))
+		// the reassembly of 2, which the handler was yet to be passed, is
+		// discarded
+		assert.Equal(t, int32(1), calls.Load())
+		closeWithin(t, c, time.Second)
+		closeWithin(t, c, time.Second)
+		assert.Empty(t, c.Pipes())
+		_, err := c.Collect(deliverSegment("3", 1, 2, 1, "a"))
+		assert.Equal(t, sms.ErrClosed, err)
+		assert.Equal(t, int32(1), calls.Load())
+	})
+}
+
 // The timeout runs from the first segment, and later segments do not extend
 // it, as WithReassemblyTimeout says: segments 200ms apart with a timeout of
 // 300ms expire at 300ms, with the first two segments, and the third starts a
