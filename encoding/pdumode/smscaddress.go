@@ -17,8 +17,20 @@ import (
 //
 // The NumberingPlan should typically be NpISDN, but that is not enforced
 // either.
+//
+// The PDU either carries an SMSC address or has a zero length octet in its
+// place, in which case the SMSC set with +CSCA is used and no TOA is present
+// (3GPP TS 27.005 Section 3.3.1 and Section 4.3). The zero value is that
+// absent address. An address with digits is always present, and Present
+// marks an address without digits as present, so that a field holding only a
+// TOA is kept distinct from the absent address.
 type SMSCAddress struct {
 	tpdu.Address
+
+	// Present indicates the address is present even if Addr is empty.
+	//
+	// UnmarshalBinary sets it for any non-zero length octet.
+	Present bool
 }
 
 // maxSMSCAddressLen is the largest value of the SMSC address length octet.
@@ -32,6 +44,11 @@ const maxSMSCAddressLen = 11
 
 // MarshalBinary marshals the SMSC Address into binary.
 //
+// An absent address, one with no digits and Present not set, is marshalled as
+// a single zero length octet, with no TOA. Any other address is marshalled as
+// the length octet, the TOA and the digits, so an address with a TOA but no
+// digits has a length of 1.
+//
 // An address longer than 20 digits returns an error, as its length would not
 // fit the field.
 func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
@@ -39,7 +56,7 @@ func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 	if err != nil {
 		return nil, tpdu.EncodeError("addr", err)
 	}
-	if len(addr) == 0 {
+	if len(addr) == 0 && !a.Present {
 		return []byte{0}, nil
 	}
 	l := len(addr) + 1 // in octets and includes the toa
@@ -90,5 +107,6 @@ func (a *SMSCAddress) UnmarshalBinary(src []byte) (int, error) {
 	}
 	a.Addr = string(baddr)
 	a.TOA = toa
+	a.Present = true
 	return ri, nil
 }

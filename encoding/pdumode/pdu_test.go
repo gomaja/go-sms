@@ -35,7 +35,8 @@ func TestUnmarshalBinary(t *testing.T) {
 			"valid",
 			"0791361907002039010203040506070809",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Present: true,
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
@@ -87,7 +88,8 @@ func TestUnmarshalHexString(t *testing.T) {
 		{
 			"valid", "0791361907002039010203040506070809",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Present: true,
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
@@ -125,7 +127,8 @@ func TestUnmarshalReuse(t *testing.T) {
 			"smsc",
 			"07913619070020390102",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Present: true,
 			},
 			[]byte{0x01, 0x02},
 			nil,
@@ -148,7 +151,7 @@ func TestUnmarshalReuse(t *testing.T) {
 	used := func() pdumode.PDU {
 		return pdumode.PDU{
 			SMSC: pdumode.SMSCAddress{
-				tpdu.Address{Addr: "61409865629", TOA: 0x91},
+				Address: tpdu.Address{Addr: "61409865629", TOA: 0x91},
 			},
 			TPDU: []byte{0xde, 0xad},
 		}
@@ -190,7 +193,7 @@ func TestMarshalBinary(t *testing.T) {
 		{
 			"valid", "0791361907002039010203040506070809",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
@@ -198,7 +201,7 @@ func TestMarshalBinary(t *testing.T) {
 		{
 			"invalid addr", "",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "banana"},
+				Address: tpdu.Address{Addr: "banana"},
 			},
 			nil,
 			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
@@ -206,7 +209,7 @@ func TestMarshalBinary(t *testing.T) {
 		{
 			"overlength smsc", "",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: strings.Repeat("1", 510), TOA: 0x91},
+				Address: tpdu.Address{Addr: strings.Repeat("1", 510), TOA: 0x91},
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04},
 			tpdu.EncodeError("addr", tpdu.ErrOverlength),
@@ -237,7 +240,7 @@ func TestMarshalHexString(t *testing.T) {
 			"valid",
 			"0791361907002039010203040506070809",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
@@ -246,7 +249,7 @@ func TestMarshalHexString(t *testing.T) {
 			"invalid addr",
 			"",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "banana"},
+				Address: tpdu.Address{Addr: "banana"},
 			},
 			nil,
 			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
