@@ -198,6 +198,19 @@ func TestErrDanglingSurrogate(t *testing.T) {
 	}
 }
 
+// TestErrDanglingSurrogateCopy checks that the error does not share memory
+// with the decoded array. sms.Decode prepends the error to the next segment
+// with append, which would otherwise write over whatever follows the array.
+func TestErrDanglingSurrogateCopy(t *testing.T) {
+	buf := []byte{0x00, 0x41, 0xd8, 0x3d, 0xaa, 0xbb}
+	_, err := ucs2.Decode(buf[:4])
+	ds, ok := err.(ucs2.ErrDanglingSurrogate)
+	require.True(t, ok, "unexpected error %v", err)
+	ud := append([]byte(ds), 0xde, 0x01)
+	assert.Equal(t, []byte{0xd8, 0x3d, 0xde, 0x01}, ud)
+	assert.Equal(t, []byte{0x00, 0x41, 0xd8, 0x3d, 0xaa, 0xbb}, buf)
+}
+
 // FuzzDecode checks Decode against the standard library UTF-16 decoder, which
 // replaces each unpaired surrogate with U+FFFD and keeps the unit after it.
 // The one difference is a trailing high surrogate, which Decode returns as an

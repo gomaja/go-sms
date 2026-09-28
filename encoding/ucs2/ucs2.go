@@ -34,7 +34,8 @@ func Decode(src []byte) ([]rune, error) {
 		switch {
 		case isHighSurrogate(r):
 			if ri+2 == len(src) {
-				return dst, ErrDanglingSurrogate(src[ri:])
+				// Copied, as the caller may append to it.
+				return dst, ErrDanglingSurrogate(append([]byte(nil), src[ri:]...))
 			}
 			// Only a high surrogate followed by a low surrogate forms a pair.
 			// Any other surrogate is replaced on its own, so the unit that
