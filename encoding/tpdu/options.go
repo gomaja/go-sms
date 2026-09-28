@@ -44,9 +44,10 @@ type UDHOption struct {
 	udh UserDataHeader
 }
 
-// ApplyTPDUOption applies the UDH to the TPDU.
+// ApplyTPDUOption applies the UDH to the TPDU, and sets the TP-UDHI to match,
+// as SetUDH does.
 func (o UDHOption) ApplyTPDUOption(t *TPDU) error {
-	t.UDH = o.udh
+	t.SetUDH(o.udh)
 	return nil
 }
 

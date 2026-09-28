@@ -106,3 +106,21 @@ func TestFirstOctetWithVPF(t *testing.T) {
 		assert.Equal(t, p.inout, tpdu.FirstOctet(0).WithVPF(p.inout).VPF())
 	}
 }
+
+// TestFirstOctetWithMasksFields checks that WithMTI and WithVPF only change
+// their own bits, TS 23.040 9.2.3.1 bits 1 and 0 and 9.2.3.3 bits 4 and 3,
+// whatever value they are given.
+func TestFirstOctetWithMasksFields(t *testing.T) {
+	for _, fo := range []tpdu.FirstOctet{0x00, 0xff, 0xa5, 0x5a} {
+		for mti := tpdu.MessageType(-1); mti < 9; mti++ {
+			out := fo.WithMTI(mti)
+			assert.Equal(t, fo&^tpdu.FoMTIMask, out&^tpdu.FoMTIMask, "mti %d fo %02x", mti, fo)
+			assert.Equal(t, mti&0x3, out.MTI())
+		}
+		for vpf := tpdu.ValidityPeriodFormat(0); vpf < 16; vpf++ {
+			out := fo.WithVPF(vpf)
+			assert.Equal(t, fo&^tpdu.FoVPFMask, out&^tpdu.FoVPFMask, "vpf %d fo %02x", vpf, fo)
+			assert.Equal(t, vpf&0x3, out.VPF())
+		}
+	}
+}

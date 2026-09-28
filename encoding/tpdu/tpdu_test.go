@@ -238,8 +238,6 @@ func TestMarshalBinary(t *testing.T) {
 				Direction:  tpdu.MO,
 				FirstOctet: 0,
 				PID:        0xab,
-				DCS:        0x04,
-				UD:         []byte("report"),
 				RPMessage:  tpdu.RPError,
 				FCS:        0xd0,
 				PI:         0x01,
@@ -254,9 +252,7 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0,
-				PID:        0xab,
 				DCS:        0x04,
-				UD:         []byte("report"),
 				RPMessage:  tpdu.RPError,
 				FCS:        0xd0,
 				PI:         0x02,
@@ -271,15 +267,29 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0,
-				PID:        0xab,
-				DCS:        0x04,
 				UD:         []byte("report"),
 				RPMessage:  tpdu.RPError,
 				FCS:        0xd0,
 				PI:         0x04,
 			},
 			[]byte{
-				0x00, 0xd0, 0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
+				0x00, 0xd0, 0x04, 0x06, 0xf2, 0x32, 0xfc, 0x2d, 0xa7, 0x03,
+			},
+			nil,
+		},
+		{
+			// TS 23.040 9.2.3.27: the PI bits are derived from the fields,
+			// so the UD is not encoded with a DCS the receiver cannot see.
+			"SmsDeliverReport pi derived",
+			tpdu.TPDU{
+				Direction: tpdu.MO,
+				PID:       0xab,
+				DCS:       0x04,
+				UD:        []byte("report"),
+				PI:        0x01,
+			},
+			[]byte{
+				0x00, 0x07, 0xab, 0x04, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
 			},
 			nil,
 		},
@@ -371,11 +381,10 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x06,
-				PID:        0x89, // not in PI so wont be encoded
 				DCS:        0x04,
 				UD:         []byte("report"),
 				MR:         0x42,
-				PI:         0x06, // no PI set
+				PI:         0x06, // no PID set
 				RA:         tpdu.Address{Addr: "6391", TOA: 0x91},
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -400,7 +409,6 @@ func TestMarshalBinary(t *testing.T) {
 				Direction:  tpdu.MT,
 				FirstOctet: 0x06,
 				PID:        0x89,
-				DCS:        0x04, // not in PI so wont be encoded
 				UD:         []byte("report"),
 				MR:         0x42,
 				PI:         0x05, // no DCS set
@@ -418,7 +426,7 @@ func TestMarshalBinary(t *testing.T) {
 			[]byte{
 				0x06, 0x42, 0x04, 0x91, 0x36, 0x19, 0x51, 0x50, 0x71, 0x32, 0x20,
 				0x05, 0x23, 0x51, 0x40, 0x81, 0x32, 0x20, 0x05, 0x42, 0xab, 0x05,
-				0x89, 0x06, 0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
+				0x89, 0x06, 0xf2, 0x32, 0xfc, 0x2d, 0xa7, 0x03,
 			},
 			nil,
 		},
@@ -512,7 +520,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			[]byte{
-				0x01, 0x00, 0x04, 0x91, 0x36, 0x19, 0x00, 0x00, 0x13, 0x08, 0xC8,
+				0x11, 0x00, 0x04, 0x91, 0x36, 0x19, 0x00, 0x00, 0x13, 0x08, 0xC8,
 				0x30, 0x3A, 0x8C, 0x0E, 0xA3, 0xC3,
 			},
 			nil,
@@ -573,8 +581,6 @@ func TestMarshalBinary(t *testing.T) {
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
 				PID:        0xab,
-				DCS:        0x04,
-				UD:         []byte("report"),
 				RPMessage:  tpdu.RPError,
 				FCS:        0xc0,
 				PI:         0x01,
@@ -593,9 +599,7 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				PID:        0xab,
 				DCS:        0x04,
-				UD:         []byte("report"),
 				RPMessage:  tpdu.RPError,
 				FCS:        0xc0,
 				PI:         0x02,
@@ -614,8 +618,6 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				PID:        0xab,
-				DCS:        0x04,
 				UD:         []byte("report"),
 				RPMessage:  tpdu.RPError,
 				FCS:        0xc0,
@@ -626,8 +628,8 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			[]byte{
-				0x01, 0xc0, 0x04, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23, 0x06,
-				0x72, 0x65, 0x70, 0x6f, 0x72, 0x74,
+				0x01, 0xc0, 0x04, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23,
+				0x06, 0xf2, 0x32, 0xfc, 0x2d, 0xa7, 0x03,
 			},
 			nil,
 		},
@@ -2763,6 +2765,134 @@ func TestPIDCSAbsent(t *testing.T) {
 			assert.Equal(t, []byte("AA"), []byte(d.UD))
 		}
 		t.Run(p.name, f)
+	}
+}
+
+// TestMarshalDerivesFlags checks MarshalBinary derives the flag bits from the
+// fields they describe, so the octets are always consistent, and that
+// unmarshalling them gives back the fields.
+func TestMarshalDerivesFlags(t *testing.T) {
+	da := tpdu.Address{Addr: "6391", TOA: 0x91}
+	port := tpdu.UserDataHeader{{ID: 5, Data: []byte{0x0b, 0x84, 0x23, 0xf0}}}
+	vp := tpdu.ValidityPeriod{}
+	vp.SetRelative(100 * time.Minute)
+	patterns := []struct {
+		name string
+		in   tpdu.TPDU
+		out  string
+	}{
+		// TS 23.040 9.2.3.3: TP-VPF "0 0 TP-VP field not present, 1 0
+		// TP-VP field present - relative format"
+		{"submit vp without vpf",
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: da, VP: vp, UD: []byte("hi")},
+			"11 00 04 91 3619 00 00 13 02 e834"},
+		{"submit vpf without vp",
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x19, DA: da, UD: []byte("hi")},
+			"01 00 04 91 3619 00 00 02 e834"},
+		// TS 23.040 9.2.3.23: TP-UDHI "1 The beginning of the TP-UD field
+		// contains a Header in addition to the short message."
+		{"submit udh without udhi",
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: da, DCS: 0x04, UDH: port, UD: []byte("hi")},
+			"41 00 04 91 3619 00 04 09 0605040b8423f0 6869"},
+		{"submit udhi without udh",
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x41, DA: da, DCS: 0x04, UD: []byte("hi")},
+			"01 00 04 91 3619 00 04 02 6869"},
+		{"submit empty udh",
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: da, DCS: 0x04, UDH: tpdu.UserDataHeader{}, UD: []byte("ab")},
+			"41 00 04 91 3619 00 04 03 00 6162"},
+		{"submit empty udh 7bit",
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: da, UDH: tpdu.UserDataHeader{}, UD: []byte("hi")},
+			"41 00 04 91 3619 00 00 04 00 00 3a 0d"},
+		{"submit udhi without udh or ud is kept",
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x41, DA: da},
+			"41 00 04 91 3619 00 00 00"},
+		{"deliver udh without udhi",
+			tpdu.TPDU{FirstOctet: 0x04, OA: da, DCS: 0x04, UDH: port},
+			"44 04 91 3619 00 04 00000000000000 07 0605040b8423f0"},
+		// TS 23.040 9.2.3.27: "If the TP-UDL bit is set to "1" but the
+		// TP-DCS bit is set to "0" then the receiving entity shall for
+		// TP-DCS assume a value of 0x00"
+		{"deliver report dcs without pi dcs",
+			tpdu.TPDU{Direction: tpdu.MO, PI: tpdu.PiUDL, DCS: 0x04, UD: []byte("hi")},
+			"00 06 04 02 6869"},
+		{"deliver report ud without pi udl",
+			tpdu.TPDU{Direction: tpdu.MO, UD: []byte("hi")},
+			"00 04 02 e834"},
+		{"deliver report udh without pi udl or udhi",
+			tpdu.TPDU{Direction: tpdu.MO, DCS: 0x04, UDH: port},
+			"40 06 04 07 0605040b8423f0"},
+		{"deliver report pid without pi pid",
+			tpdu.TPDU{Direction: tpdu.MO, PID: 0x7f},
+			"00 01 7f"},
+		{"deliver report pi bits with zero fields are kept",
+			tpdu.TPDU{Direction: tpdu.MO, PI: tpdu.PiPID | tpdu.PiDCS | tpdu.PiUDL},
+			"00 07 00 00 00"},
+		{"submit report ucs2 without pi dcs",
+			tpdu.TPDU{FirstOctet: 0x01, DCS: 0x08, UD: []byte{0x00, 0x41}},
+			"01 06 00000000000000 08 02 0041"},
+		{"status report dcs without pi",
+			tpdu.TPDU{FirstOctet: 0x02, RA: da, DCS: 0x04, UD: []byte("hi")},
+			"02 00 04 91 3619 00000000000000 00000000000000 00 06 04 02 6869"},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := p.in
+			b, err := in.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, unhex(t, p.out), b)
+			// the TPDU itself is unchanged
+			assert.Equal(t, p.in, in)
+			d := tpdu.TPDU{Direction: p.in.Direction}
+			require.NoError(t, d.UnmarshalBinary(b))
+			assert.Equal(t, p.in.UDH, d.UDH)
+			assert.Equal(t, p.in.UD, d.UD)
+			assert.Equal(t, p.in.DCS, d.DCS)
+			assert.Equal(t, p.in.PID, d.PID)
+			assert.Equal(t, p.in.VP, d.VP)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+// TestSegmentReportUD checks the UD of a report built by Segment is
+// marshalled.
+func TestSegmentReportUD(t *testing.T) {
+	tmpl := tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0xd0}
+	pdus := tmpl.Segment([]byte("hi"))
+	require.Len(t, pdus, 1)
+	b, err := pdus[0].MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, unhex(t, "00 d0 04 02 e834"), b)
+
+	tmpl.DCS = tpdu.DcsUCS2Data
+	pdus = tmpl.Segment([]byte{0x00, 0x41})
+	require.Len(t, pdus, 1)
+	b, err = pdus[0].MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, unhex(t, "00 d0 06 08 02 0041"), b)
+}
+
+// TestUDHIRoundTrip checks a received TPDU with an empty UDH, a TP-UDHL of 0,
+// marshals back to the octets it came from.
+//
+// TS 23.040 9.2.3.24: "Length of User Data Header 1 octet"
+func TestUDHIRoundTrip(t *testing.T) {
+	for _, in := range []string{
+		"41 00 04 91 3619 00 04 03 00 6162",        // 8-bit
+		"41 00 04 91 3619 00 08 03 00 0041",        // UCS2
+		"41 00 04 91 3619 00 00 04 00 00 3a 0d",    // 7-bit, 6 fill bits
+		"41 00 04 91 3619 00 04 00",                // TP-UDHI with no TP-UD
+		"40 04 91 3619 00 04 51507132200523 01 00", // header only deliver
+	} {
+		b := unhex(t, in)
+		d := tpdu.TPDU{Direction: tpdu.MO}
+		if b[0]&0x03 == 0 {
+			d.Direction = tpdu.MT
+		}
+		require.NoError(t, d.UnmarshalBinary(b), in)
+		out, err := d.MarshalBinary()
+		require.NoError(t, err, in)
+		assert.Equal(t, b, out, in)
 	}
 }
 

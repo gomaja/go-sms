@@ -390,10 +390,11 @@ func (t *TPDU) UDBlockSize() int {
 }
 
 // UDHI returns the User Data Header Indicator bit from the SMS TPDU first
-// octet.
+// octet, as held.
 //
-// This is generally the same as testing the length of the udh - unless the dcs
-// has been intentionally overwritten to create an inconsistency.
+// For an unmarshalled TPDU, or one whose UDH was set with SetUDH, it is set
+// exactly when the UDH is not nil. MarshalBinary derives the bit from the UDH
+// rather than using it.
 func (t *TPDU) UDHI() bool {
 	return t.FirstOctet.UDHI()
 }
@@ -404,21 +405,47 @@ func (t *TPDU) UDHL() int {
 }
 
 // MarshalBinary marshals a SMS TPDU into the corresponding byte array.
+//
+// The type of TPDU is determined by the TP-MTI of the FirstOctet and the
+// Direction, and, for the reports, the RPMessage.
+//
+// The fields are authoritative, so the flag bits that say whether a field is
+// present, or how it is coded, are derived from the field rather than taken
+// from the FirstOctet or PI, and the TPDU marshalled is always consistent:
+//
+//   - TP-UDHI is set if the UDH is not nil, as the UDH is then written, and
+//     cleared if the UDH is nil and the UD is not empty, as the UD is then
+//     written without a header. An empty, but not nil, UDH is written as a
+//     TP-UDHL of 0.
+//   - TP-VPF of an SMS-SUBMIT is the Format of the VP.
+//   - In the TP-PI of a report, PiPID is set if the PID is not 0, PiDCS if
+//     the DCS is not 0, so the UD is never encoded with a DCS the receiver
+//     would not see, and PiUDL if there is a UDH or UD. The extension bits
+//     are set from the PIExt.
+//
+// A bit that describes a field that is not written, as TP-UDHI does when
+// there is no UD, or a PI bit whose field holds 0, is marshalled as held, as
+// are the bits that describe no field, such as the reserved PI bits. So a
+// TPDU that was unmarshalled marshals back to the octets it came from, except
+// where 3GPP TS 23.040 requires a receiver to ignore or discard part of them.
+//
+// MarshalBinary does not change the TPDU.
 func (t *TPDU) MarshalBinary() (dst []byte, err error) {
 	st := smsType(t.FirstOctet.MTI(), t.Direction)
+	w := t.withDerivedFlags(st)
 	switch st {
 	case SmsDeliver:
-		dst, err = t.marshalDeliver()
+		dst, err = w.marshalDeliver()
 	case SmsDeliverReport:
-		dst, err = t.marshalDeliverReport()
+		dst, err = w.marshalDeliverReport()
 	case SmsSubmitReport:
-		dst, err = t.marshalSubmitReport()
+		dst, err = w.marshalSubmitReport()
 	case SmsSubmit:
-		dst, err = t.marshalSubmit()
+		dst, err = w.marshalSubmit()
 	case SmsStatusReport:
-		dst, err = t.marshalStatusReport()
+		dst, err = w.marshalStatusReport()
 	case SmsCommand:
-		dst, err = t.marshalCommand()
+		dst, err = w.marshalCommand()
 	default:
 		return nil, ErrUnsupportedSmsType(st)
 	}
@@ -426,6 +453,41 @@ func (t *TPDU) MarshalBinary() (dst []byte, err error) {
 		err = NewEncodeError(st.String(), err)
 	}
 	return
+}
+
+// withDerivedFlags returns a copy of the TPDU with the TP-UDHI and TP-PI bits
+// derived from the fields they describe, as described for MarshalBinary.
+//
+// The TP-VPF is derived by marshalSubmit, once the VP has been validated.
+func (t *TPDU) withDerivedFlags(st SmsType) *TPDU {
+	w := *t
+	if st == SmsCommand {
+		return &w
+	}
+	// 3GPP TS 23.040 Section 9.2.3.23: TP-UDHI "1 The beginning of the TP-UD
+	// field contains a Header in addition to the short message."
+	switch {
+	case w.UDH != nil:
+		w.FirstOctet |= FoUDHI
+	case len(w.UD) > 0:
+		w.FirstOctet &^= FoUDHI
+	}
+	switch st {
+	case SmsDeliverReport, SmsSubmitReport, SmsStatusReport:
+		// 3GPP TS 23.040 Section 9.2.3.27: "If the TP-UDL bit is set to "1"
+		// but the TP-DCS bit is set to "0" then the receiving entity shall
+		// for TP-DCS assume a value of 0x00".
+		if w.PID != 0 {
+			w.PI |= PiPID
+		}
+		if w.DCS != 0 {
+			w.PI |= PiDCS
+		}
+		if w.UDH != nil || len(w.UD) > 0 {
+			w.PI |= PiUDL
+		}
+	}
+	return &w
 }
 
 func (t *TPDU) marshalCommand() ([]byte, error) {
@@ -569,16 +631,17 @@ func (t *TPDU) marshalSubmit() ([]byte, error) {
 	if err != nil {
 		return nil, NewEncodeError("ud", err)
 	}
-	var vp []byte
-	if t.VP.Format != VpfNotPresent {
-		vp, err = t.VP.MarshalBinary()
-		if err != nil {
-			return nil, NewEncodeError("vp", err)
-		}
+	// VP.MarshalBinary rejects any Format beyond VpfAbsolute, so the Format
+	// fits the TP-VPF, which 3GPP TS 23.040 Section 9.2.3.3 defines as
+	// saying whether, and in which format, the TP-VP is present.
+	vp, err := t.VP.MarshalBinary()
+	if err != nil {
+		return nil, NewEncodeError("vp", err)
 	}
+	fo := t.FirstOctet.WithVPF(t.VP.Format)
 	l := 4 + len(da) + len(ud) + len(vp)
 	b := make([]byte, 0, l)
-	b = append(b, byte(t.FirstOctet), t.MR)
+	b = append(b, byte(fo), t.MR)
 	b = append(b, da...)
 	b = append(b, t.PID, byte(t.DCS))
 	b = append(b, vp...)
@@ -1102,7 +1165,12 @@ const (
 )
 
 // ApplyTPDUOption sets the TPDU MTI.
+//
+// An error is returned if the MessageType does not fit the 2 bit TP-MTI.
 func (mti MessageType) ApplyTPDUOption(t *TPDU) error {
+	if mti < MtDeliver || mti > MtReserved {
+		return ErrInvalid
+	}
 	t.FirstOctet = t.FirstOctet.WithMTI(mti)
 	return nil
 }
