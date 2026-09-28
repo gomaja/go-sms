@@ -14,6 +14,9 @@ var (
 	// ErrReassemblyTimeout is the reason given to the expiry handler for a
 	// reassembly abandoned as its timeout has passed.
 	ErrReassemblyTimeout = errors.New("reassembly timeout")
+	// ErrReassemblyLimit is the reason given to the expiry handler for a
+	// reassembly abandoned to keep within the reassembly limit.
+	ErrReassemblyLimit = errors.New("reassembly limit")
 	// ErrDcsConflict indicates the required encoding for user data conflicts with the
 	// encoding specified in the template TPDU DCS.
 	ErrDcsConflict = errors.New("DCS conflict")

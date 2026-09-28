@@ -316,6 +316,20 @@ func TestCollectorSettlesOnce(t *testing.T) {
 // Collect is settled exactly once, by a Collect or the expiry handler, and
 // no handler runs once Close has returned.
 func TestCollectorConcurrentStress(t *testing.T) {
+	for _, limit := range []int{0, 8} {
+		t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
+			collectorStress(t, limit)
+		})
+	}
+}
+
+// collectorStress runs TestCollectorConcurrentStress with the limit given,
+// which is the default for 0.
+func collectorStress(t *testing.T, limit int) {
+	options := []sms.CollectorOption{}
+	if limit != 0 {
+		options = append(options, sms.WithReassemblyLimit(limit))
+	}
 	var closed atomic.Bool
 	var late atomic.Int32
 	var mu sync.Mutex
@@ -330,13 +344,14 @@ func TestCollectorConcurrentStress(t *testing.T) {
 			}
 		}
 	}
-	c := sms.NewCollector(sms.WithReassemblyTimeout(2*time.Millisecond),
+	c := sms.NewCollector(append(options,
+		sms.WithReassemblyTimeout(2*time.Millisecond),
 		sms.WithExpiryHandler(func(segs []*tpdu.TPDU, _ error) {
 			if closed.Load() {
 				late.Add(1)
 			}
 			settle(segs)
-		}))
+		}))...)
 	const workers = 8
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -375,13 +390,19 @@ func TestCollectorConcurrentStress(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for !closed.Load() {
-			for _, p := range c.Pipes() {
+			pipes := c.Pipes()
+			n := 0
+			for _, p := range pipes {
 				assert.Len(t, p.Segments, 3)
+				n += held([]sms.Pipe{p})
+			}
+			if limit > 0 {
+				assert.LessOrEqual(t, n, limit)
 			}
 		}
 	}()
 	time.Sleep(200 * time.Millisecond)
-	c.Close()
+	closeWithin(t, c, 5*time.Second)
 	closed.Store(true)
 	wg.Wait()
 	assert.Zero(t, late.Load())

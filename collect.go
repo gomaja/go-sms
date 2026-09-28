@@ -3,7 +3,7 @@
 package sms
 
 import (
-	"slices"
+	"container/list"
 	"sync"
 	"time"
 
@@ -17,12 +17,19 @@ import (
 // segments, complete, or they are passed to the expiry handler, if any, when
 // the reassembly is abandoned. A Collector is safe for concurrent use by
 // multiple goroutines.
+//
+// The zero value is a Collector with the default settings, as NewCollector
+// returns without options.
 type Collector struct {
-	mu      sync.Mutex // covers pipes, seq and closed
-	pipes   map[pipeKey]*pipe
-	seq     uint64 // numbers the pipes in the order they are created
-	closed  bool
+	mu     sync.Mutex // covers pipes, order, held and closed
+	pipes  map[pipeKey]*pipe
+	order  list.List // the pipes, in the order they were created
+	held   int       // the number of segments in the pipes
+	closed bool
+
+	// timeout and limit are 0 for their default, and negative for none.
 	timeout time.Duration
+	limit   int
 	handler func([]*tpdu.TPDU, error)
 
 	// settling counts the reassembly timers that may yet call the handler,
@@ -38,10 +45,34 @@ type CollectorOption interface {
 	ApplyCollectorOption(*Collector)
 }
 
+// DefaultReassemblyTimeout is the reassembly timeout of a Collector created
+// without WithReassemblyTimeout.
+//
+// An SC delivers each segment as a separate short message, and retries one it
+// could not deliver, so the last segment can follow the first by hours when
+// the recipient is out of coverage between them. Memory is bounded by the
+// reassembly limit, not the timeout, so the default is long enough for a
+// segment retried later that day, and short enough that a reassembly missing
+// a segment is reported within a day.
+const DefaultReassemblyTimeout = 24 * time.Hour
+
+// DefaultReassemblyLimit is the reassembly limit of a Collector created
+// without WithReassemblyLimit.
+//
+// A segment held takes about 550 octets, with 140 of UD, and a reassembly
+// about 2.5 KiB more, mostly for its index of up to 255 segments, so the
+// default bounds the memory of a Collector to about 12 MiB, even when a flood
+// of first segments starts a reassembly with each, while it holds some 2000
+// messages of 3 segments awaiting their last.
+const DefaultReassemblyLimit = 4096
+
 type reassemblyTimeoutOption time.Duration
 
 func (o reassemblyTimeoutOption) ApplyCollectorOption(c *Collector) {
 	c.timeout = time.Duration(o)
+	if c.timeout <= 0 {
+		c.timeout = -1
+	}
 }
 
 // WithReassemblyTimeout limits the time allowed to collect all the segments
@@ -52,9 +83,36 @@ func (o reassemblyTimeoutOption) ApplyCollectorOption(c *Collector) {
 // the expiry handler, with ErrReassemblyTimeout, and discarded, and a segment
 // of the message collected later starts a new reassembly.
 //
-// A duration of zero or less disables the timeout.
+// A duration of zero or less disables the timeout. Without this option the
+// timeout is DefaultReassemblyTimeout.
 func WithReassemblyTimeout(d time.Duration) CollectorOption {
 	return reassemblyTimeoutOption(d)
+}
+
+type reassemblyLimitOption int
+
+func (o reassemblyLimitOption) ApplyCollectorOption(c *Collector) {
+	c.limit = int(o)
+	if c.limit <= 0 {
+		c.limit = -1
+	}
+}
+
+// WithReassemblyLimit limits to n the number of segments the Collector holds
+// in the reassemblies it has not completed, which bounds its memory.
+//
+// When a segment would take the number beyond n, the oldest reassemblies, by
+// their first segment, are abandoned until it does not: their segments are
+// passed to the expiry handler, with ErrReassemblyLimit, and discarded. That
+// may include the reassembly of the segment itself, which then starts a new
+// one. A segment that completes a reassembly is not held, so it abandons
+// none. As a concatenated message has up to 255 segments, a limit below 254
+// prevents the reassembly of the longest.
+//
+// A limit of zero or less removes the limit. Without this option the limit
+// is DefaultReassemblyLimit.
+func WithReassemblyLimit(n int) CollectorOption {
+	return reassemblyLimitOption(n)
 }
 
 type expiryHandlerOption func([]*tpdu.TPDU, error)
@@ -66,8 +124,8 @@ func (o expiryHandlerOption) ApplyCollectorOption(c *Collector) {
 // WithExpiryHandler specifies a function to be passed the segments of each
 // reassembly the Collector abandons, with the reason:
 //
-//   - ErrReassemblyTimeout, when the time given by WithReassemblyTimeout has
-//     passed.
+//   - ErrReassemblyTimeout, when the reassembly timeout has passed.
+//   - ErrReassemblyLimit, when the reassembly limit is reached.
 //   - ErrClosed, when the Collector is closed.
 //
 // The segments are in place, each at the index of its sequence number less 1,
@@ -75,8 +133,8 @@ func (o expiryHandlerOption) ApplyCollectorOption(c *Collector) {
 // total of the concatenated message. Decode returns ErrMissingSegment for
 // them, and IsCompleteMessage returns false. They belong to the handler.
 //
-// The handler is called from the goroutine that calls Close, or from one of
-// the Collector's own, and may be called concurrently. It may call Collect
+// The handler is called from the goroutine that calls Collect or Close, or
+// from one of the Collector's own, and may be called concurrently. It may call Collect
 // and Pipes, but must not call Close, which waits for it to return.
 //
 // Without a handler the segments are discarded.
@@ -85,6 +143,11 @@ func WithExpiryHandler(h func(segments []*tpdu.TPDU, reason error)) CollectorOpt
 }
 
 // NewCollector creates a Collector.
+//
+// Without options, a Collector abandons a reassembly once
+// DefaultReassemblyTimeout has passed since its first segment, and holds at
+// most DefaultReassemblyLimit segments, so its memory is bounded whatever it
+// is given to collect. It has no expiry handler.
 func NewCollector(options ...CollectorOption) *Collector {
 	c := Collector{}
 	for _, o := range options {
@@ -94,11 +157,19 @@ func NewCollector(options ...CollectorOption) *Collector {
 	return &c
 }
 
-// init initialises the state of the Collector, if it is not yet.
+// init initialises the state of the Collector, if it is not yet, including
+// the default timeout and limit, if none was given.
 func (c *Collector) init() {
-	if c.pipes == nil {
-		c.pipes = make(map[pipeKey]*pipe)
-		c.done = make(chan struct{})
+	if c.pipes != nil {
+		return
+	}
+	c.pipes = make(map[pipeKey]*pipe)
+	c.done = make(chan struct{})
+	if c.timeout == 0 {
+		c.timeout = DefaultReassemblyTimeout
+	}
+	if c.limit == 0 {
+		c.limit = DefaultReassemblyLimit
 	}
 }
 
@@ -122,11 +193,10 @@ func (c *Collector) Close() {
 		return
 	}
 	c.closed = true
-	pipes := c.sortedPipes()
+	pipes := c.orderedPipes()
 	for _, p := range pipes {
-		c.stopTimer(p)
+		c.remove(p)
 	}
-	clear(c.pipes)
 	c.mu.Unlock()
 	c.settling.Wait()
 	for _, p := range pipes {
@@ -172,7 +242,7 @@ func (c *Collector) Pipes() []Pipe {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.init()
-	pipes := c.sortedPipes()
+	pipes := c.orderedPipes()
 	out := make([]Pipe, len(pipes))
 	for i, p := range pipes {
 		out[i] = Pipe{
@@ -188,21 +258,12 @@ func (c *Collector) Pipes() []Pipe {
 	return out
 }
 
-// sortedPipes returns the pipes in the order in which they were created.
-func (c *Collector) sortedPipes() []*pipe {
+// orderedPipes returns the pipes in the order in which they were created.
+func (c *Collector) orderedPipes() []*pipe {
 	pipes := make([]*pipe, 0, len(c.pipes))
-	for _, p := range c.pipes {
-		pipes = append(pipes, p)
+	for e := c.order.Front(); e != nil; e = e.Next() {
+		pipes = append(pipes, e.Value.(*pipe))
 	}
-	slices.SortFunc(pipes, func(a, b *pipe) int {
-		switch {
-		case a.seq < b.seq:
-			return -1
-		case a.seq > b.seq:
-			return 1
-		}
-		return 0
-	})
 	return pipes
 }
 
@@ -281,6 +342,10 @@ func (o originatorOption) ApplyCollectOption(cfg *CollectConfig) {
 // ErrMissingSegment is returned for a nil TPDU, and ErrClosed once the
 // Collector is closed.
 //
+// A segment that the Collector holds may make it abandon reassemblies to keep
+// within its reassembly limit, which Collect passes to the expiry handler
+// before it returns.
+//
 // Collect copies the TPDU, so the caller may change or reuse it once Collect
 // returns. The TPDUs returned are not used by the Collector, and belong to
 // the caller.
@@ -289,24 +354,36 @@ func (c *Collector) Collect(pdu *tpdu.TPDU, options ...CollectOption) ([]*tpdu.T
 	for _, option := range options {
 		option.ApplyCollectOption(&cfg)
 	}
+	segments, abandoned, err := c.collect(pdu, cfg)
+	for _, p := range abandoned {
+		c.settle(p, ErrReassemblyLimit)
+		c.settling.Done()
+	}
+	return segments, err
+}
+
+// collect collects the TPDU, and returns the segments of the message it
+// completes, if any, and the reassemblies it abandoned to keep within the
+// limit, which the caller must settle, and then mark as done.
+func (c *Collector) collect(pdu *tpdu.TPDU, cfg CollectConfig) ([]*tpdu.TPDU, []*pipe, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.init()
 	if c.closed {
-		return nil, ErrClosed
+		return nil, nil, ErrClosed
 	}
 	if pdu == nil {
-		return nil, ErrMissingSegment
+		return nil, nil, ErrMissingSegment
 	}
 	st := pdu.SmsType()
 	switch st {
 	case tpdu.SmsSubmit:
 		if cfg.originator == "" {
-			return nil, ErrMissingOriginator
+			return nil, nil, ErrMissingOriginator
 		}
 	case tpdu.SmsDeliver:
 	default:
-		return nil, tpdu.ErrUnsupportedSmsType(st)
+		return nil, nil, tpdu.ErrUnsupportedSmsType(st)
 	}
 	t := cloneTPDU(pdu)
 	// ConcatInfo ignores an IE whose total is 0 or whose sequence number is 0
@@ -317,13 +394,13 @@ func (c *Collector) Collect(pdu *tpdu.TPDU, options ...CollectOption) ([]*tpdu.T
 	ci, ok := t.ConcatInfo()
 	if !ok || ci.Total < 2 {
 		// short circuit single segment - no need for a pipe
-		return []*tpdu.TPDU{&t}, nil
+		return []*tpdu.TPDU{&t}, nil, nil
 	}
 	key := newPipeKey(&t, cfg.originator, ci)
 	p := c.pipes[key]
 	if p != nil {
 		if p.segments[ci.Seqno-1] != nil {
-			return nil, ErrDuplicateSegment
+			return nil, nil, ErrDuplicateSegment
 		}
 		if p.frags+1 == ci.Total {
 			// The reassembly is complete, so it is removed before its timer
@@ -331,12 +408,24 @@ func (c *Collector) Collect(pdu *tpdu.TPDU, options ...CollectOption) ([]*tpdu.T
 			// lock, finds it removed and leaves it.
 			c.remove(p)
 			p.segments[ci.Seqno-1] = &t
-			return p.segments, nil
+			return p.segments, nil, nil
 		}
-	} else {
-		c.seq++
-		p = &pipe{key: key, seq: c.seq, segments: make([]*tpdu.TPDU, ci.Total)}
+	}
+	// The segment is to be held, so the oldest reassemblies make room for it.
+	var abandoned []*pipe
+	for c.limit > 0 && c.held >= c.limit {
+		oldest := c.order.Front().Value.(*pipe)
+		c.remove(oldest)
+		abandoned = append(abandoned, oldest)
+		if oldest == p {
+			p = nil
+		}
+	}
+	c.settling.Add(len(abandoned))
+	if p == nil {
+		p = &pipe{key: key, segments: make([]*tpdu.TPDU, ci.Total)}
 		c.pipes[key] = p
+		p.elem = c.order.PushBack(p)
 		if c.timeout > 0 {
 			c.settling.Add(1)
 			p.timer = time.AfterFunc(c.timeout, func() { c.expire(p) })
@@ -344,7 +433,8 @@ func (c *Collector) Collect(pdu *tpdu.TPDU, options ...CollectOption) ([]*tpdu.T
 	}
 	p.segments[ci.Seqno-1] = &t
 	p.frags++
-	return nil, nil
+	c.held++
+	return nil, abandoned, nil
 }
 
 // expire abandons the reassembly once its timeout has passed, unless it has
@@ -356,14 +446,21 @@ func (c *Collector) expire(p *pipe) {
 		c.mu.Unlock()
 		return
 	}
-	delete(c.pipes, p.key)
+	c.unlink(p)
 	c.mu.Unlock()
 	c.settle(p, ErrReassemblyTimeout)
 }
 
-// remove removes a pipe that is still to be settled, stopping its timer.
-func (c *Collector) remove(p *pipe) {
+// unlink removes a pipe from the Collector.
+func (c *Collector) unlink(p *pipe) {
 	delete(c.pipes, p.key)
+	c.order.Remove(p.elem)
+	c.held -= p.frags
+}
+
+// remove removes a pipe from the Collector, and stops its timer.
+func (c *Collector) remove(p *pipe) {
+	c.unlink(p)
 	c.stopTimer(p)
 }
 
@@ -408,7 +505,7 @@ func newPipeKey(t *tpdu.TPDU, originator string, ci tpdu.ConcatInfo) pipeKey {
 // until the complete set is available or the reassembly is abandoned.
 type pipe struct {
 	key      pipeKey
-	seq      uint64
+	elem     *list.Element // in the order of the Collector
 	timer    *time.Timer
 	segments []*tpdu.TPDU
 	frags    int
