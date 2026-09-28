@@ -241,6 +241,46 @@ func TestRun(t *testing.T) {
 			"",
 		},
 		{
+			// 3GPP TS 23.040 Section 9.2.2.1a: if any of bits 7 and 5 - 2 of
+			// octet 1 is non-zero "the receiver shall not examine the other
+			// field and shall treat the TP-Failure-Cause as "Unspecified
+			// error cause"", so the fields after the TP-FCS are not shown.
+			"deliver report rp-error unused bits",
+			[]string{"-o", "-e", "04d007"},
+			0,
+			lines(
+				"TPDU: SMS-DELIVER-REPORT",
+				"TP-MTI: 0x00 SMS-DELIVER-REPORT",
+				"TP-UDHI: false",
+				"TP-FCS: 0xff Unspecified error cause (first octet has unused bits set, TP-FCS received as 0xd0)",
+			),
+			"",
+		},
+		{
+			"deliver report rp-error unused bit 7",
+			[]string{"-o", "-e", "80d0"},
+			0,
+			lines(
+				"TPDU: SMS-DELIVER-REPORT",
+				"TP-MTI: 0x00 SMS-DELIVER-REPORT",
+				"TP-UDHI: false",
+				"TP-FCS: 0xff Unspecified error cause (first octet has unused bits set, TP-FCS received as 0xd0)",
+			),
+			"",
+		},
+		{
+			"submit report rp-error unused bits",
+			[]string{"-e", "21d0"},
+			0,
+			lines(
+				"TPDU: SMS-SUBMIT-REPORT",
+				"TP-MTI: 0x01 SMS-SUBMIT-REPORT",
+				"TP-UDHI: false",
+				"TP-FCS: 0xff Unspecified error cause (first octet has unused bits set, TP-FCS received as 0xd0)",
+			),
+			"",
+		},
+		{
 			// TP-MMS 1: "No more messages are waiting for the MS in this SC"
 			// (3GPP TS 23.040 Section 9.2.3.2).
 			"deliver pdu mode",

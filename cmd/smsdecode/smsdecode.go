@@ -210,12 +210,30 @@ func dumpMMS(d *dumper, t *tpdu.TPDU) {
 	}
 }
 
+// reportUnused masks the bits of the first octet of an SMS-DELIVER-REPORT
+// or SMS-SUBMIT-REPORT that are "presently unused": 7 and 5 to 2 (3GPP TS
+// 23.040 Sections 9.2.2.1a and 9.2.2.2a).
+const reportUnused tpdu.FirstOctet = 0xbc
+
 // dumpFCS writes the TP-FCS of a report, which only one carried by an
-// RP-ERROR has.
-func dumpFCS(d *dumper, t *tpdu.TPDU) {
-	if t.RPMessage == tpdu.RPError {
-		d.printf("TP-FCS: 0x%02x\n", t.FCS)
+// RP-ERROR has, and reports whether the fields after it are to be shown.
+//
+// If any of the unused bits of the first octet is set then "the receiver
+// shall not examine the other field and shall treat the TP-Failure-Cause as
+// "Unspecified error cause"" (3GPP TS 23.040 Sections 9.2.2.1a and 9.2.2.2a),
+// so the failure cause is shown as the receiver takes it, and the fields after
+// it are not shown.
+func dumpFCS(d *dumper, t *tpdu.TPDU) bool {
+	if t.RPMessage != tpdu.RPError {
+		return true
 	}
+	if t.FirstOctet&reportUnused != 0 {
+		d.printf("TP-FCS: 0x%02x Unspecified error cause (first octet has unused bits set, TP-FCS received as 0x%02x)\n",
+			t.FailureCause(), t.FCS)
+		return false
+	}
+	d.printf("TP-FCS: 0x%02x\n", t.FCS)
+	return true
 }
 
 func dumpDeliver(d *dumper, t *tpdu.TPDU) {
@@ -236,7 +254,9 @@ func dumpDeliver(d *dumper, t *tpdu.TPDU) {
 
 func dumpDeliverReport(d *dumper, t *tpdu.TPDU) {
 	d.printf("TP-UDHI: %t\n", t.FirstOctet.UDHI())
-	dumpFCS(d, t)
+	if !dumpFCS(d, t) {
+		return
+	}
 	d.printf("TP-PI: %s\n", t.PI)
 	if t.PI.PID() {
 		d.printf("TP-PID: 0x%02x\n", t.PID)
@@ -292,7 +312,9 @@ func dumpSubmit(d *dumper, t *tpdu.TPDU) {
 
 func dumpSubmitReport(d *dumper, t *tpdu.TPDU) {
 	d.printf("TP-UDHI: %t\n", t.FirstOctet.UDHI())
-	dumpFCS(d, t)
+	if !dumpFCS(d, t) {
+		return
+	}
 	d.printf("TP-PI: %s\n", t.PI)
 	d.printf("TP-SCTS: %s\n", t.SCTS)
 	if t.PI.PID() {
