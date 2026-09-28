@@ -87,6 +87,22 @@ func TestDecode(t *testing.T) {
 			sms.ErrCompressedUserData,
 		},
 		{
+			// An SMS-COMMAND has no TP-DCS, so a DCS left in the struct does
+			// not make its TP-CD compressed.
+			"command with compressed dcs",
+			[]*tpdu.TPDU{
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
+					DCS:        0x20,
+					UD:         []byte("cd"),
+				},
+			},
+			nil,
+			[]byte("cd"),
+			nil,
+		},
+		{
 			"single segment 7bit implicit urdu",
 			[]*tpdu.TPDU{
 				{
@@ -173,18 +189,6 @@ func TestDecode(t *testing.T) {
 			nil,
 		},
 		{
-			"ucs2 dangling surrogate",
-			[]*tpdu.TPDU{
-				{
-					DCS: tpdu.DcsUCS2Data,
-					UD:  []byte{0xd8, 0x3d, 0xde, 0x01, 0xd8, 0x3d},
-				},
-			},
-			nil,
-			nil,
-			ucs2.ErrDanglingSurrogate([]byte{0xd8, 0x3d}),
-		},
-		{
 			"ucs2 odd length",
 			[]*tpdu.TPDU{
 				{
@@ -204,6 +208,116 @@ func TestDecode(t *testing.T) {
 			assert.Equal(t, p.out, out)
 		}
 		t.Run(p.name, f)
+	}
+}
+
+// ucs2Segment returns a UCS2 segment of a concatenated message holding the
+// UD.
+func ucs2Segment(ud ...byte) *tpdu.TPDU {
+	return &tpdu.TPDU{DCS: tpdu.DcsUCS2Data, UD: ud}
+}
+
+// An unpaired surrogate decodes as U+FFFD wherever it is, as ucs2.Decode
+// does, rather than failing the message or taking a character from the next
+// segment.
+func TestDecodeUnpairedSurrogate(t *testing.T) {
+	patterns := []struct {
+		name string
+		in   []*tpdu.TPDU
+		out  string
+	}{
+		{
+			"low surrogate ending a segment",
+			[]*tpdu.TPDU{
+				ucs2Segment(0x00, 0x41, 0xde, 0x01),
+				ucs2Segment(0x00, 0x42, 0x00, 0x43),
+			},
+			"A�BC",
+		},
+		{
+			"high surrogate ending the message",
+			[]*tpdu.TPDU{
+				ucs2Segment(0xd8, 0x3d, 0xde, 0x01, 0xd8, 0x3d),
+			},
+			"😁�",
+		},
+		{
+			"high surrogate ending the last segment",
+			[]*tpdu.TPDU{
+				ucs2Segment(0x00, 0x41),
+				ucs2Segment(0x00, 0x42, 0xd8, 0x3d),
+			},
+			"AB�",
+		},
+		{
+			"high surrogate before a segment not starting with a low surrogate",
+			[]*tpdu.TPDU{
+				ucs2Segment(0x00, 0x41, 0xd8, 0x3d),
+				ucs2Segment(0x00, 0x42),
+			},
+			"A�B",
+		},
+		{
+			"high surrogate before a GSM 7 bit segment",
+			[]*tpdu.TPDU{
+				ucs2Segment(0x00, 0x41, 0xd8, 0x3d),
+				{UD: []byte("BC")},
+			},
+			"A�BC",
+		},
+		{
+			"high surrogate before an 8 bit segment",
+			[]*tpdu.TPDU{
+				ucs2Segment(0xd8, 0x3d),
+				{DCS: tpdu.Dcs8BitData, UD: []byte("BC")},
+			},
+			"�BC",
+		},
+		{
+			"surrogate pair split over three segments",
+			[]*tpdu.TPDU{
+				ucs2Segment(0xd8, 0x3d),
+				ucs2Segment(0xde, 0x01, 0xd8, 0x3d),
+				ucs2Segment(0xde, 0x02),
+			},
+			"😁😂",
+		},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			out, err := sms.Decode(p.in)
+			assert.NoError(t, err)
+			assert.Equal(t, p.out, string(out))
+		}
+		t.Run(p.name, f)
+	}
+}
+
+// A nil segment, as the expiry handler and Pipes give for a missing one, is
+// reported rather than dereferenced.
+func TestDecodeMissingSegment(t *testing.T) {
+	seg := func(seqno byte) *tpdu.TPDU {
+		return &tpdu.TPDU{
+			UDH: tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: 0, Data: []byte{3, 3, seqno}},
+			},
+			UD: []byte("abc"),
+		}
+	}
+	for _, in := range [][]*tpdu.TPDU{
+		{nil},
+		{nil, seg(2), seg(3)},
+		{seg(1), nil, seg(3)},
+		{seg(1), seg(2), nil},
+	} {
+		assert.NotPanics(t, func() {
+			out, err := sms.Decode(in)
+			assert.Equal(t, sms.ErrMissingSegment, err)
+			assert.Nil(t, out)
+		})
+		assert.NotPanics(t, func() {
+			assert.False(t, sms.IsCompleteMessage(in))
+		})
 	}
 }
 

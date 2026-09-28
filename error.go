@@ -23,6 +23,10 @@ var (
 	// cannot be used to determine which of the two may better fit the
 	// reassembly, so the first is kept and the second discarded.
 	ErrDuplicateSegment = errors.New("duplicate segment")
+	// ErrMissingSegment indicates a segment passed to Decode is nil, as the
+	// Collector gives for a segment of a concatenated message that was not
+	// received.
+	ErrMissingSegment = errors.New("missing segment")
 	// ErrReassemblyInconsistency indicates a segment has arrived for a
 	// reassembly that has a seqno greater than the number of segments in the
 	// reassembly.

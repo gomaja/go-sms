@@ -4,6 +4,10 @@
 package sms
 
 import (
+	"errors"
+	"slices"
+	"unicode/utf8"
+
 	"github.com/gomaja/go-sms/encoding/tpdu"
 	"github.com/gomaja/go-sms/encoding/ucs2"
 )
@@ -15,9 +19,18 @@ type DecodeConfig struct {
 
 // Decode returns the UTF-8 message contained in a set of TPDUs.
 //
-// For concatenated messages the segments assumed to be the component TPDUs, in
-// correct order. This is the case for segments returned by the Collector. It
-// can be tested using IsCompleteMessage.
+// For concatenated messages the segments are assumed to be the component
+// TPDUs, in order. This is the case for segments returned by the Collector,
+// and can be tested using IsCompleteMessage.
+//
+// A nil segment, as the Collector gives for a segment that was not received,
+// cannot be decoded, so ErrMissingSegment is returned.
+//
+// A UTF-16 surrogate pair split between two consecutive UCS2 segments is
+// decoded as the one character it codes. Any other surrogate is unpaired and
+// decoded as U+FFFD, as ucs2.Decode does, including a high surrogate that
+// ends the last segment or that is followed by a segment that does not start
+// with a low surrogate.
 func Decode(segments []*tpdu.TPDU, options ...DecodeOption) ([]byte, error) {
 	cfg := DecodeConfig{}
 	for _, option := range options {
@@ -26,45 +39,50 @@ func Decode(segments []*tpdu.TPDU, options ...DecodeOption) ([]byte, error) {
 	if len(cfg.dopts) == 0 {
 		cfg.dopts = []tpdu.UDDecodeOption{tpdu.WithAllCharsets}
 	}
-	bl := 0
-	ts := make([][]byte, len(segments))
-	var danglingSurrogate ucs2.ErrDanglingSurrogate
-	for i, s := range segments {
-		if s.DCS.Compressed() {
+	n := 0
+	for _, s := range segments {
+		if s == nil {
+			return nil, ErrMissingSegment
+		}
+		// An SMS-COMMAND has no TP-DCS, so its TP-CD is never compressed.
+		if s.SmsType() != tpdu.SmsCommand && s.DCS.Compressed() {
 			return nil, ErrCompressedUserData
 		}
+		n += len(s.UD)
+	}
+	m := make([]byte, 0, n)
+	// dangling holds a high surrogate that ended the previous segment, which
+	// the low surrogate at the start of the next segment may complete.
+	var dangling ucs2.ErrDanglingSurrogate
+	for _, s := range segments {
 		a := s.Alphabet()
 		ud := s.UD
-		if danglingSurrogate != nil {
-			ud = append([]byte(danglingSurrogate), ud...)
-			danglingSurrogate = nil
+		if dangling != nil {
+			if a == tpdu.AlphaUCS2 {
+				ud = append(tpdu.UserData(dangling), ud...)
+			} else {
+				m = utf8.AppendRune(m, utf8.RuneError)
+			}
+			dangling = nil
 		}
 		d, err := tpdu.DecodeUserData(ud, s.UDH, a, cfg.dopts...)
-		if err != nil {
-			switch e := err.(type) {
-			case ucs2.ErrDanglingSurrogate:
-				danglingSurrogate = e
-			default:
-				return nil, err
-			}
+		if err != nil && !errors.As(err, &dangling) {
+			return nil, err
 		}
-		ts[i] = d
-		bl += len(d)
+		m = append(m, d...)
 	}
-	if danglingSurrogate != nil {
-		return nil, danglingSurrogate
-	}
-	m := make([]byte, 0, bl)
-	for _, t := range ts {
-		m = append(m, t...)
+	if dangling != nil {
+		m = utf8.AppendRune(m, utf8.RuneError)
 	}
 	return m, nil
 }
 
-// IsCompleteMessage confirms that the TPDUs contain all the sgements required
+// IsCompleteMessage confirms that the TPDUs contain all the segments required
 // to reassemble a complete message and are in the correct order.
+//
+// It returns false if any segment is nil.
 func IsCompleteMessage(segments []*tpdu.TPDU) bool {
-	if len(segments) == 0 {
+	if len(segments) == 0 || slices.Contains(segments, nil) {
 		return false
 	}
 	base, ok := segments[0].ConcatInfo()
