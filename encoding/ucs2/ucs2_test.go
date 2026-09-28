@@ -168,6 +168,16 @@ func TestEncode(t *testing.T) {
 			[]rune("😁"),
 			[]byte{0xd8, 0x3d, 0xde, 0x01},
 		},
+		{
+			"plane edges",
+			[]rune{0xffff, 0x10000, 0x10ffff},
+			[]byte{0xff, 0xff, 0xd8, 0x00, 0xdc, 0x00, 0xdb, 0xff, 0xdf, 0xff},
+		},
+		{
+			"invalid runes",
+			[]rune{0xd800, 0xdfff, 0x110000, -1},
+			[]byte{0xff, 0xfd, 0xff, 0xfd, 0xff, 0xfd, 0xff, 0xfd},
+		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -196,6 +206,13 @@ func TestErrDanglingSurrogate(t *testing.T) {
 		}
 		t.Run(fmt.Sprintf("%x", p), f)
 	}
+}
+
+// ExampleEncode shows that a code point above U+FFFF is encoded as a UTF-16
+// surrogate pair, taking four bytes.
+func ExampleEncode() {
+	fmt.Printf("% x\n", ucs2.Encode([]rune("A😁")))
+	// Output: 00 41 d8 3d de 01
 }
 
 // TestErrDanglingSurrogateCopy checks that the error does not share memory

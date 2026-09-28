@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: MIT
 
-// Package ucs2 provides conversions between UCS-2 and UTF-8.
+// Package ucs2 converts between runes and the octets of SMS user data coded
+// in the UCS2 alphabet.
+//
+// 3GPP TS 23.038 Section 6.2.3 defines the UCS2 alphabet as 16 bits per
+// character, with ISO/IEC 10646 as the character table. As is common practice,
+// this package codes the characters as UTF-16: a code point up to U+FFFF is
+// one big-endian 16-bit code unit, and a code point above U+FFFF is a
+// surrogate pair of two code units, four octets in all. So a message that
+// contains such code points holds fewer characters than the octet count
+// suggests. Neither function reads or writes UTF-8.
 package ucs2
 
 import (
@@ -11,10 +20,11 @@ import (
 	"unicode/utf16"
 )
 
-// Decode converts an array of UCS2 characters into an array of runes.
+// Decode converts an array of big-endian UTF-16 code units into an array of
+// runes.
 //
-// As the UCS2 characters are packed into a byte array, the length of the byte
-// array provided must be even.
+// As each code unit is two bytes, the length of the byte array provided must
+// be even.
 //
 // A high surrogate followed by a low surrogate is decoded as one rune. Any
 // other surrogate is decoded as U+FFFD and consumes only its own two bytes. If
@@ -63,8 +73,12 @@ func isLowSurrogate(r rune) bool {
 	return r >= 0xdc00 && r < 0xe000
 }
 
-// Encode converts an array of UCS2 runes into an array of bytes, where pairs
-// of bytes (in Big Endian) represent a UCS2 character.
+// Encode converts an array of runes into an array of big-endian UTF-16 code
+// units, two bytes per code unit.
+//
+// A rune above U+FFFF is encoded as a surrogate pair, so it takes four bytes.
+// A rune that UTF-16 cannot represent, i.e. a surrogate code point or a value
+// outside 0..U+10FFFF, is encoded as U+FFFD.
 func Encode(src []rune) []byte {
 	if len(src) == 0 {
 		return nil
