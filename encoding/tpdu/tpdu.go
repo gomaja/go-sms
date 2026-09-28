@@ -516,33 +516,37 @@ func (t *TPDU) blockSize(udho int) int {
 // or TP-CD. Section 9.2.3.21 gives a TP-CD maximum of 157 octets, which no
 // TP-DA, of at least 2 octets, leaves room for.
 func (t *TPDU) maxUDOctets() int {
+	var room int
 	switch t.SmsType() {
 	case SmsSubmit, SmsDeliver:
-		return MaxUDL
+		room = MaxUDL
 	case SmsDeliverReport:
+		room = 159 - len(t.PIExt)
 		if t.RPMessage == RPError {
-			return 158 - len(t.PIExt)
+			room = 158 - len(t.PIExt)
 		}
-		return 159 - len(t.PIExt)
 	case SmsSubmitReport:
+		room = 152 - len(t.PIExt)
 		if t.RPMessage == RPError {
-			return 151 - len(t.PIExt)
+			room = 151 - len(t.PIExt)
 		}
-		return 152 - len(t.PIExt)
 	case SmsStatusReport:
-		room := 143 - (addressOctets(&t.RA) - 2) - len(t.PIExt)
+		room = 143 - (addressOctets(&t.RA) - 2) - len(t.PIExt)
 		if t.PI.PID() || t.PID != 0 {
 			room--
 		}
 		if t.PI.DCS() || t.DCS != 0 {
 			room--
 		}
-		return room
 	case SmsCommand:
-		return 156 - (addressOctets(&t.DA) - 2)
-	default:
-		return 0
+		room = 156 - (addressOctets(&t.DA) - 2)
 	}
+	// An empty TP-UD always fits, even after a TP-PI whose extension octets
+	// take all the room.
+	if room < 0 {
+		room = 0
+	}
+	return room
 }
 
 // addressOctets returns the number of octets the address takes in a TPDU,

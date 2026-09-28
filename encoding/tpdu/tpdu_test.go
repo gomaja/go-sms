@@ -1105,26 +1105,6 @@ func TestSetValidityPeriod(t *testing.T) {
 	}
 }
 
-func FuzzUnmarshalBinary(f *testing.F) {
-	for _, seed := range [][]byte{
-		{},
-		{0x00},
-		{0x03},
-		{0x00, 0x00, 0x00},
-		{0x01, 0x00, 0x05, 0x91, 0x21, 0x43, 0xf5, 0x00, 0x00, 0x00},
-	} {
-		f.Add(seed)
-	}
-
-	f.Fuzz(func(t *testing.T, src []byte) {
-		mt := tpdu.TPDU{}
-		_ = mt.UnmarshalBinary(src)
-
-		mo := tpdu.TPDU{Direction: tpdu.MO}
-		_ = mo.UnmarshalBinary(src)
-	})
-}
-
 func TestMessageTypeString(t *testing.T) {
 	patterns := []struct {
 		mti tpdu.MessageType
@@ -3317,6 +3297,28 @@ func TestUDMaximaOnMarshal(t *testing.T) {
 	assert.Equal(t, tpdu.NewEncodeError("SmsCommand.ud", tpdu.ErrOverlength), err)
 }
 
+// TestLongPIExtension checks a TP-PI with more extension octets than the
+// TP-UD has room for still carries an empty TP-UD, both ways.
+func TestLongPIExtension(t *testing.T) {
+	// found by FuzzUnmarshalBinary: an RP-ERROR report whose TP-PI chain,
+	// 0xff then 0x80 octets, takes more than its 158 octets of TP-UD.
+	in := append(unhex(t, "20 00 ff"), bytes.Repeat([]byte{0xff}, 160)...)
+	in = append(in, 0x00, 0x7f, 0x04, 0x00)
+	d := tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}
+	require.NoError(t, d.UnmarshalBinary(in))
+	assert.Len(t, d.PIExt, 161)
+	b, err := d.MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, in, b)
+	assert.Equal(t, 0, d.UDBlockSize())
+	// but not a TP-UD with an octet
+	d.UD = []byte{1}
+	_, err = d.MarshalBinary()
+	assert.ErrorIs(t, err, tpdu.ErrOverlength)
+	err = d.UnmarshalBinary(append(in[:len(in)-1], 0x01, 0x41))
+	assert.ErrorIs(t, err, tpdu.ErrOverlength)
+}
+
 // udOctets returns the number of octets of the TP-UD, or TP-CD, of the TPDU,
 // or -1 if it cannot be marshalled.
 func udOctets(t tpdu.TPDU) int {
@@ -3695,6 +3697,413 @@ func TestSegmentEmptyUDH(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, pdus, 2)
 	checkSegments(t, pdus, "7bit")
+}
+
+// unmarshalConfigs are the configurations every fuzzed TPDU is decoded in.
+var unmarshalConfigs = []tpdu.TPDU{
+	{Direction: tpdu.MT, RPMessage: tpdu.RPAck},
+	{Direction: tpdu.MT, RPMessage: tpdu.RPError},
+	{Direction: tpdu.MO, RPMessage: tpdu.RPAck},
+	{Direction: tpdu.MO, RPMessage: tpdu.RPError},
+}
+
+// FuzzUnmarshalBinary checks that UnmarshalBinary never panics, in either
+// direction and for either RP message, and that every TPDU it accepts
+// marshals, decodes back to an equal TPDU, and marshals to the octets it came
+// from, other than where 3GPP TS 23.040 lets them differ, as checked by
+// checkRemarshal.
+func FuzzUnmarshalBinary(f *testing.F) {
+	for _, seed := range []string{
+		"",
+		"00",
+		"03",
+		"00 00 00",
+		"01 00 05 91 2143f5 00 00 00",
+		// deliver, submit, command, status report
+		"04 04 91 3619 00 00 51507132200523 08 c8303a8c0ea3c3",
+		"44 04 91 3619 00 08 51507132200523 08 050003070201 0041",
+		"11 23 04 91 3619 34 00 45 08 c8303a8c0ea3c3",
+		"19 23 04 91 3619 34 00 45 08 c8 30 3a 8c 0e a3 c3 08 c8303a8c0ea3c3",
+		"09 23 04 91 3619 34 00 01 05 00 00 00 00 00 08 c8303a8c0ea3c3",
+		"42 42 00 00 34 04 91 3619 07 05 00 03 01 02 01 41",
+		"02 42 04 91 3619 51507132200523 51408132200542 ab 07 89 04 02 6869",
+		"02 42 04 91 3619 51507132200523 51408132200542 ab 00",
+		srHead,
+		// reports for RP-ACK and RP-ERROR
+		"00 07 00 00 02 e834",
+		"00 d0 07 00 00 02 e834",
+		"01 04 51507132200523 02 e834",
+		"01 c0 04 51507132200523 02 e834",
+		// TP-PI extension and reserved bits
+		"00 81 80 00 7f",
+		"00 14 01 41 de ad",
+		srHead + " 84 00 01 41",
+		srHead + " 0c 01 41 aa bb",
+		// 7 bit spare and fill bits, header only, compressed, reserved
+		dlvHead + " 00 " + scts + " 07 edf27c1e3e971b",
+		dlvHeadUDHI + " 00 " + scts + " 0f 050003010203 dae5f93c7c2ecfff",
+		"41 00 04 91 3619 00 00 07 05 00 03 01 02 01 00",
+		"41 00 04 91 3619 00 00 06 05 00 03 01 02 01",
+		dlvHeadUDHI + " 20 " + scts + " 09 050003010201 81ff01",
+		dlvHead + " 80 " + scts + " 08 c8303a8c0ea3c3",
+		"07 04 91 3619 00 00 51507132200523 01 41",
+		// ignored UDH, alphanumeric address
+		"41 00 04 91 3619 00 04 06 05 04 01 03 01 02",
+		"04 07 d0 e1f1d8 00 00 51507132200523 00",
+	} {
+		f.Add(unhex(f, seed))
+	}
+
+	f.Fuzz(func(t *testing.T, src []byte) {
+		for _, cfg := range unmarshalConfigs {
+			d := cfg
+			if err := d.UnmarshalBinary(src); err != nil {
+				continue
+			}
+			label := fmt.Sprintf("%s %s % x", d.SmsType(), d.RPMessage, src)
+			out, err := d.MarshalBinary()
+			require.NoError(t, err, label)
+			d2 := cfg
+			require.NoError(t, d2.UnmarshalBinary(out), label)
+			require.Equal(t, d, d2, label)
+			out2, err := d2.MarshalBinary()
+			require.NoError(t, err, label)
+			require.Equal(t, out, out2, label)
+			checkRemarshal(t, d, src, out, label)
+		}
+	})
+}
+
+// piReserved reports whether a reserved bit of the TP-PI is set.
+func piReserved(d tpdu.TPDU) bool {
+	if d.PI&tpdu.PiReserved != 0 {
+		return true
+	}
+	for _, o := range d.PIExt {
+		if o&^tpdu.PiExt != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// checkRemarshal checks out, the marshalled d, reproduces src, the octets d
+// was unmarshalled from, other than in these cases, where 3GPP TS 23.040
+// lets them differ:
+//
+//   - a reserved TP-PI bit is set, as the octets that follow the TP-UD are
+//     then discarded (9.2.3.27).
+//   - an SMS-STATUS-REPORT has a TP-PI of 0, which is optional (9.2.2.3).
+//   - a UDH was ignored as malformed, and so is marshalled as an empty UDH
+//     (9.2.3.24).
+//   - an address is not in the form it marshals to, such as one with a fill
+//     semi-octet other than the last (9.1.2.3).
+//   - a 7 bit UDH with no text has a TP-UDL of fewer septets than the UDH
+//     and its fill bits, which is marshalled with the count 9.2.3.16 gives.
+//   - 7 bit fill bits after the UDH, or spare bits after the last septet, are
+//     not zero, as the receiver ignores them and they are marshalled as zero
+//     (9.2.2.1, 9.2.3.24). Only those bits may differ, and they must be zero
+//     in out.
+func checkRemarshal(t *testing.T, d tpdu.TPDU, src, out []byte, label string) {
+	t.Helper()
+	if piReserved(d) {
+		return
+	}
+	addrLen := func(i int) int { return 2 + (int(src[i])+1)/2 }
+	opts := func() int {
+		n := 1 + len(d.PIExt)
+		if d.PI.PID() {
+			n++
+		}
+		if d.PI.DCS() {
+			n++
+		}
+		return n
+	}
+	fcs := 0
+	if d.RPMessage == tpdu.RPError {
+		fcs = 1
+	}
+	udl := -1 // index of the TP-UDL
+	var addrs []int
+	var addr []tpdu.Address
+	switch d.SmsType() {
+	case tpdu.SmsDeliver:
+		addrs, addr = []int{1}, []tpdu.Address{d.OA}
+		udl = 1 + addrLen(1) + 2 + 7
+	case tpdu.SmsSubmit:
+		addrs, addr = []int{2}, []tpdu.Address{d.DA}
+		vp := map[tpdu.ValidityPeriodFormat]int{
+			tpdu.VpfNotPresent: 0, tpdu.VpfRelative: 1, tpdu.VpfEnhanced: 7, tpdu.VpfAbsolute: 7,
+		}[d.FirstOctet.VPF()]
+		udl = 2 + addrLen(2) + 2 + vp
+	case tpdu.SmsCommand:
+		addrs, addr = []int{5}, []tpdu.Address{d.DA}
+		udl = 5 + addrLen(5)
+	case tpdu.SmsDeliverReport:
+		if d.PI.UDL() {
+			udl = 1 + fcs + opts()
+		}
+	case tpdu.SmsSubmitReport:
+		if d.PI.UDL() {
+			udl = 1 + fcs + opts() + 7
+		}
+	case tpdu.SmsStatusReport:
+		addrs, addr = []int{2}, []tpdu.Address{d.RA}
+		st := 2 + addrLen(2) + 7 + 7
+		if len(src) > st+1 && d.PI == 0 && len(d.PIExt) == 0 {
+			return // an explicit TP-PI of 0
+		}
+		if d.PI.UDL() {
+			udl = st + 1 + opts()
+		}
+	}
+	for i, pos := range addrs {
+		b, err := addr[i].MarshalBinary()
+		require.NoError(t, err, label)
+		if !bytes.Equal(b, src[pos:pos+len(b)]) || len(b) != addrLen(pos) {
+			return // an address in a form it does not marshal to
+		}
+	}
+	mask := make([]byte, len(src))
+	if udl >= 0 {
+		require.Less(t, udl, len(src), label)
+		n := int(src[udl])
+		udhl := -1 // the UDHL of the received UDH
+		if d.UDH != nil {
+			udhl = int(src[udl+1])
+		}
+		if d.UDH != nil && len(d.UDH) == 0 && udhl != 0 {
+			return // an ignored UDH
+		}
+		if d.SmsType() != tpdu.SmsCommand && !d.DCS.Compressed() && d.DCS.Alphabet() == tpdu.Alpha7Bit {
+			octs := (n*7 + 7) / 8
+			if udhl >= 0 {
+				h := udhl + 1
+				fill := (7 - h%7) % 7
+				if (h*8+fill)/7 > n {
+					return // an undercounted UDH
+				}
+				if fill > 0 && h < octs {
+					mask[udl+1+h] |= byte(1<<fill) - 1
+				}
+			}
+			if spare := octs*8 - n*7; spare > 0 {
+				mask[udl+octs] |= ^byte(0) << (8 - spare)
+			}
+		}
+	}
+	require.Equal(t, len(src), len(out), label)
+	for i := range src {
+		require.Zero(t, (src[i]^out[i])&^mask[i], "%s: octet %d % x", label, i, out)
+		// "Any unused bits shall be set to zero by the sending entity"
+		require.Zero(t, out[i]&mask[i], "%s: unused bits of octet %d % x", label, i, out)
+	}
+}
+
+// segmentTemplate returns a template of the type, coding and UDH size chosen
+// by the fuzzer.
+func segmentTemplate(typ, coding, udhLen, mr byte) tpdu.TPDU {
+	addr := tpdu.Address{Addr: "6391", TOA: 0x91}
+	var t tpdu.TPDU
+	switch typ % 7 {
+	case 0:
+		t = tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: addr}
+	case 1:
+		t = tpdu.TPDU{FirstOctet: 0x00, OA: addr}
+	case 2:
+		t = tpdu.TPDU{Direction: tpdu.MO}
+	case 3:
+		t = tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0xd0}
+	case 4:
+		t = tpdu.TPDU{FirstOctet: 0x01}
+	case 5:
+		t = tpdu.TPDU{FirstOctet: 0x02, RA: addr}
+	case 6:
+		t = tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02, DA: addr}
+	}
+	t.MR = mr
+	t.DCS = []tpdu.DCS{0x00, 0x04, 0x08, 0x20}[coding%4]
+	switch udhLen {
+	case 0:
+	case 1:
+		t.UDH = tpdu.UserDataHeader{}
+	default:
+		t.UDH = tpdu.UserDataHeader{{ID: 0x70, Data: bytes.Repeat([]byte{udhLen}, int(udhLen)-2)}}
+	}
+	return t
+}
+
+// FuzzSegment checks that Segment, for any template and message, either
+// returns an error that the template and message justify, or returns
+// segments that each marshal and hold no more than their block size, that do
+// not split an escape sequence or surrogate pair, whose concatenation IEs
+// are consistent, and whose UD reassembles to the message. The template is
+// never changed.
+func FuzzSegment(f *testing.F) {
+	long := bytes.Repeat([]byte("abcdefghij"), 50)
+	escapes := bytes.Repeat([]byte{'a', 0x1b, 0x65, 0x1b, 0x1b, 0x1b, 0x3c}, 60)
+	emoji := ucs2.Encode([]rune(strings.Repeat("a😁", 90)))
+	for _, seed := range []struct {
+		typ, coding, udhLen byte
+		ref16               bool
+		mr                  byte
+		msg                 []byte
+	}{
+		{0, 0x80, 0, false, 0, []byte("hello")},
+		{0, 0x80, 0, false, 7, long},
+		{0, 0x80, 6, true, 255, escapes},
+		{1, 0x82, 1, false, 0, emoji},
+		{2, 0x81, 130, false, 0, long},
+		{3, 0x82, 128, true, 0, emoji},
+		{4, 0x83, 20, false, 0, long},
+		{5, 0x80, 50, false, 0, escapes},
+		{6, 0x81, 140, false, 0, long},
+		{0, 0x80, 131, false, 0, escapes},
+		{0, 0x00, 0, false, 0, []byte("caf\xc3\xa9")},
+		{0, 0x02, 0, false, 0, []byte{0, 0x61, 0}},
+		{0, 0x80, 0, false, 0, nil},
+	} {
+		f.Add(seed.typ, seed.coding, seed.udhLen, seed.ref16, seed.mr, seed.msg)
+	}
+
+	f.Fuzz(func(t *testing.T, typ, coding, udhLen byte, ref16 bool, mr byte, msg []byte) {
+		tmpl := segmentTemplate(typ, coding, udhLen, mr)
+		cdg := tmpl.DCS
+		sevenBit := tmpl.SmsType() != tpdu.SmsCommand && cdg == 0x00
+		ucs := tmpl.SmsType() != tpdu.SmsCommand && cdg == 0x08
+		if coding&0x80 != 0 { // make the message valid for the coding
+			msg = append([]byte(nil), msg...)
+			if sevenBit {
+				for i := range msg {
+					msg[i] &= 0x7f
+				}
+			}
+			if ucs && len(msg)%2 == 1 {
+				msg = msg[:len(msg)-1]
+			}
+		}
+		var tudh tpdu.UserDataHeader
+		if tmpl.UDH != nil {
+			tudh = append(tpdu.UserDataHeader{}, tmpl.UDH...)
+		}
+		orig := tmpl
+		var opts []tpdu.SegmentationOption
+		if ref16 {
+			opts = append(opts, tpdu.With16BitConcatRef)
+		}
+		pdus, err := tmpl.Segment(msg, opts...)
+		require.Equal(t, orig, tmpl)
+		if tudh != nil {
+			require.Equal(t, tudh, tmpl.UDH[:len(tmpl.UDH):len(tmpl.UDH)])
+		}
+
+		if err != nil {
+			require.Nil(t, pdus)
+			var ise gsm7.ErrInvalidSeptet
+			switch {
+			case errors.As(err, &ise):
+				require.True(t, sevenBit)
+				require.Greater(t, msg[ise.Offset], byte(0x7f))
+			case errors.Is(err, tpdu.ErrOddUCS2Length):
+				require.True(t, ucs)
+				require.Equal(t, 1, len(msg)%2)
+			case errors.Is(err, tpdu.ErrOverlength), errors.Is(err, tpdu.ErrTooManySegments):
+				// the room left by the template UDH and a concatenation
+				// IE, of 5 or 6 octets.
+				c := tmpl
+				ie := tpdu.InformationElement{ID: 0, Data: []byte{1, 2, 3}}
+				if ref16 {
+					ie = tpdu.InformationElement{ID: 8, Data: []byte{1, 2, 3, 4}}
+				}
+				c.UDH = append(append(tpdu.UserDataHeader{}, tmpl.UDH...), ie)
+				bs := c.UDBlockSize()
+				require.Greater(t, len(msg), tmpl.UDBlockSize())
+				unit, shrink := 1, 0
+				if sevenBit {
+					unit, shrink = 2, 1
+				}
+				if ucs {
+					unit, shrink = 4, 2
+				}
+				if errors.Is(err, tpdu.ErrOverlength) {
+					require.Less(t, bs, unit)
+				} else {
+					require.GreaterOrEqual(t, bs, unit)
+					require.Greater(t, len(msg), 255*(bs-shrink))
+				}
+			default:
+				t.Fatalf("unexpected error %v", err)
+			}
+			return
+		}
+
+		require.NotEmpty(t, pdus)
+		require.LessOrEqual(t, len(pdus), 255)
+		var ud []byte
+		ref := -1
+		for i, p := range pdus {
+			ud = append(ud, p.UD...)
+			require.LessOrEqual(t, len(p.UD), p.UDBlockSize())
+			require.Equal(t, mr+byte(i), p.MR)
+			b, err := p.MarshalBinary()
+			require.NoError(t, err)
+			d := tpdu.TPDU{Direction: p.Direction, RPMessage: p.RPMessage}
+			require.NoError(t, d.UnmarshalBinary(b))
+			require.Equal(t, len(p.UD), len(d.UD))
+			if len(p.UD) > 0 {
+				require.Equal(t, p.UD, d.UD)
+			}
+			if len(pdus) == 1 {
+				require.Equal(t, tudh, p.UDH)
+				continue
+			}
+			require.Len(t, p.UDH, len(tudh)+1)
+			// an IE with no data may be nil or empty
+			want, err := p.UDH.MarshalBinary()
+			require.NoError(t, err)
+			got, err := d.UDH.MarshalBinary()
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+			ci, ok := p.ConcatInfo()
+			require.True(t, ok)
+			require.Equal(t, len(pdus), ci.Total)
+			require.Equal(t, i+1, ci.Seqno)
+			require.Equal(t, ref16, ci.Ref16Bit)
+			if ref < 0 {
+				ref = ci.Ref
+			}
+			require.Equal(t, ref, ci.Ref)
+		}
+		require.Equal(t, len(msg), len(ud))
+		if len(msg) > 0 {
+			require.Equal(t, msg, ud)
+		}
+		// no segment boundary splits an escape sequence or surrogate pair
+		cont := make([]bool, len(msg)+1)
+		if sevenBit {
+			for i := 0; i < len(msg); i++ {
+				if msg[i] == 0x1b && i+1 < len(msg) {
+					cont[i+1] = true
+					i++
+				}
+			}
+		}
+		if ucs {
+			for i := 0; i+4 <= len(msg); i += 2 {
+				hi := int(msg[i])<<8 | int(msg[i+1])
+				lo := int(msg[i+2])<<8 | int(msg[i+3])
+				if hi >= 0xd800 && hi < 0xdc00 && lo >= 0xdc00 && lo < 0xe000 {
+					cont[i+2] = true
+				}
+			}
+		}
+		at := 0
+		for _, p := range pdus[:len(pdus)-1] {
+			at += len(p.UD)
+			require.False(t, cont[at], "segment boundary at %d splits a character", at)
+		}
+	})
 }
 
 // counter is an implementation of the tpdu.Counter interface.
