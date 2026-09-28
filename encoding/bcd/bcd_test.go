@@ -8,6 +8,7 @@ import (
 
 	"github.com/gomaja/go-sms/encoding/bcd"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type decodePattern struct {
@@ -330,4 +331,86 @@ func TestErrInvalidInteger(t *testing.T) {
 		}
 		t.Run(fmt.Sprintf("%x", p), f)
 	}
+}
+
+// ExampleEncode shows the semi-octet order, where the most significant digit
+// is stored in the lowest nibble.
+func ExampleEncode() {
+	b, _ := bcd.Encode(12)
+	fmt.Printf("0x%02x\n", b)
+	// Output: 0x21
+}
+
+// FuzzDecode checks that Decode accepts exactly the octets with two nibbles
+// in 0..9, and that Encode gives back the same octet.
+func FuzzDecode(f *testing.F) {
+	for _, b := range []byte{0x00, 0x31, 0x13, 0x99, 0xa9, 0x9a, 0xff} {
+		f.Add(b)
+	}
+	f.Fuzz(func(t *testing.T, b byte) {
+		i, err := bcd.Decode(b)
+		if b&0x0f > 9 || b>>4 > 9 {
+			require.Equal(t, bcd.ErrInvalidOctet(b), err)
+			return
+		}
+		require.NoError(t, err)
+		require.Equal(t, int(b&0x0f)*10+int(b>>4), i)
+		e, err := bcd.Encode(i)
+		require.NoError(t, err)
+		assert.Equal(t, b, e)
+	})
+}
+
+// FuzzDecodeSigned checks that DecodeSigned accepts exactly the octets with
+// an upper nibble in 0..9, and that EncodeSigned gives back the same octet,
+// except that negative zero is encoded as zero.
+func FuzzDecodeSigned(f *testing.F) {
+	for _, b := range []byte{0x00, 0x31, 0x97, 0x08, 0x18, 0x9a, 0x9f, 0xa9, 0xff} {
+		f.Add(b)
+	}
+	f.Fuzz(func(t *testing.T, b byte) {
+		i, err := bcd.DecodeSigned(b)
+		if b>>4 > 9 {
+			require.Equal(t, bcd.ErrInvalidOctet(b), err)
+			return
+		}
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, i, -79)
+		require.LessOrEqual(t, i, 79)
+		e, err := bcd.EncodeSigned(i)
+		require.NoError(t, err)
+		if b == 0x08 {
+			assert.Equal(t, byte(0x00), e)
+		} else {
+			assert.Equal(t, b, e)
+		}
+	})
+}
+
+// FuzzEncode checks the range accepted by Encode and EncodeSigned, and that
+// Decode and DecodeSigned give back the integer encoded.
+func FuzzEncode(f *testing.F) {
+	for _, i := range []int{0, 13, 31, 79, 99, 100, -1, -79, -80} {
+		f.Add(i)
+	}
+	f.Fuzz(func(t *testing.T, i int) {
+		b, err := bcd.Encode(i)
+		if i < 0 || i > 99 {
+			assert.Equal(t, bcd.ErrInvalidInteger(i), err)
+		} else {
+			require.NoError(t, err)
+			d, err := bcd.Decode(b)
+			require.NoError(t, err)
+			assert.Equal(t, i, d)
+		}
+		b, err = bcd.EncodeSigned(i)
+		if i < -79 || i > 79 {
+			assert.Equal(t, bcd.ErrInvalidInteger(i), err)
+		} else {
+			require.NoError(t, err)
+			d, err := bcd.DecodeSigned(b)
+			require.NoError(t, err)
+			assert.Equal(t, i, d)
+		}
+	})
 }
