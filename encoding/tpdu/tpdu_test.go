@@ -1185,7 +1185,9 @@ func TestUDBlockSize(t *testing.T) {
 				Direction:  tpdu.MO,
 				FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
 			},
-			146, // TS 23.040 9.2.3.20: TP-CDL counts octets
+			// TS 23.040 9.2.3.20: TP-CDL counts octets, and 9.2.2.4 gives
+			// 156 with a TP-DA of 2 octets.
+			156,
 		},
 		{
 			"command 8bit",
@@ -1194,7 +1196,7 @@ func TestUDBlockSize(t *testing.T) {
 				FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
 				DCS:        0xf4,
 			},
-			146,
+			156,
 		},
 		{
 			"deliver 7bit",
@@ -1271,7 +1273,9 @@ func TestUDBlockSize(t *testing.T) {
 			tpdu.TPDU{
 				FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
 			},
-			149,
+			// TS 23.040 9.2.2.3: 143 octets with a TP-RA of 2 octets and no
+			// TP-PID or TP-DCS.
+			163,
 		},
 		{
 			"statusreport 8bit",
@@ -1279,7 +1283,7 @@ func TestUDBlockSize(t *testing.T) {
 				FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
 				DCS:        0xf4,
 			},
-			131,
+			142, // the TP-DCS takes an octet
 		},
 		{
 			"statusreport UCS2",
@@ -1287,7 +1291,7 @@ func TestUDBlockSize(t *testing.T) {
 				FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
 				DCS:        0xe0,
 			},
-			130,
+			142,
 		},
 		{
 			"submit 7bit",
@@ -2124,7 +2128,8 @@ func TestUnmarshalBinary(t *testing.T) {
 					Time:   timestampFrom(0x45, 0x08, 0xC8, 0x30, 0x3A, 0x8C, 0x0E),
 				},
 			},
-			tpdu.NewDecodeError("SmsSubmit.ud.sm", 16, tpdu.ErrUnderflow),
+			// a TP-UDL of 163 septets exceeds the 140 octets of TS 23.040 3.1
+			tpdu.NewDecodeError("SmsSubmit.ud.udl", 15, tpdu.ErrOverlength),
 		},
 		{
 			"SmsSubmit underflow ud",
@@ -3174,6 +3179,194 @@ func TestReservedDCS(t *testing.T) {
 		out, err := d.MarshalBinary()
 		require.NoError(t, err, in)
 		assert.Equal(t, b, out, in)
+	}
+}
+
+// udMaxPattern is a TPDU and the most octets of TP-UD, or TP-CD, it can hold.
+type udMaxPattern struct {
+	name string
+	pdu  tpdu.TPDU
+	max  int
+}
+
+// udMaxPatterns returns the maximum TP-UD octets of each TPDU type.
+//
+// TS 23.040 3.1: "The text messages to be transferred by means of the SM MT
+// or SM MO contain up to 140 octets." 9.2.2.1a: TP-UD "0 to 158" for RP-ERROR
+// and "0 to 159" for RP-ACK. 9.2.2.2a: "0 to 151" and "0 to 152". 9.2.2.3:
+// "0 to 143 ... The maximum guaranteed length of TP-UD is 131 octets. In
+// order to achieve the maximum stated above (143 octets), the TP-RA field
+// must have a length of 2 octets and TP-PID and TP-DCS must not be present."
+// 9.2.2.4: TP-CD "0 to 156 ... The maximum guaranteed length of TP-CD is 146
+// octets. In order to achieve the maximum stated above (156 octets), the
+// TP-DA field must have a length of 2 octets."
+func udMaxPatterns() []udMaxPattern {
+	addr4 := tpdu.Address{Addr: "6391", TOA: 0x91}                  // 4 octets
+	addr12 := tpdu.Address{Addr: "12345678901234567890", TOA: 0x91} // 12 octets
+	return []udMaxPattern{
+		{"submit", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: addr12}, 140},
+		{"deliver", tpdu.TPDU{FirstOctet: 0x00, OA: addr12}, 140},
+		{"deliver report rp-ack", tpdu.TPDU{Direction: tpdu.MO}, 159},
+		{"deliver report rp-error", tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}, 158},
+		{"deliver report pid", tpdu.TPDU{Direction: tpdu.MO, PID: 0x7f}, 159},
+		{"deliver report ext pi", tpdu.TPDU{Direction: tpdu.MO, PIExt: []byte{0}}, 158},
+		{"submit report rp-ack", tpdu.TPDU{FirstOctet: 0x01}, 152},
+		{"submit report rp-error", tpdu.TPDU{FirstOctet: 0x01, RPMessage: tpdu.RPError}, 151},
+		{"status report", tpdu.TPDU{FirstOctet: 0x02}, 143},
+		{"status report ra 4", tpdu.TPDU{FirstOctet: 0x02, RA: addr4}, 141},
+		{"status report ra 12", tpdu.TPDU{FirstOctet: 0x02, RA: addr12}, 133},
+		{"status report pid", tpdu.TPDU{FirstOctet: 0x02, PID: 0x7f}, 142},
+		{"status report pi pid", tpdu.TPDU{FirstOctet: 0x02, PI: tpdu.PiPID}, 142},
+		{"status report ra 12 pid", tpdu.TPDU{FirstOctet: 0x02, RA: addr12, PID: 1}, 132},
+		{"command", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02}, 156},
+		{"command da 4", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02, DA: addr4}, 154},
+		{"command da 12", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02, DA: addr12}, 146},
+	}
+}
+
+// TestUDMaximaOnMarshal checks MarshalBinary rejects TP-UD, or TP-CD, longer
+// than the TPDU type allows, rather than writing an oversized TPDU or
+// wrapping the length octet, and that UDBlockSize gives exactly the room left.
+func TestUDMaximaOnMarshal(t *testing.T) {
+	codings := []struct {
+		name string
+		dcs  tpdu.DCS
+		unit int // octets per UD byte, as 7-bit UD is septets
+	}{
+		{"7bit", 0x00, 7},
+		{"8bit", 0x04, 8},
+		{"ucs2", 0x08, 8},
+		{"compressed", 0x20, 8},
+	}
+	headers := []tpdu.UserDataHeader{
+		nil,
+		{},
+		{{ID: 0, Data: []byte{1, 2, 1}}},
+		{{ID: 1, Data: []byte{1, 2, 3, 4, 5, 6}}},
+	}
+	for _, p := range udMaxPatterns() {
+		for _, c := range codings {
+			for _, udh := range headers {
+				pdu := p.pdu
+				pdu.UDH = udh
+				if pdu.SmsType() == tpdu.SmsCommand {
+					if c.dcs != 0 {
+						continue // a command has no DCS
+					}
+				} else {
+					pdu.DCS = c.dcs
+				}
+				name := fmt.Sprintf("%s %s udh %d", p.name, c.name, len(udh))
+				bs := pdu.UDBlockSize()
+				pdu.UD = make([]byte, bs)
+				b, err := pdu.MarshalBinary()
+				require.NoError(t, err, name)
+				assert.LessOrEqual(t, len(b), 164, name)
+				// the TP-UD takes at most the maximum, and no more than a
+				// unit less, other than for a UCS2 character.
+				d := tpdu.TPDU{Direction: pdu.Direction, RPMessage: pdu.RPMessage}
+				require.NoError(t, d.UnmarshalBinary(b), name)
+				udo := udOctets(pdu)
+				max := p.max
+				if pdu.SmsType() == tpdu.SmsStatusReport && pdu.DCS != 0 {
+					max-- // the TP-DCS is present
+				}
+				assert.LessOrEqual(t, udo, max, name)
+				slack := 1
+				if pdu.SmsType() != tpdu.SmsCommand && pdu.DCS == 0x08 {
+					slack = 2
+				}
+				assert.Greater(t, udo, max-slack, name)
+				// one more is too many
+				pdu.UD = make([]byte, bs+1)
+				if c.dcs == 0x08 && pdu.SmsType() != tpdu.SmsCommand {
+					pdu.UD = make([]byte, bs+2)
+				}
+				_, err = pdu.MarshalBinary()
+				assert.ErrorIs(t, err, tpdu.ErrOverlength, name)
+			}
+		}
+	}
+
+	// An address that cannot be marshalled is taken to be the longest.
+	bad := tpdu.TPDU{FirstOctet: 0x02, RA: tpdu.Address{Addr: "12d4", TOA: 0x91}}
+	long := tpdu.TPDU{FirstOctet: 0x02, RA: tpdu.Address{Addr: "12345678901234567890", TOA: 0x91}}
+	assert.Equal(t, long.UDBlockSize(), bad.UDBlockSize())
+
+	// A length that does not fit in the length octet is rejected rather
+	// than wrapped.
+	s := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x04, UD: make([]byte, 300)}
+	_, err := s.MarshalBinary()
+	assert.Equal(t, tpdu.NewEncodeError("SmsSubmit.ud", tpdu.ErrOverlength), err)
+	s = tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, UD: make([]byte, 300)}
+	_, err = s.MarshalBinary()
+	assert.Equal(t, tpdu.NewEncodeError("SmsSubmit.ud", tpdu.ErrOverlength), err)
+	c := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02, UD: make([]byte, 300)}
+	_, err = c.MarshalBinary()
+	assert.Equal(t, tpdu.NewEncodeError("SmsCommand.ud", tpdu.ErrOverlength), err)
+}
+
+// udOctets returns the number of octets of the TP-UD, or TP-CD, of the TPDU,
+// or -1 if it cannot be marshalled.
+func udOctets(t tpdu.TPDU) int {
+	// with PiUDL a report has a TP-UDL, and a TP-PI, even with no UD.
+	t.PI |= tpdu.PiUDL
+	b, err := t.MarshalBinary()
+	if err != nil {
+		return -1
+	}
+	t.UD, t.UDH = nil, nil
+	e, err := t.MarshalBinary()
+	if err != nil {
+		return -1
+	}
+	return len(b) - len(e)
+}
+
+// TestUDMaximaOnUnmarshal checks UnmarshalBinary rejects TP-UD, or TP-CD,
+// longer than the TPDU type allows, so every TPDU it accepts can be
+// marshalled again.
+func TestUDMaximaOnUnmarshal(t *testing.T) {
+	patterns := []struct {
+		name string
+		dirn tpdu.Direction
+		ok   string
+		bad  string
+	}{
+		{"deliver 8bit", tpdu.MT,
+			dlvHead + " 04 " + scts + " 8c " + strings.Repeat("41", 140),
+			dlvHead + " 04 " + scts + " 8d " + strings.Repeat("41", 141)},
+		{"deliver 7bit", tpdu.MT,
+			dlvHead + " 00 " + scts + " a0 " + strings.Repeat("00", 140),
+			dlvHead + " 00 " + scts + " a1 " + strings.Repeat("00", 141)},
+		{"submit", tpdu.MO,
+			"01 00 00 91 00 04 8c " + strings.Repeat("41", 140),
+			"01 00 00 91 00 04 8d " + strings.Repeat("41", 141)},
+		{"status report", tpdu.MT,
+			"02 00 00 91 00000000000000 00000000000000 00 04 a3 " + strings.Repeat("00", 143),
+			"02 00 00 91 00000000000000 00000000000000 00 04 a4 " + strings.Repeat("00", 144)},
+		{"status report dcs", tpdu.MT,
+			"02 00 00 91 00000000000000 00000000000000 00 06 04 8e " + strings.Repeat("00", 142),
+			"02 00 00 91 00000000000000 00000000000000 00 06 04 8f " + strings.Repeat("00", 143)},
+		{"command", tpdu.MO,
+			"02 00 00 00 00 00 91 9c " + strings.Repeat("00", 156),
+			"02 00 00 00 00 00 91 9d " + strings.Repeat("00", 157)},
+		{"deliver report", tpdu.MO,
+			"00 04 b5 " + strings.Repeat("00", 159),
+			"00 04 b6 " + strings.Repeat("00", 160)},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			d := tpdu.TPDU{Direction: p.dirn}
+			in := unhex(t, p.ok)
+			require.NoError(t, d.UnmarshalBinary(in))
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, b)
+			err = d.UnmarshalBinary(unhex(t, p.bad))
+			assert.ErrorIs(t, err, tpdu.ErrOverlength)
+		}
+		t.Run(p.name, f)
 	}
 }
 

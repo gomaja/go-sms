@@ -364,54 +364,106 @@ func (t *TPDU) SetSmsType(st SmsType) error {
 }
 
 // UDBlockSize returns the maximum size of a block of UserData that can fit in
-// this TPDU.
+// this TPDU, given its UDH, which is the most UD that MarshalBinary accepts.
 //
 // The interpretation of the size depends on the encoding - for 7bit encoding
-// it is the number of septets. For all other encodings it is the number of
-// octets.
+// it is the number of septets. For all other encodings, including compressed
+// data and the TP-CD of an SMS-COMMAND, it is the number of octets, and for
+// UCS2 it is even.
+//
+// The size is negative if the UDH alone does not fit in the TPDU.
 func (t *TPDU) UDBlockSize() int {
-	var bs int
+	return t.blockSize(udhOctets(t.UDH))
+}
+
+// udhOctets returns the number of octets taken in the TP-UD by the UDH,
+// including its UDHL, which is none for a nil UDH.
+func udhOctets(udh UserDataHeader) int {
+	if udh == nil {
+		return 0
+	}
+	return udh.UDHL() + 1
+}
+
+// blockSize returns the room left for the short message in the TP-UD, in
+// septets for 7bit encoding and in octets otherwise, by a header that takes
+// udho octets.
+func (t *TPDU) blockSize(udho int) int {
+	room := t.maxUDOctets()
+	switch t.udCoding() {
+	case Alpha7Bit:
+		// 3GPP TS 23.040 Section 9.2.3.16: the TP-UDL counts the septets
+		// of the header, including its fill bits, and the short message,
+		// and the octets they take must fit the room.
+		return room*8/7 - (udho*8+6)/7
+	case AlphaUCS2:
+		// 3GPP TS 23.040 Section 9.2.3.24.1: "A UCS2 character shall not
+		// be split in the middle".
+		return (room - udho) &^ 0x1
+	default:
+		return room - udho
+	}
+}
+
+// maxUDOctets returns the most octets the TP-UD, or the TP-CD of an
+// SMS-COMMAND, including any header, can take in the TPDU.
+//
+// For SMS-SUBMIT and SMS-DELIVER, 3GPP TS 23.040 Section 3.1 says "The text
+// messages to be transferred by means of the SM MT or SM MO contain up to 140
+// octets", as does 3GPP TS 23.038 Section 4.
+//
+// For the others it is the TP-UD, or TP-CD, of the layout in 3GPP TS 23.040
+// Section 9.2.2: "0 to 159" for an SMS-DELIVER-REPORT for RP-ACK and "0 to
+// 158" for RP-ERROR (9.2.2.1a), and "0 to 152" and "0 to 151" for an
+// SMS-SUBMIT-REPORT (9.2.2.2a). The layouts show a TP-PI of one octet, and
+// any extension octets are taken from the TP-UD.
+//
+// For an SMS-STATUS-REPORT, Section 9.2.2.3 gives "0 to 143" and says "In
+// order to achieve the maximum stated above (143 octets), the TP-RA field
+// must have a length of 2 octets and TP-PID and TP-DCS must not be present".
+// For an SMS-COMMAND, Section 9.2.2.4 gives "0 to 156" and says "In order to
+// achieve the maximum stated above (156 octets), the TP-DA field must have a
+// length of 2 octets". So each octet of those fields is taken from the TP-UD
+// or TP-CD. Section 9.2.3.21 gives a TP-CD maximum of 157 octets, which no
+// TP-DA, of at least 2 octets, leaves room for.
+func (t *TPDU) maxUDOctets() int {
 	switch t.SmsType() {
 	case SmsSubmit, SmsDeliver:
-		bs = 140
-	case SmsCommand:
-		bs = 146 // conservative
-		// precise answer depends on variable length fields...
-	case SmsSubmitReport:
-		if t.RPMessage == RPError {
-			bs = 151
-		} else {
-			bs = 152
-		}
+		return MaxUDL
 	case SmsDeliverReport:
 		if t.RPMessage == RPError {
-			bs = 158
-		} else {
-			bs = 159
+			return 158 - len(t.PIExt)
 		}
+		return 159 - len(t.PIExt)
+	case SmsSubmitReport:
+		if t.RPMessage == RPError {
+			return 151 - len(t.PIExt)
+		}
+		return 152 - len(t.PIExt)
 	case SmsStatusReport:
-		bs = 131 // conservative
-		// precise answer depends on variable length fields...
-	}
-	alpha := t.udCoding()
-	udhl := t.UDHL()
-	if alpha == Alpha7Bit {
-		// work in septets
-		bs = (bs * 8) / 7
-		if udhl == 0 {
-			return bs
+		room := 143 - (addressOctets(&t.RA) - 2) - len(t.PIExt)
+		if t.PI.PID() || t.PID != 0 {
+			room--
 		}
-		// remove septets used by UDH, including UDHL and fill bits
-		bs -= ((udhl+1)*8 + 6) / 7
-		return bs
+		if t.PI.DCS() || t.DCS != 0 {
+			room--
+		}
+		return room
+	case SmsCommand:
+		return 156 - (addressOctets(&t.DA) - 2)
+	default:
+		return 0
 	}
-	if udhl > 0 {
-		bs -= (udhl + 1)
+}
+
+// addressOctets returns the number of octets the address takes in a TPDU,
+// which is the maximum of 12 if it cannot be marshalled.
+func addressOctets(a *Address) int {
+	b, err := a.MarshalBinary()
+	if err != nil {
+		return 12
 	}
-	if alpha == AlphaUCS2 {
-		bs &^= 0x1
-	}
-	return bs
+	return len(b)
 }
 
 // UDHI returns the User Data Header Indicator bit from the SMS TPDU first
@@ -1046,6 +1098,9 @@ func (t *TPDU) decodeUserData(src []byte) (int, error) {
 		// length is septets - convert to octets
 		udl = (sml7*7 + 7) / 8
 	}
+	if udl > t.maxUDOctets() {
+		return 0, NewDecodeError("udl", 0, ErrOverlength)
+	}
 	if len(src) < ri+udl {
 		return 0, NewDecodeError("sm", ri, ErrUnderflow)
 	}
@@ -1164,6 +1219,9 @@ func (t *TPDU) encodeUserData() (b []byte, err error) {
 		// udl is in octets
 		udl = udl + len(udh)
 	}
+	if len(udh)+len(ud) > t.maxUDOctets() {
+		return nil, ErrOverlength
+	}
 	b = make([]byte, 0, 1+len(udh)+len(ud))
 	b = append(b, byte(udl))
 	b = append(b, udh...)
@@ -1171,7 +1229,8 @@ func (t *TPDU) encodeUserData() (b []byte, err error) {
 	return b, nil
 }
 
-// MaxUDL is the maximum number of octets that can be encoded into the UD.
+// MaxUDL is the maximum number of octets of the TP-UD of an SMS-SUBMIT or
+// SMS-DELIVER, including any header, as defined in 3GPP TS 23.040 Section 3.1.
 // Note that for 7bit encoding this can result in up to 160 septets.
 const MaxUDL = 140
 
