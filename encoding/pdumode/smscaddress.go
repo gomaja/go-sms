@@ -42,7 +42,12 @@ func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 //
 // It returns the number of bytes read from the source, and any error detected
 // while decoding.
+//
+// The address is cleared first, so a zero length octet, which selects the
+// default SMSC, and any error both leave it empty rather than holding a
+// previously decoded address.
 func (a *SMSCAddress) UnmarshalBinary(src []byte) (int, error) {
+	*a = SMSCAddress{}
 	if len(src) < 1 {
 		return 0, tpdu.NewDecodeError("length", 0, tpdu.ErrUnderflow)
 	}

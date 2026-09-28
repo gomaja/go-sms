@@ -159,6 +159,15 @@ func TestSMSCAddressUnmarshalBinary(t *testing.T) {
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.n, n)
 			assert.Equal(t, p.out, a)
+
+			// Decoding into a used value must give the same result.
+			u := pdumode.SMSCAddress{
+				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+			}
+			n, err = u.UnmarshalBinary(p.in)
+			assert.Equal(t, p.err, err)
+			assert.Equal(t, p.n, n)
+			assert.Equal(t, p.out, u)
 		}
 		t.Run(p.name, f)
 	}

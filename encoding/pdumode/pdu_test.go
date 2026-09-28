@@ -101,6 +101,75 @@ func TestUnmarshalHexString(t *testing.T) {
 	}
 }
 
+// TestUnmarshalReuse checks that decoding into a used PDU gives the same
+// result as decoding into a new one, and that a failed decode leaves the PDU
+// empty rather than holding the previous message.
+func TestUnmarshalReuse(t *testing.T) {
+	patterns := []testPattern{
+		{
+			"default smsc",
+			"000102",
+			&pdumode.SMSCAddress{},
+			[]byte{0x01, 0x02},
+			nil,
+		},
+		{
+			"smsc",
+			"07913619070020390102",
+			&pdumode.SMSCAddress{
+				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+			},
+			[]byte{0x01, 0x02},
+			nil,
+		},
+		{
+			"empty",
+			"",
+			&pdumode.SMSCAddress{},
+			nil,
+			tpdu.NewDecodeError("length", 0, tpdu.ErrUnderflow),
+		},
+		{
+			"underflow",
+			"0791361907",
+			&pdumode.SMSCAddress{},
+			nil,
+			tpdu.NewDecodeError("addr", 2, tpdu.ErrUnderflow),
+		},
+	}
+	used := func() pdumode.PDU {
+		return pdumode.PDU{
+			SMSC: pdumode.SMSCAddress{
+				tpdu.Address{Addr: "61409865629", TOA: 0x91},
+			},
+			TPDU: []byte{0xde, 0xad},
+		}
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			want := pdumode.PDU{SMSC: *p.smsc, TPDU: p.tpdu}
+			b, err := hex.DecodeString(p.pdu)
+			require.NoError(t, err)
+
+			pdu := used()
+			err = pdu.UnmarshalBinary(b)
+			assert.Equal(t, p.err, err)
+			assert.Equal(t, want, pdu)
+
+			pdu = used()
+			err = pdu.UnmarshalHexString(p.pdu)
+			assert.Equal(t, p.err, err)
+			assert.Equal(t, want, pdu)
+		}
+		t.Run(p.name, f)
+	}
+
+	pdu := used()
+	err := pdu.UnmarshalHexString("nothex")
+	assert.Equal(t, hex.InvalidByteError('n'), err)
+	assert.Equal(t, pdumode.PDU{}, pdu)
+}
+
 func TestMarshalBinary(t *testing.T) {
 	patterns := []testPattern{
 		{
