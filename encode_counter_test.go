@@ -138,6 +138,49 @@ func TestEncoderMRByType(t *testing.T) {
 	}
 }
 
+// A nil counter, whether given per call, left unset in a zero value or
+// literal Encoder, or set on an Encoder after NewEncoder, stands for the
+// shared counter, as it does for NewEncoder, rather than a fixed reference
+// of 1 and the TP-MR of the template. Consecutive concatenated messages
+// then get different references, as 3GPP TS 23.040 Section 9.2.3.24.1
+// requires, and the TP-MR goes on incrementing (Section 9.2.3.6).
+func TestEncoderNilCounters(t *testing.T) {
+	cleared := sms.NewEncoder(sms.AsSubmit)
+	cleared.MsgCount = nil
+	cleared.ConcatRef = nil
+	patterns := []struct {
+		name    string
+		e       *sms.Encoder
+		options []sms.EncoderOption
+	}{
+		{"per call nil counters", sms.NewEncoder(sms.AsSubmit),
+			[]sms.EncoderOption{sms.WithMR(nil), sms.WithConcatRef(nil)}},
+		{"per call nil counters over given ones",
+			sms.NewEncoder(sms.AsSubmit, sms.WithMR(&sms.Counter{}), sms.WithConcatRef(&sms.Counter{})),
+			[]sms.EncoderOption{sms.WithMR(nil), sms.WithConcatRef(nil)}},
+		{"zero value", &sms.Encoder{}, []sms.EncoderOption{sms.AsSubmit}},
+		{"literal", &sms.Encoder{MsgCount: nil, ConcatRef: nil}, []sms.EncoderOption{sms.AsSubmit}},
+		{"cleared after NewEncoder", cleared, nil},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			a, err := p.e.Encode(longMsg, p.options...)
+			require.NoError(t, err)
+			b, err := p.e.Encode(longMsg, p.options...)
+			require.NoError(t, err)
+			assert.NotEqual(t, concatRef(t, a), concatRef(t, b))
+			assert.Equal(t, a[0].MR+1, a[1].MR)
+			assert.NotEqual(t, a[0].MR, b[0].MR)
+			// both are drawn from the shared counters
+			c, err := sms.Encode(longMsg)
+			require.NoError(t, err)
+			assert.Equal(t, (concatRef(t, b)+1)&0xff, concatRef(t, c))
+			assert.Equal(t, b[1].MR+1, c[0].MR)
+		}
+		t.Run(p.name, f)
+	}
+}
+
 func TestNewCounter(t *testing.T) {
 	c := sms.NewCounter(254)
 	assert.Equal(t, 254, c.Read())

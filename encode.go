@@ -42,6 +42,10 @@ var (
 // An Encoder is safe for concurrent use by multiple goroutines, provided its
 // fields are not changed once it is in use and its counters are themselves
 // safe for concurrent use, as Counter is.
+//
+// The zero value is an Encoder of SMS-DELIVER TPDUs, with the default
+// options, that draws from the counters shared by Encoders, as NewEncoder
+// describes.
 type Encoder struct {
 	// options for encoding UD
 	eopts []tpdu.UDEncodeOption
@@ -55,10 +59,13 @@ type Encoder struct {
 	err error
 
 	// MsgCount provides the TP-MR of each SMS-SUBMIT and SMS-COMMAND TPDU
-	// encoded.
+	// encoded. If nil, the TP-MR is drawn from the counter shared by
+	// Encoders, as NewEncoder describes.
 	MsgCount tpdu.Counter
 
 	// ConcatRef provides the reference of each concatenated message encoded.
+	// If nil, the reference is drawn from the counter shared by Encoders, as
+	// NewEncoder describes.
 	ConcatRef tpdu.Counter
 }
 
@@ -157,6 +164,17 @@ func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, erro
 	}
 	if e.err != nil {
 		return nil, e.err
+	}
+	// A nil counter, from a per call option, a zero value or literal
+	// Encoder, or a field cleared after NewEncoder, is the shared counter,
+	// as for NewEncoder, rather than the fixed reference and TP-MR of the
+	// template that tpdu.TPDU.Segment uses without one. e is a copy, so the
+	// Encoder is not changed.
+	if e.MsgCount == nil {
+		e.MsgCount = sharedMR
+	}
+	if e.ConcatRef == nil {
+		e.ConcatRef = sharedConcatRef
 	}
 	pdus, err := e.segment(msg)
 	if err != nil {

@@ -99,7 +99,8 @@ var (
 
 // WithMR specifies the counter that provides the TP-MR of each SMS-SUBMIT
 // and SMS-COMMAND TPDU. A TPDU of another type keeps the TP-MR of the
-// template, as described for NewEncoder.
+// template, as described for NewEncoder. A nil counter selects the counter
+// shared by Encoders.
 //
 // The counter must be safe for concurrent use if the Encoder is used
 // concurrently, as Counter is.
@@ -116,7 +117,8 @@ func (o mrOption) ApplyEncoderOption(e *Encoder) {
 }
 
 // WithConcatRef specifies the counter that provides the reference of each
-// concatenated message.
+// concatenated message. A nil counter selects the counter shared by
+// Encoders.
 //
 // The counter must be safe for concurrent use if the Encoder is used
 // concurrently, as Counter is.
