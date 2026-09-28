@@ -10,47 +10,88 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io"
 	"os"
 
 	"github.com/gomaja/go-sms"
+	"github.com/gomaja/go-sms/encoding/gsm7/charset"
 	"github.com/gomaja/go-sms/encoding/tpdu"
 )
 
 func main() {
-	var msg string
-	var nli int
-	flag.StringVar(&msg, "message", "", "The message to encode")
-	flag.IntVar(&nli, "language", 0, "The NLI of a character set to use in addition to the default")
-	flag.Usage = usage
-	flag.Parse()
-	if msg == "" {
-		flag.Usage()
-		os.Exit(1)
-	}
-	c, err := NewCount(msg, nli)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	fmt.Print(c)
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// NewCount creates the SMS count statistics for a message.
-func NewCount(msg string, nli int) (Count, error) {
-	options := []sms.EncoderOption(nil)
-	if nli != 0 {
-		options = append(options, sms.WithCharset(nli))
+// run counts the message given by the arguments, writes the count to stdout,
+// and returns the exit status: 0 on success, 1 if the message cannot be
+// encoded, and 2 if the arguments are not valid.
+func run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("smscounter", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	msg := fs.String("message", "", "The message to encode")
+	nli := fs.Int("language", 0, fmt.Sprintf(
+		"The NLI of a character set to use in addition to the default, from %d to %d",
+		charset.Start, charset.End-1))
+	fs.Usage = func() { usage(fs) }
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
+	if *msg == "" || fs.NArg() != 0 {
+		fs.Usage()
+		return 2
+	}
+	c, err := NewCount(*msg, *nli)
+	if errors.Is(err, errInvalidLanguage) {
+		warnf(stderr, "%v", err)
+		return 2
+	}
+	if err != nil {
+		warnf(stderr, "%v", err)
+		return 1
+	}
+	if _, err := fmt.Fprint(stdout, c); err != nil {
+		warnf(stderr, "%v", err)
+		return 1
+	}
+	return 0
+}
+
+// warnf writes a diagnostic to stderr, where a failed write can be reported
+// nowhere else.
+func warnf(stderr io.Writer, format string, args ...interface{}) {
+	_, _ = fmt.Fprintf(stderr, "smscounter: "+format+"\n", args...)
+}
+
+// errInvalidLanguage indicates an NLI that identifies no national language
+// table, as 3GPP TS 23.038 Section 6.2.1.2.4 defines them from 1 to 13.
+var errInvalidLanguage = errors.New("invalid language")
+
+// NewCount creates the SMS count statistics for a message.
+//
+// The nli is 0, for the default character set only, or the National Language
+// Identifier of a character set to use in addition to it.
+func NewCount(msg string, nli int) (Count, error) {
 	c := Count{}
+	options := []sms.EncoderOption(nil)
+	switch {
+	case nli == 0:
+	case nli >= charset.Start && nli < charset.End:
+		options = append(options, sms.WithCharset(nli))
+	default:
+		return c, fmt.Errorf("%w %d: the NLI must be from %d to %d",
+			errInvalidLanguage, nli, charset.Start, charset.End-1)
+	}
 	pdus, err := sms.Encode([]byte(msg), options...)
 	if err != nil {
 		return c, err
 	}
 	alpha := pdus[0].Alphabet()
-	lastLen := len(pdus[len(pdus)-1].UD) // valid for 7bit as it is unpacked into octets.
-	pm := pdus[0].UDBlockSize()
+	// The UD is septets for 7bit, as it is unpacked, and octets otherwise,
+	// two for each UCS-2 code unit.
+	unit := 1
 	switch alpha {
 	case tpdu.Alpha7Bit:
 		if hasEscapes(pdus) {
@@ -62,14 +103,18 @@ func NewCount(msg string, nli int) (Count, error) {
 		c.Encoding = "8BIT"
 	case tpdu.AlphaUCS2:
 		c.Encoding = "UCS-2"
-		lastLen /= 2 // UCS-2 code points
-		pm /= 2      // UCS-2 code points
+		unit = 2
 	}
-	c.Pdulen = pm
-	c.Llen = lastLen
+	c.Pdulen = pdus[0].UDBlockSize() / unit
+	c.Llen = len(pdus[len(pdus)-1].UD) / unit
 	c.Remaining = c.Pdulen - c.Llen
 	c.Messages = len(pdus)
-	c.Tlen = (pm * (c.Messages - 1)) + lastLen
+	// A segment may be a unit short of the block size, as an escape sequence
+	// or a UCS-2 surrogate pair is not split between segments (3GPP TS
+	// 23.040 Section 9.2.3.24.1), so the total is counted segment by segment.
+	for _, p := range pdus {
+		c.Tlen += len(p.UD) / unit
+	}
 	return c, nil
 }
 
@@ -84,14 +129,14 @@ func hasEscapes(pdus []tpdu.TPDU) bool {
 	return false
 }
 
-func usage() {
-	fmt.Fprintf(os.Stderr, "smscounter determimes the number of SMS-Submit TPDUs "+
+func usage(fs *flag.FlagSet) {
+	_, _ = fmt.Fprintf(fs.Output(), "smscounter determines the number of SMS-Submit TPDUs "+
 		"required to encode a given message.\n"+
 		"The message is encoded using the GSM7 default alphabet, or if necessary\n"+
 		"an optionally specified character set, or failing those as UCS-2.\n"+
 		"If the message is too long for a single PDU then it is split into several.\n\n"+
-		"Usage: smscounter -message <message>\n")
-	flag.PrintDefaults()
+		"Usage: smscounter -message <message> [-language <nli>]\n")
+	fs.PrintDefaults()
 }
 
 // Count contains the statistics related to encoding a message in SMS-SUBMIT TPDUs.
