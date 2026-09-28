@@ -19,7 +19,7 @@ func TestNewAddress(t *testing.T) {
 	a := tpdu.NewAddress()
 	assert.Equal(t, uint8(0x80), a.TOA)
 	a = tpdu.NewAddress(tpdu.FromNumber("1234"))
-	assert.Equal(t, uint8(0x91), a.TOA)
+	assert.Equal(t, uint8(0x81), a.TOA)
 	assert.Equal(t, "1234", a.Addr)
 	a = tpdu.NewAddress(tpdu.FromNumber("+4321"))
 	assert.Equal(t, uint8(0x91), a.TOA)
@@ -374,17 +374,44 @@ func TestAddressNumberingPlan(t *testing.T) {
 	}
 }
 
+// TestAddressSetNumber checks the type of address SetNumber gives a number,
+// which is the default 3GPP TS 27.005 Section 3.1 gives <toda> and <tosca>:
+// "when first character of <da> is + (IRA 43) default is 145, otherwise
+// default is 129".
 func TestAddressSetNumber(t *testing.T) {
-	a := tpdu.NewAddress()
-	assert.Equal(t, uint8(0x80), a.TOA)
-	a.SetNumber("1234")
-	assert.Equal(t, uint8(0x91), a.TOA)
-	assert.Equal(t, "1234", a.Addr)
-	assert.Equal(t, "+1234", a.Number())
-	a.SetNumber("+4321")
-	assert.Equal(t, uint8(0x91), a.TOA)
-	assert.Equal(t, "4321", a.Addr)
-	assert.Equal(t, "+4321", a.Number())
+	patterns := []struct {
+		name   string
+		in     tpdu.Address
+		number string
+		toa    byte
+		addr   string
+	}{
+		{"international", tpdu.NewAddress(), "+4321", 0x91, "4321"},
+		{"unknown", tpdu.NewAddress(), "1234", 0x81, "1234"},
+		{"short code", tpdu.NewAddress(), "12345", 0x81, "12345"},
+		{"national with trunk prefix", tpdu.NewAddress(), "0412345678", 0x81, "0412345678"},
+		{"plus only", tpdu.NewAddress(), "+", 0x91, ""},
+		{"empty", tpdu.NewAddress(), "", 0x81, ""},
+		// the whole TOA is set, including bit 7 of a zero Address, and any
+		// type and plan it held before.
+		{"zero address international", tpdu.Address{}, "+4321", 0x91, "4321"},
+		{"zero address unknown", tpdu.Address{}, "1234", 0x81, "1234"},
+		{"international to unknown", tpdu.Address{TOA: 0x91, Addr: "4321"}, "1234", 0x81, "1234"},
+		{"alphanumeric to international", tpdu.Address{TOA: 0xd0, Addr: "Shop"}, "+4321", 0x91, "4321"},
+		{"reserved plan to unknown", tpdu.Address{TOA: 0xff}, "1234", 0x81, "1234"},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			a := p.in
+			a.SetNumber(p.number)
+			assert.Equal(t, p.toa, a.TOA)
+			assert.Equal(t, p.addr, a.Addr)
+			assert.Equal(t, p.number, a.Number())
+			b := tpdu.NewAddress(tpdu.FromNumber(p.number))
+			assert.Equal(t, a, b)
+		}
+		t.Run(p.name, f)
+	}
 }
 
 func TestAddressTypeOfNumber(t *testing.T) {

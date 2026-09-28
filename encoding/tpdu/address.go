@@ -3,6 +3,7 @@
 package tpdu
 
 import (
+	"strings"
 	"unicode/utf8"
 
 	"github.com/gomaja/go-sms/encoding/gsm7"
@@ -29,10 +30,9 @@ func NewAddress(options ...AddressOption) Address {
 	return a
 }
 
-// FromNumber creates an AddressOption thats sets the address to the
-// international number.
-//
-// The number may be optionally prefixed with '+'.
+// FromNumber creates an AddressOption that sets the address to the number,
+// as SetNumber does, so the number is international only if it starts with
+// '+'.
 func FromNumber(number string) AddressOption {
 	return func(a Address) Address {
 		a.SetNumber(number)
@@ -184,14 +184,31 @@ func (a Address) Number() string {
 	return a.Addr
 }
 
-// SetNumber sets the address to the international number.
+// SetNumber sets the address to the number, and its TOA to the type of
+// address 3GPP TS 27.005 Section 3.1 gives a number by default: "when first
+// character of <da> is + (IRA 43) default is 145, otherwise default is 129".
 //
-// The number may be optionally prefixed with '+'.
+// A number that starts with '+' is an international number, and is set
+// without the '+', with a TOA of 145, 0x91: TonInternational and NpISDN.
+//
+// Any other number, such as a national number, one with a trunk prefix, or
+// a short code, is set as it is, with a TOA of 129, 0x81: TonUnknown and
+// NpISDN. 3GPP TS 23.040 Section 9.1.2.5 has the unknown type of number used
+// "when the user or network has no a priori information about the numbering
+// plan. In this case, the Address-Value field is organized according to the
+// network dialling plan, e.g. prefix or escape digits might be present." The
+// same digits sent as an international number would be another number.
+//
+// For another type of address, set the TOA, or use SetTypeOfNumber and
+// SetNumberingPlan, after SetNumber.
 func (a *Address) SetNumber(number string) {
-	if len(number) > 0 && number[0] == '+' {
+	ton := TonUnknown
+	if strings.HasPrefix(number, "+") {
 		number = number[1:]
+		ton = TonInternational
 	}
-	a.SetTypeOfNumber(TonInternational)
+	a.TOA = 0x80 // bit 7 of the TOA is always 1 (Section 9.1.2.5)
+	a.SetTypeOfNumber(ton)
 	a.SetNumberingPlan(NpISDN)
 	a.Addr = number
 }

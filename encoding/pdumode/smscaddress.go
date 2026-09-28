@@ -13,7 +13,10 @@ import (
 // marshalled differently, hence the subtype.
 //
 // The Type-of-number should typically be TonNational or TonInternational, but
-// that is not enforced.
+// that is not enforced. SetNumber, promoted from the Address, gives a number
+// that starts with '+' a TOA of 145, 0x91, international, and any other a
+// TOA of 129, 0x81, of unknown type, the defaults 3GPP TS 27.005 Section 3.1
+// gives <tosca>.
 //
 // The NumberingPlan should typically be NpISDN, but that is not enforced
 // either.
@@ -67,7 +70,8 @@ func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 	dst[0] = byte(l)
 	// Bit 7 of the TOA is always 1 (3GPP TS 23.040 Section 9.1.2.5,
 	// Type-of-Address figure), as in the 145 and 129 defaults for <tosca> of
-	// 3GPP TS 27.005 Section 3.1. SetNumber does not set it on a zero value.
+	// 3GPP TS 27.005 Section 3.1, which SetNumber sets, but a TOA set
+	// directly may lack it.
 	dst[1] = a.TOA | 0x80
 	dst = append(dst, addr...)
 	return dst, nil

@@ -28,7 +28,9 @@ The core TPDU and field encoders track 3GPP TS 23.040 V19.0.0 and
 3GPP TS 23.038 V20.0.0. PDU mode framing for modem exchange tracks
 3GPP TS 27.005 V19.0.0. International number type handling follows the
 address format in 3GPP TS 23.040, with ISDN/E.164 numbering-plan values
-aligned to ITU-T E.164 (02/2026).
+aligned to ITU-T E.164 (02/2026). A number given as a string is international
+only if it starts with '+', and is otherwise of unknown type, following the
+default type of address of 3GPP TS 27.005 Section 3.1.
 
 The package does not implement the RP/CP transport procedures in
 3GPP TS 24.011, SMS over IP in 3GPP TS 24.341, or the `sms:` URI scheme in
@@ -243,7 +245,9 @@ terminating.
 The behaviour of the core API functions can be altered for other use cases
 using optional parameters.
 
-e.g. to specify the destination number for a SMS-SUBMIT message:
+e.g. to specify the destination number for a SMS-SUBMIT message, here a
+short code, which, having no '+', is sent with a type of number of unknown
+rather than as an international number (3GPP TS 27.005 Section 3.1):
 
 ```go
 func to() ([]tpdu.TPDU, error) {
@@ -285,8 +289,8 @@ Option | Category | Description
 *WithOriginator(originator)*|Collect|Identify the originator of an SMS-SUBMIT, which Collect requires
 *WithTemplate(tpdu)*|Encode|Use the provided TPDU as the template for encoded TPDUs.
 *WithTemplateOption(tpdu.Option)*|Encode|Apply the provided option to the template TPDU during encoding.
-*To(number)*|Encode|Set the DA of the encoded TPDU to the number provided
-*From(number)*|Encode|Set the OA of the encoded TPDU to the number provided
+*To(number)*|Encode|Set the DA of the encoded TPDU to the number provided, which is international (TOA 0x91) if it starts with '+', and otherwise of unknown type (TOA 0x81), as for a short code or a national number
+*From(number)*|Encode|Set the OA of the encoded TPDU to the number provided, with the type of address given as for *To*
 *AsSubmit*|Encode|Encode the TPDU as a SMS-SUBMIT (default for *sms.Encode*)
 *AsDeliver*|Encode|Encode the TPDU as a SMS-DELIVER (default for *sms.NewEncoder*)
 *As8Bit*|Encode|Force the encoding of user data as 8-bit
@@ -328,7 +332,7 @@ Creating an SMS to send:
 ```shell
 $ smssubmit -number 12345 -message "Hello world"
 Submit TPDU:
-010105912143f500000bc8329bfd06dddf723619
+010105812143f500000bc8329bfd06dddf723619
 ```
 
 Long messages are split into a concatenated message spanning several TPDUs.
@@ -338,11 +342,11 @@ drawn at random by each run:
 ```shell
 $ smssubmit -number 12345 -message "this is a very long message that does not fit in a single SMS message, at least it will if I keep adding more to it as 160 characters is more than you might think 😁"
 Submit TPDU 1:
-410105912143f500088c050003ac0301007400680069007300200069007300200061002000760065007200790020006c006f006e00670020006d0065007300730061006700650020007400680061007400200064006f006500730020006e006f0074002000660069007400200069006e00200061002000730069006e0067006c006500200053004d00530020006d0065007300730061
+410105812143f500088c050003ac0301007400680069007300200069007300200061002000760065007200790020006c006f006e00670020006d0065007300730061006700650020007400680061007400200064006f006500730020006e006f0074002000660069007400200069006e00200061002000730069006e0067006c006500200053004d00530020006d0065007300730061
 Submit TPDU 2:
-410205912143f500088c050003ac030200670065002c0020006100740020006c0065006100730074002000690074002000770069006c006c002000690066002000490020006b00650065007000200061006400640069006e00670020006d006f0072006500200074006f0020006900740020006100730020003100360030002000630068006100720061006300740065007200730020
+410205812143f500088c050003ac030200670065002c0020006100740020006c0065006100730074002000690074002000770069006c006c002000690066002000490020006b00650065007000200061006400640069006e00670020006d006f0072006500200074006f0020006900740020006100730020003100360030002000630068006100720061006300740065007200730020
 Submit TPDU 3:
-410305912143f5000844050003ac0303006900730020006d006f007200650020007400680061006e00200079006f00750020006d00690067006800740020007400680069006e006b0020d83dde01
+410305812143f5000844050003ac0303006900730020006d006f007200650020007400680061006e00200079006f00750020006d00690067006800740020007400680069006e006b0020d83dde01
 ```
 
 The -language option, a National Language Identifier from 1 to 13, makes
@@ -378,7 +382,7 @@ smsdeliver: incomplete message from +61503975312, reference 192: have segments 1
 Decoding the Submit TPDU created above:
 
 ```shell
-$ smsdecode -o 010105912143f500000bc8329bfd06dddf723619
+$ smsdecode -o 010105812143f500000bc8329bfd06dddf723619
 TPDU: SMS-SUBMIT
 TP-MTI: 0x01 SMS-SUBMIT
 TP-RD: false
@@ -387,7 +391,7 @@ TP-RP: false
 TP-UDHI: false
 TP-SRR: false
 TP-MR: 1
-TP-DA: +12345
+TP-DA: 12345
 TP-PID: 0x00
 TP-DCS: 0x00 7bit
 TP-VP: Not Present
@@ -443,7 +447,7 @@ TP-UD: 00000000  00 74 00 68 00 69 00 73  00 20 00 69 00 73 00 20  |.t.h.i.s. .i
 Decoding the second Submit TPDU in the concatenated message above:
 
 ```shell
-$ smsdecode -o 410205912143f500088c050003ac030200670065002c0020006100740020006c0065006100730074002000690074002000770069006c006c002000690066002000490020006b00650065007000200061006400640069006e00670020006d006f0072006500200074006f0020006900740020006100730020003100360030002000630068006100720061006300740065007200730020
+$ smsdecode -o 410205812143f500088c050003ac030200670065002c0020006100740020006c0065006100730074002000690074002000770069006c006c002000690066002000490020006b00650065007000200061006400640069006e00670020006d006f0072006500200074006f0020006900740020006100730020003100360030002000630068006100720061006300740065007200730020
 TPDU: SMS-SUBMIT
 TP-MTI: 0x01 SMS-SUBMIT
 TP-RD: false
@@ -452,7 +456,7 @@ TP-RP: false
 TP-UDHI: true
 TP-SRR: false
 TP-MR: 2
-TP-DA: +12345
+TP-DA: 12345
 TP-PID: 0x00
 TP-DCS: 0x08 UCS-2
 TP-VP: Not Present

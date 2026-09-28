@@ -56,6 +56,7 @@ func TestRun(t *testing.T) {
 		stderr string
 	}{
 		{"single", []string{"-number", "12345", "-message", "Hello world"}, 0, "Hello world", 0, ""},
+		{"international", []string{"-number", "+15551234567", "-message", "Hello world"}, 0, "Hello world", 0, ""},
 		{"concatenated", []string{"-number", "12345", "-message", long}, 0, long, 0, ""},
 		{"language", []string{"-number", "12345", "-message", "hi ş", "-language", "1"}, 0, "hi ş", 1, ""},
 		{"bad number", []string{"-number", "12x45", "-message", "hi"}, 1, "", 0, "invalid digit"},
@@ -84,7 +85,15 @@ func TestRun(t *testing.T) {
 			defer c.Close()
 			var msg []*tpdu.TPDU
 			for i, pdu := range pdus {
-				assert.Equal(t, "+12345", pdu.DA.Number())
+				// A number is international only if it starts with '+'
+				// (3GPP TS 27.005 Section 3.1, <toda>).
+				number := p.args[1]
+				toa := byte(0x81)
+				if strings.HasPrefix(number, "+") {
+					toa = 0x91
+				}
+				assert.Equal(t, number, pdu.DA.Number())
+				assert.Equal(t, toa, pdu.DA.TOA)
 				if i > 0 {
 					assert.Equal(t, pdus[i-1].MR+1, pdu.MR)
 				}

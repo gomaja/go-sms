@@ -25,7 +25,7 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("smssubmit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	number := fs.String("number", "", "Destination number in international format")
+	number := fs.String("number", "", "Destination number, which is international if it starts with '+'")
 	msg := fs.String("message", "", "The message to encode")
 	nli := fs.Int("language", 0, fmt.Sprintf(
 		"The NLI of a character set to use in addition to the default, from %d to %d",

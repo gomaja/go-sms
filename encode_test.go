@@ -236,6 +236,10 @@ var patterns = []struct {
 		nil,
 	},
 	{
+		// A number without a '+' is not known to be international, so it
+		// is sent with a type of number of unknown (3GPP TS 27.005 Section
+		// 3.1, <toda>: "when first character of <da> is + (IRA 43) default
+		// is 145, otherwise default is 129").
 		"number",
 		[]byte("hello"),
 		[]sms.EncoderOption{sms.To("1234")},
@@ -244,7 +248,7 @@ var patterns = []struct {
 				Direction:  tpdu.MO,
 				FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
 				MR:         1,
-				DA:         tpdu.Address{TOA: 0x91, Addr: "1234"},
+				DA:         tpdu.Address{TOA: 0x81, Addr: "1234"},
 				UD:         []byte("hello"),
 			},
 		},
@@ -254,6 +258,19 @@ var patterns = []struct {
 		"deliver number",
 		[]byte("hello"),
 		[]sms.EncoderOption{sms.AsDeliver, sms.From("1234")},
+		[]tpdu.TPDU{
+			{
+				MR: 1,
+				OA: tpdu.Address{TOA: 0x81, Addr: "1234"},
+				UD: []byte("hello"),
+			},
+		},
+		nil,
+	},
+	{
+		"deliver plus number",
+		[]byte("hello"),
+		[]sms.EncoderOption{sms.AsDeliver, sms.From("+1234")},
 		[]tpdu.TPDU{
 			{
 				MR: 1,
@@ -281,7 +298,7 @@ var patterns = []struct {
 	{
 		"two segment 7bit",
 		twoSegmentMsg,
-		[]sms.EncoderOption{sms.To("1234")},
+		[]sms.EncoderOption{sms.To("+1234")},
 		[]tpdu.TPDU{
 			{
 				Direction:  tpdu.MO,
@@ -312,7 +329,7 @@ var patterns = []struct {
 		"two segment 7bit with UDH",
 		twoSegmentMsg,
 		[]sms.EncoderOption{
-			sms.To("1234"),
+			sms.To("+1234"),
 			sms.WithTemplateOption(
 				tpdu.WithUDH(
 					tpdu.UserDataHeader{
@@ -396,7 +413,7 @@ var patterns = []struct {
 	{
 		"two segment 8bit",
 		twoSegmentMsg,
-		[]sms.EncoderOption{sms.To("1234"), sms.As8Bit},
+		[]sms.EncoderOption{sms.To("+1234"), sms.As8Bit},
 		[]tpdu.TPDU{
 			{
 				Direction:  tpdu.MO,
@@ -428,7 +445,7 @@ var patterns = []struct {
 	{
 		"deliver two segment 7bit",
 		twoSegmentMsg,
-		[]sms.EncoderOption{sms.AsDeliver, sms.From("1234")},
+		[]sms.EncoderOption{sms.AsDeliver, sms.From("+1234")},
 		[]tpdu.TPDU{
 			{
 				FirstOctet: 0x40, // UDHI

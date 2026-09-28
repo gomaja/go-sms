@@ -144,13 +144,22 @@ func (o segmentationOption) ApplyEncoderOption(e *Encoder) {
 	e.sopts = append(e.sopts, o.o)
 }
 
-// To specifies the DA for a SMS-SUBMIT TPDU.
+// To specifies the DA for a SMS-SUBMIT TPDU, or an SMS-COMMAND.
+//
+// The type of address is that tpdu.FromNumber gives it, the default of 3GPP
+// TS 27.005 Section 3.1: a number that starts with '+' is an international
+// number, and has a TOA of 0x91, and any other number, such as a short code
+// or a national number, is of unknown type, and has a TOA of 0x81. For
+// another type of address, use WithTemplateOption(tpdu.WithDA(addr)).
 func To(number string) EncoderOption {
 	addr := tpdu.NewAddress(tpdu.FromNumber(number))
 	return templateOption{tpdu.WithDA(addr)}
 }
 
 // From specifies the OA for a SMS-DELIVER TPDU.
+//
+// The type of address is given as for To. For another type of address, such
+// as an alphanumeric one, use WithTemplateOption(tpdu.WithOA(addr)).
 func From(number string) EncoderOption {
 	addr := tpdu.NewAddress(tpdu.FromNumber(number))
 	return templateOption{tpdu.WithOA(addr)}

@@ -69,10 +69,19 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 			[]byte{0},
 			nil,
 		},
+		// 3GPP TS 27.005 Section 3.1: <tosca> defaults as <toda> does,
+		// "when first character of <da> is + (IRA 43) default is 145,
+		// otherwise default is 129".
 		{
 			"set number",
 			smscFromNumber("+61409865629"),
 			[]byte{7, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
+			nil,
+		},
+		{
+			"set number without plus",
+			smscFromNumber("0409865629"),
+			[]byte{6, 0x81, 0x40, 0x90, 0x68, 0x65, 0x92},
 			nil,
 		},
 		{
