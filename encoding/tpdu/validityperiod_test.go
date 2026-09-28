@@ -607,8 +607,8 @@ func TestVPEnhancedMarshalFI(t *testing.T) {
 	assert.Nil(t, b)
 }
 
-// FuzzValidityPeriodUnmarshalBinary checks that a VP decoded in the relative
-// or enhanced format marshals back to the octets it was decoded from.
+// FuzzValidityPeriodUnmarshalBinary checks that a VP decoded in any format
+// marshals back to the octets it was decoded from.
 func FuzzValidityPeriodUnmarshalBinary(f *testing.F) {
 	for _, seed := range [][]byte{
 		{0x00}, {0x8f}, {0x90}, {0xa7}, {0xc4}, {0xff},
@@ -629,9 +629,16 @@ func FuzzValidityPeriodUnmarshalBinary(f *testing.F) {
 	} {
 		f.Add(byte(tpdu.VpfEnhanced), seed)
 	}
+	for _, seed := range [][]byte{
+		{0x71, 0x80, 0x13, 0x11, 0x12, 0x45, 0x23},
+		{0x45, 0x08, 0xC8, 0x30, 0x3A, 0x8C, 0x0E},
+		{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+	} {
+		f.Add(byte(tpdu.VpfAbsolute), seed)
+	}
 	f.Add(byte(tpdu.VpfNotPresent), []byte{})
 	f.Fuzz(func(t *testing.T, vpf byte, src []byte) {
-		format := tpdu.ValidityPeriodFormat(vpf % 3) // not absolute
+		format := tpdu.ValidityPeriodFormat(vpf % 4)
 		var v tpdu.ValidityPeriod
 		n, err := v.UnmarshalBinary(src, format)
 		if err != nil {

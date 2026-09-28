@@ -1531,7 +1531,7 @@ func TestUnmarshalBinary(t *testing.T) {
 			tpdu.NewDecodeError("SmsDeliver.scts", 7, tpdu.ErrUnderflow),
 		},
 		{
-			"SmsDeliver bad scts",
+			"SmsDeliver non-integer scts",
 			[]byte{
 				0x04, 0x04, 0x91, 0x36, 0x19, 0x00, 0x00, 0x51, 0x50, 0xf1, 0x32,
 				0x20, 0x05, 0x23,
@@ -1541,8 +1541,9 @@ func TestUnmarshalBinary(t *testing.T) {
 				Direction:  tpdu.MT,
 				FirstOctet: 0x04,
 				OA:         tpdu.Address{Addr: "6391", TOA: 0x91},
+				SCTS:       timestampFrom(0x51, 0x50, 0xf1, 0x32, 0x20, 0x05, 0x23),
 			},
-			tpdu.NewDecodeError("SmsDeliver.scts", 7, bcd.ErrInvalidOctet(0xf1)),
+			tpdu.NewDecodeError("SmsDeliver.ud.udl", 14, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsDeliver underflow ud",
@@ -1830,7 +1831,7 @@ func TestUnmarshalBinary(t *testing.T) {
 			tpdu.NewDecodeError("SmsStatusReport.dt", 13, tpdu.ErrUnderflow),
 		},
 		{
-			"SmsStatusReport bad scts",
+			"SmsStatusReport non-integer scts",
 			[]byte{
 				0x02, 0x42, 0x04, 0x91, 0x36, 0x19, 0x51, 0x50, 0xf1, 0x32, 0x20,
 				0x05, 0x23,
@@ -1841,11 +1842,12 @@ func TestUnmarshalBinary(t *testing.T) {
 				FirstOctet: 0x02,
 				MR:         0x42,
 				RA:         tpdu.Address{Addr: "6391", TOA: 0x91},
+				SCTS:       timestampFrom(0x51, 0x50, 0xf1, 0x32, 0x20, 0x05, 0x23),
 			},
-			tpdu.NewDecodeError("SmsStatusReport.scts", 6, bcd.ErrInvalidOctet(0xf1)),
+			tpdu.NewDecodeError("SmsStatusReport.dt", 13, tpdu.ErrUnderflow),
 		},
 		{
-			"SmsStatusReport bad dt",
+			"SmsStatusReport non-integer dt",
 			[]byte{
 				0x02, 0x42, 0x04, 0x91, 0x36, 0x19, 0x51, 0x50, 0x71, 0x32, 0x20,
 				0x05, 0x23, 0x51, 0x40, 0xc1, 0x32, 0x20, 0x05, 0x42,
@@ -1860,8 +1862,9 @@ func TestUnmarshalBinary(t *testing.T) {
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
 						time.FixedZone("SCTS", 8*3600)),
 				},
+				DT: timestampFrom(0x51, 0x40, 0xc1, 0x32, 0x20, 0x05, 0x42),
 			},
-			tpdu.NewDecodeError("SmsStatusReport.dt", 13, bcd.ErrInvalidOctet(0xc1)),
+			tpdu.NewDecodeError("SmsStatusReport.st", 20, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsStatusReport underflow st",
@@ -2064,7 +2067,7 @@ func TestUnmarshalBinary(t *testing.T) {
 			tpdu.NewDecodeError("SmsSubmit.vp", 8, tpdu.ErrUnderflow),
 		},
 		{
-			"SmsSubmit bad vp",
+			"SmsSubmit non-integer vp",
 			[]byte{
 				0x19, 0x23, 0x04, 0x91, 0x36, 0x19, 0x34, 0x00, 0x45, 0x08, 0xC8,
 				0x30, 0x3A, 0x8C, 0x0E, 0xA3, 0xC3,
@@ -2076,8 +2079,12 @@ func TestUnmarshalBinary(t *testing.T) {
 				PID:        0x34,
 				MR:         0x23,
 				DA:         tpdu.Address{Addr: "6391", TOA: 0x91},
+				VP: tpdu.ValidityPeriod{
+					Format: tpdu.VpfAbsolute,
+					Time:   timestampFrom(0x45, 0x08, 0xC8, 0x30, 0x3A, 0x8C, 0x0E),
+				},
 			},
-			tpdu.NewDecodeError("SmsSubmit.vp", 8, bcd.ErrInvalidOctet(0xc8)),
+			tpdu.NewDecodeError("SmsSubmit.ud.sm", 16, tpdu.ErrUnderflow),
 		},
 		{
 			"SmsSubmit underflow ud",
@@ -2197,15 +2204,16 @@ func TestUnmarshalBinary(t *testing.T) {
 			tpdu.NewDecodeError("SmsSubmitReport.scts", 3, tpdu.ErrUnderflow),
 		},
 		{
-			"SmsSubmitReport bad scts",
+			"SmsSubmitReport non-integer scts",
 			[]byte{0x01, 0x12, 0x00, 0x51, 0x50, 0xf1, 0x32, 0x20, 0x05, 0x23},
 			tpdu.MT,
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
 				FCS:        0x12,
+				SCTS:       timestampFrom(0x51, 0x50, 0xf1, 0x32, 0x20, 0x05, 0x23),
 			},
-			tpdu.NewDecodeError("SmsSubmitReport.scts", 3, bcd.ErrInvalidOctet(0xf1)),
+			nil,
 		},
 		{
 			"SmsSubmitReport underflow pid",
