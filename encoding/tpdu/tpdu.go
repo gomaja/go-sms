@@ -561,9 +561,14 @@ func (t *TPDU) marshalSubmitReport() ([]byte, error) {
 
 // UnmarshalBinary unmarshals a SMS TPDU from the corresponding byte array.
 //
+// The Direction must be set before calling UnmarshalBinary, as the octets
+// alone do not identify the type of the TPDU. Every other field is reset
+// before decoding, so no field of a TPDU previously held by t survives.
+//
 // In the case of error the TPDU will be partially unmarshalled, up to the
 // point that the decoding error was detected.
 func (t *TPDU) UnmarshalBinary(src []byte) (err error) {
+	*t = TPDU{Direction: t.Direction}
 	if len(src) < 1 {
 		return NewDecodeError("tpdu.firstOctet", 0, ErrUnderflow)
 	}
@@ -583,7 +588,6 @@ func (t *TPDU) UnmarshalBinary(src []byte) (err error) {
 	case SmsCommand:
 		err = t.unmarshalCommand(src[1:])
 	default:
-		t.FirstOctet = 0
 		return NewDecodeError("tpdu.firstOctet", 0, ErrUnsupportedSmsType(st))
 	}
 	if err != nil {
@@ -1084,7 +1088,17 @@ func (st SmsType) ApplyTPDUOption(t *TPDU) error {
 	return t.SetSmsType(st)
 }
 
+// smsType returns the type of TPDU identified by the TP-MTI in the direction.
+//
+// 3GPP TS 23.040 Section 9.2.3.1: "If an MS receives a TPDU with a "Reserved"
+// value in the TP-MTI it shall process the message as if it were an
+// "SMS-DELIVER" but store the message exactly as received." So the Reserved
+// value in the MT direction is an SMS-DELIVER, while the first octet keeps
+// the received TP-MTI, and is marshalled as received.
 func smsType(mt MessageType, dir Direction) SmsType {
+	if mt == MtReserved && dir == MT {
+		return SmsDeliver
+	}
 	return SmsType(byte(mt<<1) | byte(dir))
 }
 

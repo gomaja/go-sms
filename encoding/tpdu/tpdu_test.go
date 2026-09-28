@@ -3,6 +3,7 @@
 package tpdu_test
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -1121,6 +1122,9 @@ func TestSmsType(t *testing.T) {
 		{tpdu.MO, tpdu.MtDeliver, tpdu.SmsDeliverReport},
 		{tpdu.MO, tpdu.MtSubmit, tpdu.SmsSubmit},
 		{tpdu.MO, tpdu.MtCommand, tpdu.SmsCommand},
+		// TS 23.040 9.2.3.1
+		{tpdu.MT, tpdu.MtReserved, tpdu.SmsDeliver},
+		{tpdu.MO, tpdu.MtReserved, tpdu.SmsType(7)},
 	}
 	s := tpdu.TPDU{}
 	for _, p := range patterns {
@@ -1367,11 +1371,19 @@ func TestUnmarshalBinary(t *testing.T) {
 			tpdu.NewDecodeError("tpdu.firstOctet", 0, tpdu.ErrUnderflow),
 		},
 		{
-			"unsupported SMS type",
+			// TS 23.040 9.2.3.1: processed as an SMS-DELIVER
+			"reserved MTI MT",
 			[]byte{0x03},
 			tpdu.MT,
-			tpdu.TPDU{},
-			tpdu.NewDecodeError("tpdu.firstOctet", 0, tpdu.ErrUnsupportedSmsType(6)),
+			tpdu.TPDU{FirstOctet: 0x03},
+			tpdu.NewDecodeError("SmsDeliver.oa.addr", 1, tpdu.ErrUnderflow),
+		},
+		{
+			"unsupported SMS type",
+			[]byte{0x03},
+			tpdu.MO,
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x03},
+			tpdu.NewDecodeError("tpdu.firstOctet", 0, tpdu.ErrUnsupportedSmsType(7)),
 		},
 		{
 			"SmsCommand",
@@ -2272,6 +2284,98 @@ func TestUnmarshalBinary(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+// unhex decodes a hex string, ignoring spaces.
+func unhex(t testing.TB, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(strings.ReplaceAll(s, " ", ""))
+	require.NoError(t, err)
+	return b
+}
+
+// TestUnmarshalBinaryResetsReceiver checks that decoding into a TPDU that
+// already holds a decoded TPDU gives the same result as decoding into a new
+// TPDU with the same Direction, so no field of the earlier TPDU survives.
+func TestUnmarshalBinaryResetsReceiver(t *testing.T) {
+	patterns := []struct {
+		name   string
+		dirn   tpdu.Direction
+		first  string
+		second string
+	}{
+		{
+			// TS 23.040 9.2.3.16: "If this field is zero, the TP-User-Data
+			// field shall not be present."
+			"deliver udl 0 after concatenated ucs2",
+			tpdu.MT,
+			"44 04 91 3619 00 08 51507132200523 08 050003070201 0041",
+			"04 04 91 3619 00 00 51507132200523 00",
+		},
+		{
+			"submit without vp after submit with vp",
+			tpdu.MO,
+			"11 23 04 91 3619 34 00 45 08 c8303a8c0ea3c3",
+			"01 23 04 91 3619 00 00 00",
+		},
+		{
+			"status report without pi after one with pi",
+			tpdu.MT,
+			"02 42 04 91 3619 51507132200523 51408132200542 ab 07 89 04 02 6869",
+			"02 42 04 91 3619 51507132200523 51408132200542 ab",
+		},
+		{
+			"partial decode after full decode",
+			tpdu.MT,
+			"44 04 91 3619 00 08 51507132200523 08 050003070201 0041",
+			"04 04 91 3619 00",
+		},
+		{
+			"unsupported type after full decode",
+			tpdu.MO,
+			"01 23 04 91 3619 34 00 08 c8303a8c0ea3c3",
+			"03",
+		},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			reused := tpdu.TPDU{Direction: p.dirn}
+			require.NoError(t, reused.UnmarshalBinary(unhex(t, p.first)))
+			rerr := reused.UnmarshalBinary(unhex(t, p.second))
+			fresh := tpdu.TPDU{Direction: p.dirn}
+			ferr := fresh.UnmarshalBinary(unhex(t, p.second))
+			assert.Equal(t, ferr, rerr)
+			assert.Equal(t, fresh, reused)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+// TestReservedMTI checks the handling of the Reserved TP-MTI value 11.
+//
+// TS 23.040 9.2.3.1: "If an MS receives a TPDU with a "Reserved" value in the
+// TP-MTI it shall process the message as if it were an "SMS-DELIVER" but
+// store the message exactly as received."
+func TestReservedMTI(t *testing.T) {
+	in := unhex(t, "07 04 91 3619 00 00 51507132200523 01 41")
+	d := tpdu.TPDU{Direction: tpdu.MT}
+	require.NoError(t, d.UnmarshalBinary(in))
+	assert.Equal(t, tpdu.SmsDeliver, d.SmsType())
+	assert.Equal(t, tpdu.MtReserved, d.MTI())
+	assert.Equal(t, tpdu.FirstOctet(0x07), d.FirstOctet)
+	assert.Equal(t, tpdu.Address{Addr: "6391", TOA: 0x91}, d.OA)
+	assert.Equal(t, []byte{0x41}, []byte(d.UD))
+	assert.Equal(t, 160, d.UDBlockSize())
+	out, err := d.MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, in, out)
+
+	// There is no such rule for the MO direction, where the SC receives it.
+	m := tpdu.TPDU{Direction: tpdu.MO}
+	err = m.UnmarshalBinary(in)
+	assert.Equal(t, tpdu.NewDecodeError("tpdu.firstOctet", 0, tpdu.ErrUnsupportedSmsType(7)), err)
+	// the TPDU is left partially decoded, so the first octet is kept.
+	assert.Equal(t, tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x07}, m)
 }
 
 // counter is an implementation of the tpdu.Counter interface.
