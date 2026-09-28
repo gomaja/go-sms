@@ -280,6 +280,16 @@ type SegmentationOption func(*segmentationConfig)
 // escape-sequence shall not be split in the middle", nor a UCS2 character or
 // surrogate pair.
 //
+// Only an SMS-SUBMIT or SMS-DELIVER is split. Section 9.2.3.24.1 says "This
+// facility allows short messages to be concatenated to form a longer
+// message", and a short message is conveyed by an SMS-SUBMIT or an
+// SMS-DELIVER (Section 9.2.2), while "SMS-COMMANDs identify messages by TP-MR
+// and therefore apply to only one segment of a concatenated message", so an
+// SMS-COMMAND split in segments would be as many commands. A message longer
+// than the UD of a template of another type returns an ErrOverlength, in an
+// EncodeError for the UD of the type, such as SmsCommand.ud, as MarshalBinary
+// returns for such a TPDU.
+//
 // The TP-MR of an SMS-SUBMIT or SMS-COMMAND is allocated by its originator,
 // which "increments TP-Message-Reference by 1 for each SMS-SUBMIT or
 // SMS-COMMAND being submitted" (Section 9.2.3.6). For those types, each TPDU
@@ -297,9 +307,10 @@ type SegmentationOption func(*segmentationConfig)
 //
 // An error is returned, rather than any TPDU, if the message is not valid for
 // the coding, which is a byte above 0x7f for GSM 7 bit and an odd length for
-// UCS2, if the template UDH leaves no room for the message and a
-// concatenation IE, or if the message needs more than the 255 segments that a
-// concatenation IE can count. No counter is drawn from on error.
+// UCS2, if it is too long for a template that is not split, if the template
+// UDH leaves no room for the message and a concatenation IE, or if the
+// message needs more than the 255 segments that a concatenation IE can count.
+// No counter is drawn from on error.
 //
 // The template, including the backing array of its UDH, is not changed.
 func (t TPDU) Segment(msg []byte, options ...SegmentationOption) ([]TPDU, error) {
@@ -331,6 +342,9 @@ func (t TPDU) Segment(msg []byte, options ...SegmentationOption) ([]TPDU, error)
 			p.MR = byte(cfg.mr.Count())
 		}
 		return []TPDU{p}, nil
+	}
+	if st != SmsSubmit && st != SmsDeliver {
+		return nil, NewEncodeError(st.String(), NewEncodeError("ud", ErrOverlength))
 	}
 	// the room left by the template UDH, which may be none, and the
 	// concatenation IE.

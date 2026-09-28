@@ -113,7 +113,11 @@ func TestEncoderMRByType(t *testing.T) {
 			mr := sms.NewCounter(6)
 			e := sms.NewEncoder(sms.WithTemplate(tmpl), sms.WithMR(mr), sms.WithConcatRef(&sms.Counter{}))
 			drawn := 0
-			for _, msg := range [][]byte{[]byte("hi"), []byte(strings.Repeat("a", 400))} {
+			msgs := [][]byte{[]byte("hi")}
+			if st := tmpl.SmsType(); st == tpdu.SmsSubmit || st == tpdu.SmsDeliver {
+				msgs = append(msgs, []byte(strings.Repeat("a", 400)))
+			}
+			for _, msg := range msgs {
 				out, err := e.Encode(msg)
 				require.NoError(t, err)
 				require.Equal(t, len(msg) > 100, len(out) > 1)

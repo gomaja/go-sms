@@ -45,7 +45,7 @@ implemented.
 Supports the following functionality:
 
 - Creation of SMS TPDUs from UTF-8 strings, including emoji's 😁
-- Segmentation of long messages into several concatenated SMS TPDUs
+- Segmentation of long messages into several concatenated SMS-SUBMIT or SMS-DELIVER TPDUs
 - Automatic selection of alphabet and language when encoding
 - Decoding of SMS TPDUs into UTF-8 strings
 - Reassembly of concatenated SMS TPDUs into a long message

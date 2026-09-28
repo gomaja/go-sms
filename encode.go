@@ -107,7 +107,10 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 // otherwise, each carrying a segment of the message in its UD. A message that
 // fits in one TPDU, including an empty message, results in one TPDU, and a
 // longer one is split into concatenated segments, as for
-// tpdu.TPDU.Segment. The options apply to this call only.
+// tpdu.TPDU.Segment, if the template is an SMS-SUBMIT or SMS-DELIVER, the
+// types that carry a short message, which 3GPP TS 23.040 Section 9.2.3.24.1
+// concatenates. A TPDU of another type, such as an SMS-COMMAND, is never
+// split. The options apply to this call only.
 //
 // How the message is taken depends on the alphabet of the template:
 //
@@ -135,10 +138,11 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 //
 // The errors of tpdu.TPDU.Segment are returned too, and can be matched with
 // errors.Is or errors.As: tpdu.ErrOddUCS2Length for a UCS2 message of odd length,
-// tpdu.ErrOverlength if the template UDH leaves no room for the message,
-// tpdu.ErrTooManySegments if the message needs more than 255 segments, and a
-// tpdu.ErrUnsupportedSmsType if the template is of no TPDU type. No TPDU is
-// returned with an error, and no counter is drawn from.
+// tpdu.ErrOverlength if the template UDH leaves no room for the message, or
+// if the message does not fit in the one TPDU of a template that is not
+// split, tpdu.ErrTooManySegments if the message needs more than 255
+// segments, and a tpdu.ErrUnsupportedSmsType if the template is of no TPDU
+// type. No TPDU is returned with an error, and no counter is drawn from.
 //
 // The TPDUs returned share no memory with the Encoder, its template or the
 // message, so the caller may change them, and reuse the message.

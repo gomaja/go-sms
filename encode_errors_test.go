@@ -65,6 +65,38 @@ func TestEncodeReturnsSegmentErrors(t *testing.T) {
 			"sm",
 			tpdu.ErrTooManySegments,
 		},
+		// 3GPP TS 23.040 Section 9.2.3.24.1 concatenates short messages,
+		// which SMS-SUBMIT and SMS-DELIVER carry, and "SMS-COMMANDs identify
+		// messages by TP-MR and therefore apply to only one segment of a
+		// concatenated message", so the other types are not split.
+		{
+			"command too long",
+			make([]byte, 157),
+			[]sms.EncoderOption{sms.WithTemplateOption(tpdu.SmsCommand)},
+			"SmsCommand.ud",
+			tpdu.ErrOverlength,
+		},
+		{
+			"status report too long",
+			[]byte(strings.Repeat("a", 164)),
+			[]sms.EncoderOption{sms.WithTemplateOption(tpdu.SmsStatusReport)},
+			"SmsStatusReport.ud",
+			tpdu.ErrOverlength,
+		},
+		{
+			"deliver report too long",
+			[]byte(strings.Repeat("a", 182)),
+			[]sms.EncoderOption{sms.WithTemplateOption(tpdu.SmsDeliverReport)},
+			"SmsDeliverReport.ud",
+			tpdu.ErrOverlength,
+		},
+		{
+			"submit report too long",
+			make([]byte, 153),
+			[]sms.EncoderOption{sms.WithTemplateOption(tpdu.SmsSubmitReport), sms.As8Bit},
+			"SmsSubmitReport.ud",
+			tpdu.ErrOverlength,
+		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {

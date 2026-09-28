@@ -3865,8 +3865,11 @@ func TestSegmentMRByType(t *testing.T) {
 		f := func(t *testing.T) {
 			tmpl := p.tmpl
 			tmpl.MR = 0x42
-			long := bytes.Repeat([]byte{0x01}, 400)
-			for _, msg := range [][]byte{[]byte("hi"), long} {
+			msgs := [][]byte{[]byte("hi")}
+			if st := tmpl.SmsType(); st == tpdu.SmsSubmit || st == tpdu.SmsDeliver {
+				msgs = append(msgs, bytes.Repeat([]byte{0x01}, 400))
+			}
+			for _, msg := range msgs {
 				// without a counter
 				pdus, err := tmpl.Segment(msg)
 				require.NoError(t, err)
@@ -3894,6 +3897,70 @@ func TestSegmentMRByType(t *testing.T) {
 				}
 				assert.Equal(t, 6+drawn, c.c)
 			}
+		}
+		t.Run(p.name, f)
+	}
+}
+
+// TestSegmentConcatenatedTypes checks that only an SMS-SUBMIT or SMS-DELIVER
+// is split into concatenated segments, and that a message too long for the
+// one TPDU of any other type is rejected, without drawing from a counter.
+//
+// TS 23.040 9.2.3.24.1: "This facility allows short messages to be
+// concatenated to form a longer message", and a short message is conveyed by
+// an SMS-SUBMIT or SMS-DELIVER (9.2.2). Of the other types, it says
+// "SMS-COMMANDs identify messages by TP-MR and therefore apply to only one
+// segment of a concatenated message", so an SMS-COMMAND split in segments
+// would be as many commands.
+func TestSegmentConcatenatedTypes(t *testing.T) {
+	addr := tpdu.Address{Addr: "6391", TOA: 0x91}
+	patterns := []struct {
+		name         string
+		tmpl         tpdu.TPDU
+		concatenated bool
+	}{
+		{"submit", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: addr}, true},
+		{"deliver", tpdu.TPDU{FirstOctet: 0x00, OA: addr}, true},
+		{"command", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02, DA: addr}, false},
+		{"status report", tpdu.TPDU{FirstOctet: 0x02, RA: addr}, false},
+		{"deliver report", tpdu.TPDU{Direction: tpdu.MO}, false},
+		{"deliver report rp-error", tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0xd0}, false},
+		{"submit report", tpdu.TPDU{FirstOctet: 0x01}, false},
+		{"submit report 8 bit", tpdu.TPDU{FirstOctet: 0x01, DCS: tpdu.Dcs8BitData}, false},
+		{"status report with udh", tpdu.TPDU{FirstOctet: 0x02, RA: addr, UDH: tpdu.UserDataHeader{{ID: 0x05, Data: []byte{0x0b, 0x84, 0x23, 0xf0}}}}, false},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			bs := p.tmpl.UDBlockSize()
+			require.Positive(t, bs)
+			fits := bytes.Repeat([]byte{0x01}, bs)
+			mr, ref := &counter{}, &counter{}
+			pdus, err := p.tmpl.Segment(fits, tpdu.WithMR(mr), tpdu.WithConcatRef(ref))
+			require.NoError(t, err)
+			require.Len(t, pdus, 1)
+			assert.Equal(t, fits, []byte(pdus[0].UD))
+			_, err = pdus[0].MarshalBinary()
+			require.NoError(t, err)
+
+			mr, ref = &counter{}, &counter{}
+			long := bytes.Repeat([]byte{0x01}, bs+1)
+			pdus, err = p.tmpl.Segment(long, tpdu.WithMR(mr), tpdu.WithConcatRef(ref))
+			if p.concatenated {
+				require.NoError(t, err)
+				require.Len(t, pdus, 2)
+				return
+			}
+			st := p.tmpl.SmsType()
+			assert.Equal(t, tpdu.NewEncodeError(st.String()+".ud", tpdu.ErrOverlength), err)
+			assert.ErrorIs(t, err, tpdu.ErrOverlength)
+			assert.Nil(t, pdus)
+			assert.Zero(t, mr.c)
+			assert.Zero(t, ref.c)
+			// the error is the one MarshalBinary gives such a TPDU
+			m := p.tmpl
+			m.UD = long
+			_, merr := m.MarshalBinary()
+			assert.Equal(t, merr, err)
 		}
 		t.Run(p.name, f)
 	}
@@ -4241,8 +4308,9 @@ func segmentTemplate(typ, coding, udhLen, mr byte) tpdu.TPDU {
 // returns an error that the template and message justify, or returns
 // segments that each marshal and hold no more than their block size, that do
 // not split an escape sequence or surrogate pair, whose concatenation IEs
-// are consistent, and whose UD reassembles to the message. The template is
-// never changed.
+// are consistent, and whose UD reassembles to the message. Only an
+// SMS-SUBMIT or SMS-DELIVER is split into more than one TPDU (TS 23.040
+// 9.2.3.24.1). The template is never changed.
 func FuzzSegment(f *testing.F) {
 	long := bytes.Repeat([]byte("abcdefghij"), 50)
 	escapes := bytes.Repeat([]byte{'a', 0x1b, 0x65, 0x1b, 0x1b, 0x1b, 0x3c}, 60)
@@ -4272,6 +4340,7 @@ func FuzzSegment(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, typ, coding, udhLen byte, ref16 bool, mr byte, msg []byte) {
 		tmpl := segmentTemplate(typ, coding, udhLen, mr)
+		concatenated := tmpl.SmsType() == tpdu.SmsSubmit || tmpl.SmsType() == tpdu.SmsDeliver
 		cdg := tmpl.DCS
 		sevenBit := tmpl.SmsType() != tpdu.SmsCommand && cdg == 0x00
 		ucs := tmpl.SmsType() != tpdu.SmsCommand && cdg == 0x08
@@ -4311,6 +4380,11 @@ func FuzzSegment(f *testing.F) {
 			case errors.Is(err, tpdu.ErrOddUCS2Length):
 				require.True(t, ucs)
 				require.Equal(t, 1, len(msg)%2)
+			case !concatenated:
+				// a message too long for the one TPDU of the type
+				require.ErrorIs(t, err, tpdu.ErrOverlength)
+				require.Equal(t, tpdu.NewEncodeError(tmpl.SmsType().String()+".ud", tpdu.ErrOverlength), err)
+				require.Greater(t, len(msg), tmpl.UDBlockSize())
 			case errors.Is(err, tpdu.ErrOverlength), errors.Is(err, tpdu.ErrTooManySegments):
 				// the room left by the template UDH and a concatenation
 				// IE, of 5 or 6 octets.
@@ -4351,6 +4425,9 @@ func FuzzSegment(f *testing.F) {
 
 		require.NotEmpty(t, pdus)
 		require.LessOrEqual(t, len(pdus), 255)
+		if !concatenated {
+			require.Len(t, pdus, 1)
+		}
 		var ud []byte
 		ref := -1
 		for i, p := range pdus {
