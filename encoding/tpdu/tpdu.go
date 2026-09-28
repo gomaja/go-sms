@@ -181,7 +181,16 @@ func (t *TPDU) Alphabet() Alphabet {
 // udCoding returns the coding of the TP-UD, or the TP-CD of an SMS-COMMAND,
 // which determines how its length is counted and whether it is packed:
 // Alpha7Bit for septets, and Alpha8Bit or AlphaUCS2 for octets.
+//
+// Compressed data is octets, whatever the alphabet: 3GPP TS 23.040 Section
+// 9.2.3.16 says "If the TP-User-Data is coded using compressed GSM 7 bit
+// default alphabet or compressed 8 bit data or compressed UCS2 [24] data, the
+// TP-User-Data-Length field gives an integer representation of the number of
+// octets after compression within the TP-User-Data field to follow."
 func (t *TPDU) udCoding() Alphabet {
+	if t.DCS.Compressed() {
+		return Alpha8Bit
+	}
 	return t.Alphabet()
 }
 
@@ -1062,7 +1071,9 @@ func (t *TPDU) decodeUserData(src []byte) (int, error) {
 		if err != nil {
 			return 0, NewDecodeError("sm", ri, err)
 		}
-		t.UD = sm
+		if len(sm) > 0 {
+			t.UD = sm
+		}
 	case AlphaUCS2:
 		if len(src[ri:])&0x01 == 0x01 {
 			return 0, NewDecodeError("sm", ri, ErrOddUCS2Length)
@@ -1097,23 +1108,24 @@ func decode7Bit(sml, udhl int, src []byte) ([]byte, error) {
 		return nil, ErrUnderflow
 	}
 	if surplus > 0 {
-		if surplus > 1 || sm[len(sm)-1] != 0 {
+		if surplus > 1 {
 			return nil, ErrOverlength
 		}
-		// drop trailing 0 septet
+		// The last octet has 7 spare bits, which unpack as a septet. 3GPP
+		// TS 23.040 Section 9.2.2.1: "Any unused bits shall be set to zero
+		// by the sending entity and shall be ignored by the receiving
+		// entity", so it is dropped, whatever its value.
 		sm = sm[:sml]
 	}
 	return sm, nil
 }
 
-// encodeUserData marshals the User Data into binary.
+// encodeUserData marshals the TP-UDL and the TP-UD, with the UDH, if not nil,
+// and the UD.
 //
-// The User Data Header is also encoded if present.
-// If Alphabet is GSM7 then the User Data is assumed to be unpacked GSM7
-// septets and is packed prior to encoding.
-// For other alphabet values the User Data is encoded as is.
-// No checks of encoded size are performed here as that depends on concrete
-// TPDU type, and that can check the length of the returned b.
+// If the UD is coded as GSM 7 bit then it is assumed to be unpacked septets,
+// which are packed after the UDH and its fill bits. Otherwise, including for
+// compressed data, the UD is encoded as is.
 func (t *TPDU) encodeUserData() (b []byte, err error) {
 	udh, err := t.UDH.MarshalBinary()
 	if err != nil {
@@ -1132,11 +1144,16 @@ func (t *TPDU) encodeUserData() (b []byte, err error) {
 		if err != nil {
 			return nil, NewEncodeError("sm", err)
 		}
-		// udl is in septets so convert
-		if udl > 0 {
-			udl = udl + (len(udh)*8+fillBits)/7
-		} else {
-			udl = (len(udh) * 8) / 7
+		// 3GPP TS 23.040 Section 9.2.3.16: "If a TP-User-Data-Header field
+		// is present, then the TP-User-Data-Length value is the sum of the
+		// number of septets in the TP-User-Data-Header field (including any
+		// padding) and the number of septets in the TP-User-Data field which
+		// follows."
+		udl += (len(udh)*8 + fillBits) / 7
+		// With no septets to pack, the fill bits of the header still
+		// occupy an octet, which Pack7Bit does not provide.
+		if pad := (udl*7+7)/8 - len(udh) - len(ud); pad > 0 {
+			ud = append(ud, make([]byte, pad)...)
 		}
 	case AlphaUCS2:
 		if udl&0x01 == 0x01 {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gomaja/go-sms/encoding/bcd"
+	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/gomaja/go-sms/encoding/semioctet"
 	"github.com/gomaja/go-sms/encoding/tpdu"
 	"github.com/gomaja/go-sms/encoding/ucs2"
@@ -2885,6 +2886,7 @@ func TestUDHIRoundTrip(t *testing.T) {
 		"41 00 04 91 3619 00 08 03 00 0041",        // UCS2
 		"41 00 04 91 3619 00 00 04 00 00 3a 0d",    // 7-bit, 6 fill bits
 		"41 00 04 91 3619 00 04 00",                // TP-UDHI with no TP-UD
+		"41 00 04 91 3619 00 00 02 00 00",          // 7-bit, header only
 		"40 04 91 3619 00 04 51507132200523 01 00", // header only deliver
 	} {
 		b := unhex(t, in)
@@ -2973,6 +2975,206 @@ func TestCommandData(t *testing.T) {
 	assert.Equal(t, bs-6, c.UDBlockSize())
 	c.DCS = tpdu.DcsUCS2Data
 	assert.Equal(t, bs-6, c.UDBlockSize())
+}
+
+// dlvHead is the part of an SMS-DELIVER before the TP-DCS.
+const dlvHead = "04 04 91 3619 00"
+
+// dlvHeadUDHI is dlvHead with the TP-UDHI set.
+const dlvHeadUDHI = "44 04 91 3619 00"
+
+// scts is an SCTS for the test vectors.
+const scts = "51507132200523"
+
+// TestCompressedUserData checks the TP-UDL of compressed user data counts
+// octets, and the octets are kept as they are, whatever the alphabet.
+//
+// TS 23.040 9.2.3.16: "If the TP-User-Data is coded using compressed GSM 7
+// bit default alphabet or compressed 8 bit data or compressed UCS2 [24] data,
+// the TP-User-Data-Length field gives an integer representation of the number
+// of octets after compression within the TP-User-Data field to follow. If a
+// TP-User-Data-Header field is present, then the TP-User-Data-Length value is
+// the sum of the number of uncompressed octets in the TP-User-Data-Header
+// field and the number of octets in the compressed TP-User-Data field which
+// follows."
+func TestCompressedUserData(t *testing.T) {
+	patterns := []struct {
+		name string
+		in   string
+		udh  tpdu.UserDataHeader
+		ud   []byte
+	}{
+		{"gsm7", dlvHead + " 20 " + scts + " 08 0102030405060708", nil,
+			[]byte{1, 2, 3, 4, 5, 6, 7, 8}},
+		{"gsm7 octets above 7f", dlvHead + " 20 " + scts + " 03 80ff7f", nil,
+			[]byte{0x80, 0xff, 0x7f}},
+		{"ucs2 odd length", dlvHead + " 28 " + scts + " 03 010203", nil,
+			[]byte{1, 2, 3}},
+		{"8bit", dlvHead + " 24 " + scts + " 02 0102", nil, []byte{1, 2}},
+		{"marked for deletion gsm7", dlvHead + " 60 " + scts + " 02 0102", nil, []byte{1, 2}},
+		{"class 1", dlvHead + " 31 " + scts + " 02 0102", nil, []byte{1, 2}},
+		{"with udh", dlvHeadUDHI + " 20 " + scts + " 09 050003010201 81ff01",
+			tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}}, []byte{0x81, 0xff, 0x01}},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{}
+			require.NoError(t, d.UnmarshalBinary(in))
+			require.True(t, d.DCS.Compressed())
+			assert.Equal(t, p.udh, d.UDH)
+			assert.Equal(t, p.ud, []byte(d.UD))
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, b)
+		}
+		t.Run(p.name, f)
+	}
+	// a UDL of 8 octets, not septets, so 7 octets is too few.
+	d := tpdu.TPDU{}
+	err := d.UnmarshalBinary(unhex(t, dlvHead+" 20 "+scts+" 08 01020304050607"))
+	assert.ErrorIs(t, err, tpdu.ErrUnderflow)
+
+	// the block size is in octets
+	s := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x20}
+	assert.Equal(t, 140, s.UDBlockSize())
+	s.DCS = 0x28
+	assert.Equal(t, 140, s.UDBlockSize())
+}
+
+// TestHeaderOnly7BitUDL checks the TP-UDL of 7-bit user data with a header
+// and no text counts the septets of the header, including its fill bits, and
+// that the octets it announces are present.
+//
+// TS 23.040 9.2.3.16: "If a TP-User-Data-Header field is present, then the
+// TP-User-Data-Length value is the sum of the number of septets in the
+// TP-User-Data-Header field (including any padding) and the number of septets
+// in the TP-User-Data field which follows."
+func TestHeaderOnly7BitUDL(t *testing.T) {
+	patterns := []struct {
+		name string
+		udh  tpdu.UserDataHeader
+		ud   string // TP-UDL and TP-UD
+	}{
+		{"empty udh", tpdu.UserDataHeader{}, "02 00 00"},
+		{"4 octets", tpdu.UserDataHeader{{ID: 1, Data: []byte{1}}}, "05 03 01 01 01 00"},
+		{"5 octets", tpdu.UserDataHeader{{ID: 1, Data: []byte{0x80, 1}}}, "06 04 01 02 80 01 00"},
+		{"6 octets", tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}}, "07 05 00 03 01 02 01 00"},
+		{"7 octets", tpdu.UserDataHeader{{ID: 8, Data: []byte{0, 1, 2, 1}}}, "08 06 08 04 00 01 02 01"},
+		{"8 octets", tpdu.UserDataHeader{{ID: 1, Data: []byte{1, 2, 3, 4, 5}}}, "0a 07 01 05 01 02 03 04 05 00"},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			s := tpdu.TPDU{FirstOctet: 0x04, OA: tpdu.Address{Addr: "6391", TOA: 0x91}}
+			s.SetUDH(p.udh)
+			b, err := s.MarshalBinary()
+			require.NoError(t, err)
+			want := unhex(t, dlvHeadUDHI+" 00 00000000000000 "+p.ud)
+			assert.Equal(t, want, b)
+			d := tpdu.TPDU{}
+			require.NoError(t, d.UnmarshalBinary(b))
+			assert.Equal(t, p.udh, d.UDH)
+			assert.Nil(t, d.UD)
+			out, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, want, out)
+		}
+		t.Run(p.name, f)
+	}
+
+	// The undercounted form, UDL=6 for a 6 octet header, which the header
+	// alone overruns, is still accepted, but marshals to the counted form.
+	in := unhex(t, "41 00 04 91 3619 00 00 06 05 00 03 01 02 01")
+	d := tpdu.TPDU{Direction: tpdu.MO}
+	require.NoError(t, d.UnmarshalBinary(in))
+	assert.Equal(t, tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}}, d.UDH)
+	assert.Nil(t, d.UD)
+	b, err := d.MarshalBinary()
+	require.NoError(t, err)
+	assert.Equal(t, unhex(t, "41 00 04 91 3619 00 00 07 05 00 03 01 02 01 00"), b)
+}
+
+// TestSpareBits7Bit checks non-zero bits after the last septet are ignored,
+// whether 1 to 6 bits, or a whole spare septet, are left in the last octet.
+//
+// TS 23.040 9.2.2.1: "Any unused bits shall be set to zero by the sending
+// entity and shall be ignored by the receiving entity."
+func TestSpareBits7Bit(t *testing.T) {
+	patterns := []struct {
+		name string
+		in   string
+		ud   string
+		udh  tpdu.UserDataHeader
+	}{
+		// 7 septets leave 7 spare bits, here CR as some senders pad
+		{"7 spare bits", dlvHead + " 00 " + scts + " 07 edf27c1e3e971b", "message", nil},
+		{"7 spare bits all set", dlvHead + " 00 " + scts + " 07 edf27c1e3e97ff", "message", nil},
+		{"2 spare bits", dlvHead + " 00 " + scts + " 02 41e1", "AB", nil},
+		{"after header", dlvHeadUDHI + " 00 " + scts + " 0e 050003010203 dae5f93c7c2eff", "message",
+			tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 3}}}},
+		{"spare septet after header", dlvHeadUDHI + " 00 " + scts + " 0f 050003010203 dae5f93c7c2ecfff", "messages",
+			tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 3}}}},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			d := tpdu.TPDU{}
+			require.NoError(t, d.UnmarshalBinary(unhex(t, p.in)))
+			assert.Equal(t, []byte(p.ud), []byte(d.UD))
+			assert.Equal(t, p.udh, d.UDH)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+// TestHighBitSeptets checks UD holding a byte above 0x7f, which is not a
+// septet, cannot be marshalled with a 7-bit DCS, rather than its eighth bit
+// corrupting the next septet.
+//
+// TS 23.038 6.1.2.1.1: characters are 7 bit, packed "by completing the
+// octets with zeros on the left".
+func TestHighBitSeptets(t *testing.T) {
+	ud := []byte("caf\xc3\xa9")
+	for _, p := range []tpdu.TPDU{
+		{Direction: tpdu.MO, FirstOctet: 0x01, UD: ud},
+		{FirstOctet: 0x00, UD: ud},
+		{Direction: tpdu.MO, UD: ud},
+		{FirstOctet: 0x02, UD: ud},
+		{FirstOctet: 0x01, UD: ud, DCS: 0x80}, // reserved, so 7 bit
+	} {
+		_, err := p.MarshalBinary()
+		var ise gsm7.ErrInvalidSeptet
+		require.ErrorAs(t, err, &ise, p.SmsType().String())
+		assert.Equal(t, gsm7.ErrInvalidSeptet{Offset: 3, Septet: 0xc3}, ise)
+		assert.Equal(t, p.SmsType().String()+".ud.sm", err.(tpdu.EncodeError).Field)
+	}
+	// but they are octets in 8 bit data
+	p := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, UD: ud, DCS: tpdu.Dcs8BitData}
+	_, err := p.MarshalBinary()
+	assert.NoError(t, err)
+}
+
+// TestReservedDCS checks a TPDU with a reserved coding group in its DCS
+// decodes as GSM 7 bit, and marshals back as received.
+//
+// TS 23.038 4: "Any reserved codings shall be assumed to be the GSM 7 bit
+// default alphabet (the same as codepoint 00000000) by a receiving entity."
+func TestReservedDCS(t *testing.T) {
+	for _, in := range []string{
+		dlvHead + " 80 " + scts + " 08 c8303a8c0ea3c3",
+		dlvHead + " 9f " + scts + " 08 c8303a8c0ea3c3",
+		dlvHead + " a0 " + scts + " 08 c8303a8c0ea3c3",
+		dlvHead + " bf " + scts + " 08 c8303a8c0ea3c3",
+		dlvHead + " 0c " + scts + " 08 c8303a8c0ea3c3", // reserved alphabet
+		dlvHeadUDHI + " 80 " + scts + " 0f 050003010203 906174181d468701",
+	} {
+		b := unhex(t, in)
+		d := tpdu.TPDU{}
+		require.NoError(t, d.UnmarshalBinary(b), in)
+		assert.Equal(t, []byte("Hahahaha"), []byte(d.UD), in)
+		out, err := d.MarshalBinary()
+		require.NoError(t, err, in)
+		assert.Equal(t, b, out, in)
+	}
 }
 
 // counter is an implementation of the tpdu.Counter interface.

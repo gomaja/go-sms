@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/gomaja/go-sms/encoding/pdumode"
 	"github.com/gomaja/go-sms/encoding/tpdu"
@@ -62,16 +63,26 @@ func TestDecode(t *testing.T) {
 			},
 		},
 		{
-			"reject non-zero SMS 7-bit fill septet",
+			// 3GPP TS 23.040 Section 9.2.2.1: "Any unused bits shall be set
+			// to zero by the sending entity and shall be ignored by the
+			// receiving entity."
+			"ignore non-zero SMS 7-bit spare septet",
 			"07912180958739F144038102F100001211304113338A2F0608041E9602026177F85C06E5DF7539283C1EBFEB6E3A284C0785E974D7F8DD7EB5F37079191E4E9341",
 			true,
 			false,
-			nil,
-			tpdu.DecodeError{
-				Field:  "SmsDeliver.ud.sm",
-				Offset: 22,
-				Err:    tpdu.ErrOverlength,
+			&tpdu.TPDU{
+				FirstOctet: 0x44,
+				OA:         tpdu.Address{TOA: 0x81, Addr: "201"},
+				SCTS: tpdu.Timestamp{
+					Time: time.Date(2021, time.November, 3, 14, 31, 33, 0,
+						time.FixedZone("SCTS", -7*3600)),
+				},
+				UDH: tpdu.UserDataHeader{
+					{ID: 0x08, Data: []byte{0x1e, 0x96, 0x02, 0x02}},
+				},
+				UD: []byte("anage your account at att.com/myprepaid"),
 			},
+			nil,
 		},
 		{
 			"submit",

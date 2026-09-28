@@ -43,13 +43,15 @@ func TestDecodeUserData(t *testing.T) {
 			8,
 			nil,
 		},
-		{"sm overlength 7bit",
+		// TS 23.040 9.2.2.1: "Any unused bits shall be set to zero by the
+		// sending entity and shall be ignored by the receiving entity."
+		{"non-zero spare septet 7bit",
 			TPDU{},
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0xf1},
+			[]byte("message"),
 			nil,
+			8,
 			nil,
-			0,
-			NewDecodeError("sm", 1, ErrOverlength),
 		},
 		{"sm underflow",
 			TPDU{},
@@ -195,7 +197,8 @@ func TestDecode7BitHandlesSurplusSeptets(t *testing.T) {
 	}{
 		{"drops single trailing zero septet", 0, []byte{0x00}, []byte{}, nil},
 		{"drops trailing zero after message septets", 2, []byte{0xcf, 0x25, 0x00}, []byte("OK"), nil}, // "OK\x00" packed
-		{"rejects single non-zero surplus septet", 0, []byte{0x01}, nil, ErrOverlength},
+		{"drops single non-zero surplus septet", 0, []byte{0x01}, []byte{}, nil},
+		{"drops non-zero surplus septet after message septets", 2, []byte{0xcf, 0x25, 0xfe}, []byte("OK"), nil},
 		{"rejects multiple surplus septets", 0, []byte{0x00, 0x00}, nil, ErrOverlength},
 	}
 	for _, p := range patterns {
@@ -316,7 +319,9 @@ func TestEncodeUserData(t *testing.T) {
 				FirstOctet: 0x40,
 				UDH: UserDataHeader(
 					[]InformationElement{{ID: 1, Data: []byte{1, 2, 3}}})},
-			[]byte{0x06, 0x05, 0x01, 0x03, 0x01, 0x02, 0x03},
+			// TS 23.040 9.2.3.16: the header and its fill bits are 7
+			// septets, which take 7 octets.
+			[]byte{0x07, 0x05, 0x01, 0x03, 0x01, 0x02, 0x03, 0x00},
 			nil,
 		},
 		{"reserved dcs",
