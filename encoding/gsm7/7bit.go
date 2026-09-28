@@ -74,42 +74,36 @@ func Unpack7Bit(p []byte, fillBits int) []byte {
 	return u
 }
 
-// Pack7BitUSSD packs an array of septets into an 8bit array as per the packing
-// rules defined in 3GPP TS 23.038 Section 6.1.2.3
+// Pack7BitUSSD packs an array of septets into an 8bit array as per the USSD
+// packing rules defined in 3GPP TS 23.038 Section 6.1.2.3.1.
 //
-// The padBits is the number of bits of pad to place at the beginning of the
-// packed array, as the packed septets may not start on an octet boundary.
-//
-// A filler CR is added to the final octet if there are 7 bits unused (to
-// distinguish from the 0x00 septet), or if the last septet is CR and ends on
-// an octet boundary (so it wont be considered filler).
-func Pack7BitUSSD(u []byte, fillBits int) []byte {
-	b := Pack7Bit(u, fillBits)
-	if len(b) == 0 {
-		return append(b[:0:0], b...)
+// The septets are packed as for SMS, with no fill bits. A message of 8n-1
+// septets leaves 7 spare bits in the final octet, and these are filled with
+// CR rather than zeroes so the receiver does not decode them as '@'. A message
+// of 8n septets that ends with CR ends on an octet boundary, where the
+// receiver would discard that CR as filler, so a second CR is appended.
+func Pack7BitUSSD(u []byte) []byte {
+	p := Pack7Bit(u, 0)
+	switch {
+	case len(u)%8 == 7:
+		p[len(p)-1] |= cr << 1
+	case len(u)%8 == 0 && len(u) > 0 && u[len(u)-1] == cr:
+		p = append(p, cr)
 	}
-	last := len(b) - 1
-	if b[last]&^0x1 == 0 && u[len(u)-1] != 0 {
-		b[last] = b[last] | (cr << 1)
-	} else if len(u)&0x7 == 0 && u[len(u)-1] == cr {
-		b = append(b, cr)
-	}
-	return b
+	return p
 }
 
-// Unpack7BitUSSD unpacks septets, packed into an 8bit array, as per the
-// packing rules defined in 3GPP TS 23.038 Section 6.1.2.3, into an array of
+// Unpack7BitUSSD unpacks septets, packed into an 8bit array as per the USSD
+// packing rules defined in 3GPP TS 23.038 Section 6.1.2.3.1, into an array of
 // septets.
 //
-// The fillBits is the number of bits of pad at the beginning of the src, as
-// the packed septets may not start on an octet boundary.
-//
-// Any trailing CR is assumed to be filler if it ends on an octet boundary, or
-// if it starts on an octet boundary and the previous character is also CR.
-func Unpack7BitUSSD(p []byte, fillBits int) []byte {
-	u := Unpack7Bit(p, fillBits)
-	// remove any trailing filler
-	if len(p) > 1 && ((p[len(p)-1]>>1 == cr) || (p[len(p)-1] == cr && p[len(p)-2]>>1 == cr)) {
+// When the septets end on an octet boundary, which is when the number of
+// octets is a multiple of 7, a final CR is filler and is removed. A message
+// that the sender ended with a doubled CR keeps both, as CR CR is defined to
+// be identical to CR (3GPP TS 23.038 Section 6.1.1).
+func Unpack7BitUSSD(p []byte) []byte {
+	u := Unpack7Bit(p, 0)
+	if len(p)%7 == 0 && len(u) > 0 && u[len(u)-1] == cr {
 		u = u[:len(u)-1]
 	}
 	return u
