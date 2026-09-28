@@ -25,7 +25,6 @@ var (
 		0x18: '\u0a18',
 		0x19: '\u0a19',
 		0x1a: '\u0a1a',
-		0x1b: 0x1b,
 		0x1c: '\u0a1b',
 		0x1d: '\u0a1c',
 		0x1e: '\u0a1d',
@@ -130,7 +129,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -144,7 +142,6 @@ var (
 		0x18: '*',
 		0x19: '\u0964',
 		0x1a: '\u0965',
-		0x1b: 0x1b,
 		0x1c: '\u0a66',
 		0x1d: '\u0a67',
 		0x1e: '\u0a68',
@@ -152,6 +149,7 @@ var (
 		0x20: '\u0a6a',
 		0x21: '\u0a6b',
 		0x22: '\u0a6c',
+		// TS 23.038 V20.0.0 A.2.10 prints OA6D here, with a letter O.
 		0x23: '\u0a6d',
 		0x24: '\u0a6e',
 		0x25: '\u0a6f',
@@ -196,14 +194,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	punjabiEncoder    Encoder
-	punjabiExtEncoder Encoder
+	punjabiEncoder    = generateEncoder(punjabiDecoder)
+	punjabiExtEncoder = generateEncoder(punjabiExtDecoder)
 )
-
-func generatePunjabiEncoder() Encoder {
-	return generateEncoder(punjabiDecoder)
-}
-
-func generatePunjabiExtEncoder() Encoder {
-	return generateEncoder(punjabiExtDecoder)
-}

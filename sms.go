@@ -4,6 +4,10 @@
 package sms
 
 import (
+	"errors"
+	"slices"
+	"unicode/utf8"
+
 	"github.com/gomaja/go-sms/encoding/tpdu"
 	"github.com/gomaja/go-sms/encoding/ucs2"
 )
@@ -15,9 +19,18 @@ type DecodeConfig struct {
 
 // Decode returns the UTF-8 message contained in a set of TPDUs.
 //
-// For concatenated messages the segments assumed to be the component TPDUs, in
-// correct order. This is the case for segments returned by the Collector. It
-// can be tested using IsCompleteMessage.
+// For concatenated messages the segments are assumed to be the component
+// TPDUs, in order. This is the case for segments returned by the Collector,
+// and can be tested using IsCompleteMessage.
+//
+// A nil segment, as the Collector gives for a segment that was not received,
+// cannot be decoded, so ErrMissingSegment is returned.
+//
+// A UTF-16 surrogate pair split between two consecutive UCS2 segments is
+// decoded as the one character it codes. Any other surrogate is unpaired and
+// decoded as U+FFFD, as ucs2.Decode does, including a high surrogate that
+// ends the last segment or that is followed by a segment that does not start
+// with a low surrogate.
 func Decode(segments []*tpdu.TPDU, options ...DecodeOption) ([]byte, error) {
 	cfg := DecodeConfig{}
 	for _, option := range options {
@@ -26,87 +39,141 @@ func Decode(segments []*tpdu.TPDU, options ...DecodeOption) ([]byte, error) {
 	if len(cfg.dopts) == 0 {
 		cfg.dopts = []tpdu.UDDecodeOption{tpdu.WithAllCharsets}
 	}
-	bl := 0
-	ts := make([][]byte, len(segments))
-	var danglingSurrogate ucs2.ErrDanglingSurrogate
-	for i, s := range segments {
-		if s.DCS.Compressed() {
+	n := 0
+	for _, s := range segments {
+		if s == nil {
+			return nil, ErrMissingSegment
+		}
+		// An SMS-COMMAND has no TP-DCS, so its TP-CD is never compressed.
+		if s.SmsType() != tpdu.SmsCommand && s.DCS.Compressed() {
 			return nil, ErrCompressedUserData
 		}
-		a, _ := s.Alphabet()
+		n += len(s.UD)
+	}
+	m := make([]byte, 0, n)
+	// dangling holds a high surrogate that ended the previous segment, which
+	// the low surrogate at the start of the next segment may complete.
+	var dangling ucs2.ErrDanglingSurrogate
+	for _, s := range segments {
+		a := s.Alphabet()
 		ud := s.UD
-		if danglingSurrogate != nil {
-			ud = append([]byte(danglingSurrogate), ud...)
-			danglingSurrogate = nil
+		if dangling != nil {
+			if a == tpdu.AlphaUCS2 {
+				ud = append(tpdu.UserData(dangling), ud...)
+			} else {
+				m = utf8.AppendRune(m, utf8.RuneError)
+			}
+			dangling = nil
 		}
 		d, err := tpdu.DecodeUserData(ud, s.UDH, a, cfg.dopts...)
-		if err != nil {
-			switch e := err.(type) {
-			case ucs2.ErrDanglingSurrogate:
-				danglingSurrogate = e
-			default:
-				return nil, err
-			}
+		if err != nil && !errors.As(err, &dangling) {
+			return nil, err
 		}
-		ts[i] = d
-		bl += len(d)
+		m = append(m, d...)
 	}
-	if danglingSurrogate != nil {
-		return nil, danglingSurrogate
-	}
-	m := make([]byte, 0, bl)
-	for _, t := range ts {
-		m = append(m, t...)
+	if dangling != nil {
+		m = utf8.AppendRune(m, utf8.RuneError)
 	}
 	return m, nil
 }
 
-// IsCompleteMessage confirms that the TPDUs contain all the sgements required
+// IsCompleteMessage confirms that the TPDUs contain all the segments required
 // to reassemble a complete message and are in the correct order.
+//
+// It returns false if any segment is nil, or if the segments differ in type
+// or address, as the reference number only identifies a message "together
+// with the originating address and Service Centre address" (3GPP TS 23.040
+// Section 9.2.3.24.1). The address compared is the one the TPDU type has: the
+// TP-OA of an SMS-DELIVER and the TP-DA of an SMS-SUBMIT. For an SMS-SUBMIT
+// the originator is not in the TPDU, so the caller must ensure the segments
+// come from one originator, as the Collector does with WithOriginator.
 func IsCompleteMessage(segments []*tpdu.TPDU) bool {
-	if len(segments) == 0 {
+	if len(segments) == 0 || slices.Contains(segments, nil) {
 		return false
 	}
-	baseSegs, _, baseConcatRef, ok := segments[0].ConcatInfo()
+	base, ok := segments[0].ConcatInfo()
 	if !ok {
 		return len(segments) == 1
 	}
-	if baseSegs != len(segments) {
+	if base.Total != len(segments) {
 		return false
 	}
+	first := segments[0]
 	for i, s := range segments {
-		segs, seqno, concatRef, ok := s.ConcatInfo()
+		if s.SmsType() != first.SmsType() || peer(s) != peer(first) {
+			return false
+		}
+		ci, ok := s.ConcatInfo()
 		if !ok {
 			return false
 		}
-		if segs != baseSegs {
+		if ci.Total != base.Total {
 			return false
 		}
-		if concatRef != baseConcatRef {
+		if ci.Ref != base.Ref || ci.Ref16Bit != base.Ref16Bit {
 			return false
 		}
-		if seqno != i+1 {
+		if ci.Seqno != i+1 {
 			return false
 		}
 	}
 	return true
 }
 
+// cloneTPDU returns a copy of the TPDU that shares no memory with it.
+//
+// Its slices keep their nil or empty state, as that matters when marshalling:
+// an empty UDH is marshalled as a TP-UDHL of 0, while a nil one is not
+// marshalled.
+func cloneTPDU(t *tpdu.TPDU) tpdu.TPDU {
+	c := *t
+	c.PIExt = slices.Clone(t.PIExt)
+	c.UD = slices.Clone(t.UD)
+	if t.UDH != nil {
+		c.UDH = make(tpdu.UserDataHeader, len(t.UDH))
+		for i, ie := range t.UDH {
+			c.UDH[i] = tpdu.InformationElement{ID: ie.ID, Data: slices.Clone(ie.Data)}
+		}
+	}
+	return c
+}
+
 // UnmarshalConfig contains configuration options for Unmarshal.
 type UnmarshalConfig struct {
 	dirn tpdu.Direction
+	rp   tpdu.RPMessage
 }
 
 // Unmarshal converts a binary SMS TPDU into the corresponding TPDU object.
+//
+// The TPDU is assumed to be MT, and a report to be carried by an RP-ACK,
+// unless the options say otherwise.
 func Unmarshal(src []byte, options ...UnmarshalOption) (*tpdu.TPDU, error) {
 	cfg := UnmarshalConfig{}
 	for _, option := range options {
 		option.ApplyUnmarshalOption(&cfg)
 	}
-	t := tpdu.TPDU{Direction: cfg.dirn}
+	t := tpdu.TPDU{Direction: cfg.dirn, RPMessage: cfg.rp}
 	err := t.UnmarshalBinary(src)
 	if err != nil {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// peer returns the address that identifies the other party of a TPDU of the
+// type it has: the TP-OA of an SMS-DELIVER, the TP-RA of an
+// SMS-STATUS-REPORT, the TP-DA of an SMS-SUBMIT or SMS-COMMAND, and none for
+// the reports, which have no address (3GPP TS 23.040 Section 9.2.2).
+func peer(t *tpdu.TPDU) tpdu.Address {
+	switch t.SmsType() {
+	case tpdu.SmsDeliver:
+		return t.OA
+	case tpdu.SmsStatusReport:
+		return t.RA
+	case tpdu.SmsSubmit, tpdu.SmsCommand:
+		return t.DA
+	default:
+		return tpdu.Address{}
+	}
 }

@@ -27,7 +27,6 @@ var (
 		0x18: '\u0b18',
 		0x19: '\u0b19',
 		0x1a: '\u0b1a',
-		0x1b: 0x1b,
 		0x1c: '\u0b1b',
 		0x1d: '\u0b1c',
 		0x1e: '\u0b1d',
@@ -69,6 +68,7 @@ var (
 		0x43: '\u0b2f',
 		0x44: '\u0b30',
 		0x46: '\u0b32',
+		// TS 23.038 V20.0.0 A.3.9 prints a stray U+0B3C before 0B33 here.
 		0x47: '\u0b33',
 		0x49: '\u0b35',
 		0x4a: '\u0b36',
@@ -136,7 +136,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -150,7 +149,6 @@ var (
 		0x18: '*',
 		0x19: '\u0964',
 		0x1a: '\u0965',
-		0x1b: 0x1b,
 		0x1c: '\u0b66',
 		0x1d: '\u0b67',
 		0x1e: '\u0b68',
@@ -201,14 +199,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	oriyaEncoder    Encoder
-	oriyaExtEncoder Encoder
+	oriyaEncoder    = generateEncoder(oriyaDecoder)
+	oriyaExtEncoder = generateEncoder(oriyaExtDecoder)
 )
-
-func generateOriyaEncoder() Encoder {
-	return generateEncoder(oriyaDecoder)
-}
-
-func generateOriyaExtEncoder() Encoder {
-	return generateEncoder(oriyaExtDecoder)
-}

@@ -87,11 +87,27 @@ func TestDecode(t *testing.T) {
 			sms.ErrCompressedUserData,
 		},
 		{
+			// An SMS-COMMAND has no TP-DCS, so a DCS left in the struct does
+			// not make its TP-CD compressed.
+			"command with compressed dcs",
+			[]*tpdu.TPDU{
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
+					DCS:        0x20,
+					UD:         []byte("cd"),
+				},
+			},
+			nil,
+			[]byte("cd"),
+			nil,
+		},
+		{
 			"single segment 7bit implicit urdu",
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x03"),
 				},
@@ -105,7 +121,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x03"),
 				},
@@ -119,7 +135,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x03"),
 				},
@@ -133,7 +149,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 24, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x1b\x2b"),
 				},
@@ -147,7 +163,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x03"),
 				},
@@ -173,18 +189,6 @@ func TestDecode(t *testing.T) {
 			nil,
 		},
 		{
-			"ucs2 dangling surrogate",
-			[]*tpdu.TPDU{
-				{
-					DCS: tpdu.DcsUCS2Data,
-					UD:  []byte{0xd8, 0x3d, 0xde, 0x01, 0xd8, 0x3d},
-				},
-			},
-			nil,
-			nil,
-			ucs2.ErrDanglingSurrogate([]byte{0xd8, 0x3d}),
-		},
-		{
 			"ucs2 odd length",
 			[]*tpdu.TPDU{
 				{
@@ -204,6 +208,138 @@ func TestDecode(t *testing.T) {
 			assert.Equal(t, p.out, out)
 		}
 		t.Run(p.name, f)
+	}
+}
+
+// WithAllCharsets is a decode option as well as an encode option, and adds
+// every character set to those given by other options.
+func TestDecodeWithAllCharsets(t *testing.T) {
+	in := []*tpdu.TPDU{
+		{
+			UDH: tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Urdu)}},
+			},
+			UD: []byte("hello \x03"),
+		},
+	}
+	out, err := sms.Decode(in, sms.WithCharset(charset.Turkish))
+	assert.NoError(t, err)
+	assert.Equal(t, "hello ¥", string(out))
+	out, err = sms.Decode(in, sms.WithCharset(charset.Turkish), sms.WithAllCharsets)
+	assert.NoError(t, err)
+	assert.Equal(t, "hello ٻ", string(out))
+	out, err = sms.Decode(in, sms.WithAllCharsets)
+	assert.NoError(t, err)
+	assert.Equal(t, "hello ٻ", string(out))
+}
+
+// ucs2Segment returns a UCS2 segment of a concatenated message holding the
+// UD.
+func ucs2Segment(ud ...byte) *tpdu.TPDU {
+	return &tpdu.TPDU{DCS: tpdu.DcsUCS2Data, UD: ud}
+}
+
+// An unpaired surrogate decodes as U+FFFD wherever it is, as ucs2.Decode
+// does, rather than failing the message or taking a character from the next
+// segment.
+func TestDecodeUnpairedSurrogate(t *testing.T) {
+	patterns := []struct {
+		name string
+		in   []*tpdu.TPDU
+		out  string
+	}{
+		{
+			"low surrogate ending a segment",
+			[]*tpdu.TPDU{
+				ucs2Segment(0x00, 0x41, 0xde, 0x01),
+				ucs2Segment(0x00, 0x42, 0x00, 0x43),
+			},
+			"A�BC",
+		},
+		{
+			"high surrogate ending the message",
+			[]*tpdu.TPDU{
+				ucs2Segment(0xd8, 0x3d, 0xde, 0x01, 0xd8, 0x3d),
+			},
+			"😁�",
+		},
+		{
+			"high surrogate ending the last segment",
+			[]*tpdu.TPDU{
+				ucs2Segment(0x00, 0x41),
+				ucs2Segment(0x00, 0x42, 0xd8, 0x3d),
+			},
+			"AB�",
+		},
+		{
+			"high surrogate before a segment not starting with a low surrogate",
+			[]*tpdu.TPDU{
+				ucs2Segment(0x00, 0x41, 0xd8, 0x3d),
+				ucs2Segment(0x00, 0x42),
+			},
+			"A�B",
+		},
+		{
+			"high surrogate before a GSM 7 bit segment",
+			[]*tpdu.TPDU{
+				ucs2Segment(0x00, 0x41, 0xd8, 0x3d),
+				{UD: []byte("BC")},
+			},
+			"A�BC",
+		},
+		{
+			"high surrogate before an 8 bit segment",
+			[]*tpdu.TPDU{
+				ucs2Segment(0xd8, 0x3d),
+				{DCS: tpdu.Dcs8BitData, UD: []byte("BC")},
+			},
+			"�BC",
+		},
+		{
+			"surrogate pair split over three segments",
+			[]*tpdu.TPDU{
+				ucs2Segment(0xd8, 0x3d),
+				ucs2Segment(0xde, 0x01, 0xd8, 0x3d),
+				ucs2Segment(0xde, 0x02),
+			},
+			"😁😂",
+		},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			out, err := sms.Decode(p.in)
+			assert.NoError(t, err)
+			assert.Equal(t, p.out, string(out))
+		}
+		t.Run(p.name, f)
+	}
+}
+
+// A nil segment, as the expiry handler and Pipes give for a missing one, is
+// reported rather than dereferenced.
+func TestDecodeMissingSegment(t *testing.T) {
+	seg := func(seqno byte) *tpdu.TPDU {
+		return &tpdu.TPDU{
+			UDH: tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: 0, Data: []byte{3, 3, seqno}},
+			},
+			UD: []byte("abc"),
+		}
+	}
+	for _, in := range [][]*tpdu.TPDU{
+		{nil},
+		{nil, seg(2), seg(3)},
+		{seg(1), nil, seg(3)},
+		{seg(1), seg(2), nil},
+	} {
+		assert.NotPanics(t, func() {
+			out, err := sms.Decode(in)
+			assert.Equal(t, sms.ErrMissingSegment, err)
+			assert.Nil(t, out)
+		})
+		assert.NotPanics(t, func() {
+			assert.False(t, sms.IsCompleteMessage(in))
+		})
 	}
 }
 
@@ -273,6 +409,123 @@ func TestIsCompleteMessage(t *testing.T) {
 			},
 			false,
 		},
+		// 3GPP TS 23.040 Section 9.2.3.24.1: the reference "together with the
+		// originating address and Service Centre address" identifies the
+		// message, so segments of different senders, recipients or types
+		// never form one message.
+		{
+			"originator mismatch",
+			[]*tpdu.TPDU{
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("111")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("222")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			false,
+		},
+		{
+			"destination mismatch",
+			[]*tpdu.TPDU{
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					DA:         tpdu.NewAddress(tpdu.FromNumber("111")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					DA:         tpdu.NewAddress(tpdu.FromNumber("222")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			false,
+		},
+		{
+			"type mismatch",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			false,
+		},
+		// Only the address of the TPDU type is compared, as an SMS-SUBMIT
+		// has no TP-OA and an SMS-DELIVER no TP-DA (3GPP TS 23.040 Sections
+		// 9.2.2.1 and 9.2.2.2).
+		{
+			"submit ignores oa",
+			[]*tpdu.TPDU{
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					DA:         tpdu.NewAddress(tpdu.FromNumber("+111")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					OA:         tpdu.NewAddress(tpdu.FromNumber("+999")),
+					DA:         tpdu.NewAddress(tpdu.FromNumber("+111")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			true,
+		},
+		{
+			"deliver ignores da",
+			[]*tpdu.TPDU{
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("+111")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("+111")),
+					DA:  tpdu.NewAddress(tpdu.FromNumber("+999")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			true,
+		},
+		{
+			"status report recipient mismatch",
+			[]*tpdu.TPDU{
+				{
+					FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
+					RA:         tpdu.NewAddress(tpdu.FromNumber("+111")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
+					RA:         tpdu.NewAddress(tpdu.FromNumber("+222")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			false,
+		},
+		{
+			"same originator",
+			[]*tpdu.TPDU{
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("111")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("111")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			true,
+		},
 		{
 			"misordered segments",
 			[]*tpdu.TPDU{
@@ -324,6 +577,73 @@ func TestIsCompleteMessage(t *testing.T) {
 				{
 					UDH: tpdu.UserDataHeader{
 						tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 2}},
+					},
+				},
+			},
+			true,
+		},
+		// ignored concatenation IEs (3GPP TS 23.040 Section 9.2.3.24.1)
+		{
+			"zero total",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{3, 0, 1}},
+					},
+				},
+			},
+			true,
+		},
+		{
+			"zero seqno",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{3, 1, 0}},
+					},
+				},
+			},
+			true,
+		},
+		{
+			"seqno beyond total",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{0, 3, 1, 2}},
+					},
+				},
+			},
+			true,
+		},
+		{
+			"reference size mismatch",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 1}},
+					},
+				},
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{0, 3, 2, 2}},
+					},
+				},
+			},
+			false,
+		},
+		{
+			"last concat IE used",
+			[]*tpdu.TPDU{
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 0, Data: []byte{3, 2, 2}},
+						tpdu.InformationElement{ID: 8, Data: []byte{1, 3, 2, 1}},
+					},
+				},
+				{
+					UDH: tpdu.UserDataHeader{
+						tpdu.InformationElement{ID: 8, Data: []byte{1, 3, 2, 2}},
 					},
 				},
 			},
@@ -412,6 +732,30 @@ func TestUnmarshal(t *testing.T) {
 				DT: tpdu.Timestamp{
 					Time: time.Date(2011, 1, 11, 17, 59, 17, 0, tz1),
 				},
+			},
+			nil,
+		},
+		{
+			"deliverreport rp-ack",
+			[]byte{0x00, 0x01, 0x7f},
+			[]sms.UnmarshalOption{sms.AsMO, sms.AsRPAck},
+			&tpdu.TPDU{
+				Direction: tpdu.MO,
+				PI:        tpdu.PiPID,
+				PID:       0x7f,
+			},
+			nil,
+		},
+		{
+			"deliverreport rp-error",
+			[]byte{0x00, 0xd0, 0x01, 0x7f},
+			[]sms.UnmarshalOption{sms.AsMO, sms.AsRPError},
+			&tpdu.TPDU{
+				Direction: tpdu.MO,
+				RPMessage: tpdu.RPError,
+				FCS:       0xd0,
+				PI:        tpdu.PiPID,
+				PID:       0x7f,
 			},
 			nil,
 		},

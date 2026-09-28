@@ -28,7 +28,6 @@ var (
 		0x18: '\u0d18',
 		0x19: '\u0d19',
 		0x1a: '\u0d1a',
-		0x1b: 0x1b,
 		0x1c: '\u0d1b',
 		0x1d: '\u0d1c',
 		0x1e: '\u0d1d',
@@ -140,7 +139,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -154,7 +152,6 @@ var (
 		0x18: '*',
 		0x19: '\u0964',
 		0x1a: '\u0965',
-		0x1b: 0x1b,
 		0x1c: '\u0d66',
 		0x1d: '\u0d67',
 		0x1e: '\u0d68',
@@ -212,14 +209,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	malayalamEncoder    Encoder
-	malayalamExtEncoder Encoder
+	malayalamEncoder    = generateEncoder(malayalamDecoder)
+	malayalamExtEncoder = generateEncoder(malayalamExtDecoder)
 )
-
-func generateMalayalamEncoder() Encoder {
-	return generateEncoder(malayalamDecoder)
-}
-
-func generateMalayalamExtEncoder() Encoder {
-	return generateEncoder(malayalamExtDecoder)
-}

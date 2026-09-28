@@ -8,13 +8,21 @@ import (
 
 var (
 	// ErrClosed indicates that the collector has been closed and is no longer
-	// accepting PDUs.
+	// accepting PDUs. It is also the reason given to the expiry handler for
+	// the reassemblies abandoned by Close.
 	ErrClosed = errors.New("closed")
+	// ErrReassemblyTimeout is the reason given to the expiry handler for a
+	// reassembly abandoned as its timeout has passed.
+	ErrReassemblyTimeout = errors.New("reassembly timeout")
+	// ErrReassemblyLimit is the reason given to the expiry handler for a
+	// reassembly abandoned to keep within the reassembly limit.
+	ErrReassemblyLimit = errors.New("reassembly limit")
 	// ErrDcsConflict indicates the required encoding for user data conflicts with the
 	// encoding specified in the template TPDU DCS.
 	ErrDcsConflict = errors.New("DCS conflict")
 	// ErrCompressedUserData indicates TP-UD is compressed using the algorithm
-	// defined by 3GPP TS 23.042 and cannot be decoded as clear-text content.
+	// defined by 3GPP TS 23.042, which the library does not implement, so it
+	// cannot be decoded as clear-text content, or encoded.
 	ErrCompressedUserData = errors.New("compressed user data unsupported")
 	// ErrDuplicateSegment indicates a segment has arrived for a reassembly
 	// that already has that segment.
@@ -23,8 +31,12 @@ var (
 	// cannot be used to determine which of the two may better fit the
 	// reassembly, so the first is kept and the second discarded.
 	ErrDuplicateSegment = errors.New("duplicate segment")
-	// ErrReassemblyInconsistency indicates a segment has arrived for a
-	// reassembly that has a seqno greater than the number of segments in the
-	// reassembly.
-	ErrReassemblyInconsistency = errors.New("reassembly inconsistency")
+	// ErrMissingSegment indicates a segment passed to Decode is nil, as the
+	// Collector gives for a segment of a concatenated message that was not
+	// received, or that the TPDU passed to Collect is nil.
+	ErrMissingSegment = errors.New("missing segment")
+	// ErrMissingOriginator indicates an SMS-SUBMIT was passed to Collect
+	// without WithOriginator, which is required as the TPDU does not carry
+	// its originating address.
+	ErrMissingOriginator = errors.New("missing originator")
 )

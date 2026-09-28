@@ -4,9 +4,9 @@ package charset
 
 var (
 	hindiDecoder = Decoder{
-		0x00: '\u0981',
-		0x01: '\u0982',
-		0x02: '\u0983',
+		0x00: '\u0901',
+		0x01: '\u0902',
+		0x02: '\u0903',
 		0x03: 'अ',
 		0x04: 'आ',
 		0x05: 'इ',
@@ -31,7 +31,6 @@ var (
 		0x18: 'घ',
 		0x19: 'ङ',
 		0x1a: 'च',
-		0x1b: 0x1b,
 		0x1c: 'छ',
 		0x1d: 'ज',
 		0x1e: 'झ',
@@ -147,7 +146,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -161,7 +159,6 @@ var (
 		0x18: '*',
 		0x19: '।',
 		0x1a: '॥',
-		0x1b: 0x1b,
 		0x1c: '०',
 		0x1d: '१',
 		0x1e: '२',
@@ -225,14 +222,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	hindiEncoder    Encoder
-	hindiExtEncoder Encoder
+	hindiEncoder    = generateEncoder(hindiDecoder)
+	hindiExtEncoder = generateEncoder(hindiExtDecoder)
 )
-
-func generateHindiEncoder() Encoder {
-	return generateEncoder(hindiDecoder)
-}
-
-func generateHindiExtEncoder() Encoder {
-	return generateEncoder(hindiExtDecoder)
-}

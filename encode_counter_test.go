@@ -1,0 +1,233 @@
+// SPDX-License-Identifier: MIT
+
+package sms_test
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/gomaja/go-sms"
+	"github.com/gomaja/go-sms/encoding/tpdu"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// longMsg needs two segments.
+var longMsg = []byte(strings.Repeat("a", 200))
+
+func concatRef(t *testing.T, pdus []tpdu.TPDU) int {
+	t.Helper()
+	require.Greater(t, len(pdus), 1)
+	ci, ok := pdus[0].ConcatInfo()
+	require.True(t, ok)
+	for _, p := range pdus[1:] {
+		c, ok := p.ConcatInfo()
+		require.True(t, ok)
+		require.Equal(t, ci.Ref, c.Ref)
+	}
+	return ci.Ref
+}
+
+// Consecutive concatenated messages from Encode get different references,
+// as 3GPP TS 23.040 Section 9.2.3.24.1 requires to tell them apart, and the
+// TP-MR goes on incrementing, as Section 9.2.3.6 requires.
+func TestEncodeDefaultCounters(t *testing.T) {
+	a, err := sms.Encode(longMsg, sms.To("1234"))
+	require.NoError(t, err)
+	b, err := sms.Encode(longMsg, sms.To("1234"))
+	require.NoError(t, err)
+	assert.NotEqual(t, concatRef(t, a), concatRef(t, b))
+	assert.Equal(t, a[0].MR+1, a[1].MR)
+	assert.Equal(t, a[1].MR+1, b[0].MR)
+	assert.Equal(t, b[0].MR+1, b[1].MR)
+	// Encoders created without counters share them with Encode.
+	c, err := sms.NewEncoder(sms.AsSubmit).Encode(longMsg)
+	require.NoError(t, err)
+	d, err := sms.NewEncoder(sms.AsSubmit).Encode(longMsg)
+	require.NoError(t, err)
+	refs := []int{concatRef(t, a), concatRef(t, b), concatRef(t, c), concatRef(t, d)}
+	assert.Equal(t, (refs[0]+1)&0xff, refs[1])
+	assert.Equal(t, (refs[1]+1)&0xff, refs[2])
+	assert.Equal(t, (refs[2]+1)&0xff, refs[3])
+	assert.Equal(t, b[1].MR+1, c[0].MR)
+	assert.Equal(t, c[1].MR+1, d[0].MR)
+}
+
+// The counters given by options are used instead of the shared ones, by
+// NewEncoder and per call.
+func TestEncoderCounterOptions(t *testing.T) {
+	mr := sms.NewCounter(41)
+	ref := sms.NewCounter(299)
+	out, err := sms.Encode(longMsg, sms.WithMR(mr), sms.WithConcatRef(ref))
+	require.NoError(t, err)
+	assert.Equal(t, byte(42), out[0].MR)
+	assert.Equal(t, byte(43), out[1].MR)
+	assert.Equal(t, 300&0xff, concatRef(t, out))
+	assert.Equal(t, 43, mr.Read())
+	assert.Equal(t, 300, ref.Read())
+
+	e := sms.NewEncoder(sms.AsSubmit, sms.WithMR(mr), sms.WithConcatRef(ref))
+	assert.Same(t, mr, e.MsgCount)
+	assert.Same(t, ref, e.ConcatRef)
+	out, err = e.Encode(longMsg)
+	require.NoError(t, err)
+	assert.Equal(t, byte(44), out[0].MR)
+	assert.Equal(t, 301&0xff, concatRef(t, out))
+
+	other := &sms.Counter{}
+	out, err = e.Encode([]byte("hi"), sms.WithMR(other))
+	require.NoError(t, err)
+	assert.Equal(t, byte(1), out[0].MR)
+	// the per call counter did not replace that of the Encoder
+	assert.Equal(t, 45, mr.Read())
+	assert.Same(t, mr, e.MsgCount)
+}
+
+// Only an SMS-SUBMIT or SMS-COMMAND draws its TP-MR from the counter, as
+// only their originator allocates one (3GPP TS 23.040 Section 9.2.3.6). An
+// SMS-STATUS-REPORT keeps the TP-MR of the template, which is that of the
+// SMS-SUBMIT or SMS-COMMAND it reports on, in every TPDU, and the other
+// types, which have no TP-MR, keep it too, without using up the counter.
+func TestEncoderMRByType(t *testing.T) {
+	addr := tpdu.Address{Addr: "6391", TOA: 0x91}
+	patterns := []struct {
+		name      string
+		tmpl      tpdu.TPDU
+		allocated bool
+	}{
+		{"submit", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: addr}, true},
+		{"command", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02, DA: addr}, true},
+		{"status report", tpdu.TPDU{FirstOctet: 0x02, RA: addr}, false},
+		{"deliver", tpdu.TPDU{FirstOctet: 0x00, OA: addr}, false},
+		{"deliver report", tpdu.TPDU{Direction: tpdu.MO}, false},
+		{"submit report", tpdu.TPDU{FirstOctet: 0x01}, false},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			tmpl := p.tmpl
+			tmpl.MR = 42
+			mr := sms.NewCounter(6)
+			e := sms.NewEncoder(sms.WithTemplate(tmpl), sms.WithMR(mr), sms.WithConcatRef(&sms.Counter{}))
+			drawn := 0
+			msgs := [][]byte{[]byte("hi")}
+			if st := tmpl.SmsType(); st == tpdu.SmsSubmit || st == tpdu.SmsDeliver {
+				msgs = append(msgs, []byte(strings.Repeat("a", 400)))
+			}
+			for _, msg := range msgs {
+				out, err := e.Encode(msg)
+				require.NoError(t, err)
+				require.Equal(t, len(msg) > 100, len(out) > 1)
+				for i, pdu := range out {
+					want := byte(42)
+					if p.allocated {
+						want = byte(7 + drawn + i)
+					}
+					assert.Equal(t, want, pdu.MR, "segment %d", i)
+				}
+				if p.allocated {
+					drawn += len(out)
+				}
+				assert.Equal(t, 6+drawn, mr.Read())
+			}
+		}
+		t.Run(p.name, f)
+	}
+}
+
+// A nil counter, whether given per call, left unset in a zero value or
+// literal Encoder, or set on an Encoder after NewEncoder, stands for the
+// shared counter, as it does for NewEncoder, rather than a fixed reference
+// of 1 and the TP-MR of the template. Consecutive concatenated messages
+// then get different references, as 3GPP TS 23.040 Section 9.2.3.24.1
+// requires, and the TP-MR goes on incrementing (Section 9.2.3.6).
+func TestEncoderNilCounters(t *testing.T) {
+	cleared := sms.NewEncoder(sms.AsSubmit)
+	cleared.MsgCount = nil
+	cleared.ConcatRef = nil
+	patterns := []struct {
+		name    string
+		e       *sms.Encoder
+		options []sms.EncoderOption
+	}{
+		{"per call nil counters", sms.NewEncoder(sms.AsSubmit),
+			[]sms.EncoderOption{sms.WithMR(nil), sms.WithConcatRef(nil)}},
+		{"per call nil counters over given ones",
+			sms.NewEncoder(sms.AsSubmit, sms.WithMR(&sms.Counter{}), sms.WithConcatRef(&sms.Counter{})),
+			[]sms.EncoderOption{sms.WithMR(nil), sms.WithConcatRef(nil)}},
+		{"zero value", &sms.Encoder{}, []sms.EncoderOption{sms.AsSubmit}},
+		{"literal", &sms.Encoder{MsgCount: nil, ConcatRef: nil}, []sms.EncoderOption{sms.AsSubmit}},
+		{"cleared after NewEncoder", cleared, nil},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			a, err := p.e.Encode(longMsg, p.options...)
+			require.NoError(t, err)
+			b, err := p.e.Encode(longMsg, p.options...)
+			require.NoError(t, err)
+			assert.NotEqual(t, concatRef(t, a), concatRef(t, b))
+			assert.Equal(t, a[0].MR+1, a[1].MR)
+			assert.NotEqual(t, a[0].MR, b[0].MR)
+			// both are drawn from the shared counters
+			c, err := sms.Encode(longMsg)
+			require.NoError(t, err)
+			assert.Equal(t, (concatRef(t, b)+1)&0xff, concatRef(t, c))
+			assert.Equal(t, b[1].MR+1, c[0].MR)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+func TestNewCounter(t *testing.T) {
+	c := sms.NewCounter(254)
+	assert.Equal(t, 254, c.Read())
+	assert.Equal(t, 255, c.Count())
+	assert.Equal(t, 256, c.Count())
+	assert.Equal(t, 256, c.Read())
+	var z sms.Counter
+	assert.Equal(t, 1, z.Count())
+}
+
+// firstRefEnv makes TestHelperFirstConcatRef print the reference of the first
+// concatenated message of the process.
+const firstRefEnv = "GO_SMS_TEST_FIRST_CONCAT_REF"
+
+func TestHelperFirstConcatRef(t *testing.T) {
+	if os.Getenv(firstRefEnv) == "" {
+		t.Skip("run by TestDefaultConcatRefIsRandom")
+	}
+	out, err := sms.Encode(longMsg, sms.WithMR(&sms.Counter{}))
+	if err != nil {
+		fmt.Println("error", err)
+		os.Exit(1)
+	}
+	ci, _ := out[0].ConcatInfo()
+	fmt.Printf("ref=%d\n", ci.Ref)
+	os.Exit(0)
+}
+
+// The shared reference counter starts at a random value, so that the
+// references of different runs of a program, such as successive runs of a
+// command line tool, are unlikely to repeat.
+func TestDefaultConcatRefIsRandom(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the test binary")
+	}
+	refs := map[int]bool{}
+	for i := 0; i < 5; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperFirstConcatRef$")
+		cmd.Env = append(os.Environ(), firstRefEnv+"=1")
+		b, err := cmd.Output()
+		require.NoError(t, err)
+		s := strings.TrimSpace(string(b))
+		require.True(t, strings.HasPrefix(s, "ref="), s)
+		ref, err := strconv.Atoi(strings.TrimPrefix(s, "ref="))
+		require.NoError(t, err)
+		refs[ref] = true
+	}
+	// Five draws of 256 values are all equal with a chance of 1 in 2^32.
+	assert.Greater(t, len(refs), 1, "%v", refs)
+}

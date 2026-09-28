@@ -3,6 +3,9 @@
 package tpdu
 
 import (
+	"strings"
+	"unicode/utf8"
+
 	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/gomaja/go-sms/encoding/semioctet"
 )
@@ -27,10 +30,9 @@ func NewAddress(options ...AddressOption) Address {
 	return a
 }
 
-// FromNumber creates an AddressOption thats sets the address to the
-// international number.
-//
-// The number may be optionally prefixed with '+'.
+// FromNumber creates an AddressOption that sets the address to the number,
+// as SetNumber does, so the number is international only if it starts with
+// '+'.
 func FromNumber(number string) AddressOption {
 	return func(a Address) Address {
 		a.SetNumber(number)
@@ -38,27 +40,64 @@ func FromNumber(number string) AddressOption {
 	}
 }
 
+// maxAddressLength is the maximum Address-Length, in semi-octets.
+//
+// 3GPP TS 23.040 Section 9.1.2.5: "The maximum length of the full address
+// field (Address-Length, Type-of-Address and Address-Value) is 12 octets", so
+// the Address-Value is at most 10 octets, which holds 20 digits or 11
+// septets of alphanumeric characters.
+const maxAddressLength = 20
+
 // MarshalBinary marshals an Address into binary.
 //
 // It returns the marshalled address and any error detected
 // while marshalling.
+//
+// An alphanumeric address, one with a TypeOfNumber of TonAlphanumeric, is
+// coded in the GSM 7 bit default alphabet (3GPP TS 23.040 Sections 9.1.2.4
+// and 9.1.2.5), including its extension table, whose characters, such as
+// '€' and '|', are coded as an escape sequence of two septets (3GPP TS
+// 23.038 Section 6.2.1.1). The Address-Length is the number of semi-octets
+// its septets use.
+//
+// An alphanumeric address that is not valid UTF-8 results in an
+// ErrInvalidUTF8 error, as EncodeUserData gives for such a message, and one
+// with a character the default alphabet does not have in a
+// gsm7.ErrUnencodable error.
+//
+// An address longer than 20 digits, or 11 septets, cannot be encoded and
+// results in an ErrOverlength error.
+// The TOA is encoded as is, so an empty Address encodes to a zero length
+// address with a zero TOA.
 func (a *Address) MarshalBinary() (dst []byte, err error) {
 	ton := a.TypeOfNumber()
 	var addr []byte
 	var l int // is digits and ignores the toa
 	switch ton {
 	case TonAlphanumeric:
-		e := gsm7.NewEncoder().WithExtCharset(nil) // without escapes
+		if !utf8.ValidString(a.Addr) {
+			return nil, NewEncodeError("addr", ErrInvalidUTF8)
+		}
+		e := gsm7.NewEncoder() // the default alphabet and its extension table
 		addr, err = e.Encode([]byte(a.Addr))
 		if err != nil {
-			return nil, EncodeError("addr", err)
+			return nil, NewEncodeError("addr", err)
 		}
 		l = (len(addr)*7 + 3) / 4
-		addr = gsm7.Pack7Bit(addr, 0)
+		if l > maxAddressLength {
+			return nil, NewEncodeError("addr", ErrOverlength)
+		}
+		addr, err = gsm7.Pack7Bit(addr, 0)
+		if err != nil {
+			return nil, NewEncodeError("addr", err)
+		}
 	default:
+		if len(a.Addr) > maxAddressLength {
+			return nil, NewEncodeError("addr", ErrOverlength)
+		}
 		addr, err = semioctet.Encode([]byte(a.Addr))
 		if err != nil {
-			return nil, EncodeError("addr", err)
+			return nil, NewEncodeError("addr", err)
 		}
 		l = len(a.Addr)
 	}
@@ -72,11 +111,30 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 //
 // It returns the number of bytes read from the source, and any error detected
 // while unmarshalling.
+// An Address-Length greater than 20 exceeds the maximum length of the address
+// field and results in an ErrOverlength error.
+//
+// The Address-Length of a semi-octet address counts its digits, so the fill
+// semi-octet of an address with an odd number of digits, which a sender sets
+// to 1111 (3GPP TS 23.040 Section 9.1.2.3), is ignored whatever it holds, as
+// it carries nothing (Section 9.1.2.5), and a 1111 before the last
+// semi-octet is skipped (Section 9.1.2.3).
+//
+// An alphanumeric address is decoded from the GSM 7 bit default alphabet and
+// its extension table, as for MarshalBinary, and never results in an error,
+// so the TPDU it is in is not lost over its address. Where the tables have
+// no character, the address is decoded as 3GPP TS 23.038 has a receiver
+// display it, as gsm7.Decoder.Decode describes: an escaped septet that has
+// no character in the extension table as the character of the main table,
+// and an escape followed by another escape, or by nothing, as a space.
 func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 	if len(src) < 2 {
 		return 0, NewDecodeError("addr", 0, ErrUnderflow)
 	}
-	l := int(src[0])  // len is semi-octets and ignores toa
+	l := int(src[0]) // len is semi-octets and ignores toa
+	if l > maxAddressLength {
+		return 0, NewDecodeError("addr", 0, ErrOverlength)
+	}
 	ol := (l + 1) / 2 // octet length
 	toa := src[1]
 	ton := TypeOfNumber((toa >> 4) & 0x07)
@@ -91,7 +149,7 @@ func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 			// drop septet of fill
 			u = u[:len(u)-1]
 		}
-		d := gsm7.NewDecoder().WithExtCharset(nil).Strict() // without escapes
+		d := gsm7.NewDecoder() // the default alphabet and its extension table
 		baddr, err := d.Decode(u)
 		if err != nil {
 			return ri, NewDecodeError("addr", ri, err)
@@ -99,7 +157,12 @@ func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 		ri += ol
 		a.Addr = string(baddr)
 	default:
-		baddr, n, err := semioctet.Decode(make([]byte, l), src[ri:ri+ol])
+		// Room for a digit more than the Address-Length, so that the last
+		// semi-octet of an odd length address, its fill, is decoded
+		// whatever it holds, and then dropped, as it is not counted by the
+		// Address-Length. A 1111 before it is skipped, and the last
+		// semi-octet is then a digit.
+		baddr, n, err := semioctet.Decode(make([]byte, l+1), src[ri:ri+ol])
 		ri += n
 		if err != nil {
 			return ri, NewDecodeError("addr", ri-n, err)
@@ -107,7 +170,7 @@ func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 		if n != ol || len(baddr) < l {
 			return ri, NewDecodeError("addr", ri-n, ErrUnderflow)
 		}
-		a.Addr = string(baddr)
+		a.Addr = string(baddr[:l])
 	}
 	a.TOA = toa
 	return ri, nil
@@ -121,14 +184,31 @@ func (a Address) Number() string {
 	return a.Addr
 }
 
-// SetNumber sets the address to the international number.
+// SetNumber sets the address to the number, and its TOA to the type of
+// address 3GPP TS 27.005 Section 3.1 gives a number by default: "when first
+// character of <da> is + (IRA 43) default is 145, otherwise default is 129".
 //
-// The number may be optionally prefixed with '+'.
+// A number that starts with '+' is an international number, and is set
+// without the '+', with a TOA of 145, 0x91: TonInternational and NpISDN.
+//
+// Any other number, such as a national number, one with a trunk prefix, or
+// a short code, is set as it is, with a TOA of 129, 0x81: TonUnknown and
+// NpISDN. 3GPP TS 23.040 Section 9.1.2.5 has the unknown type of number used
+// "when the user or network has no a priori information about the numbering
+// plan. In this case, the Address-Value field is organized according to the
+// network dialling plan, e.g. prefix or escape digits might be present." The
+// same digits sent as an international number would be another number.
+//
+// For another type of address, set the TOA, or use SetTypeOfNumber and
+// SetNumberingPlan, after SetNumber.
 func (a *Address) SetNumber(number string) {
-	if len(number) > 0 && number[0] == '+' {
+	ton := TonUnknown
+	if strings.HasPrefix(number, "+") {
 		number = number[1:]
+		ton = TonInternational
 	}
-	a.SetTypeOfNumber(TonInternational)
+	a.TOA = 0x80 // bit 7 of the TOA is always 1 (Section 9.1.2.5)
+	a.SetTypeOfNumber(ton)
 	a.SetNumberingPlan(NpISDN)
 	a.Addr = number
 }

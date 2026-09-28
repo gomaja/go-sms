@@ -9,58 +9,77 @@ import (
 	"io"
 )
 
-// DecodeError contains the details of an error detected whilew decoding a TPDU.
+// DecodeError contains the details of an error detected while decoding a TPDU.
+//
+// The Err it wraps can be matched with errors.Is and errors.As.
 type DecodeError struct {
 	Field  string
 	Offset int
 	Err    error
 }
 
-// NewDecodeError creates a decodeError which identifies the field being
+// NewDecodeError creates a DecodeError which identifies the field being
 // decoded, and the offset into the byte array where the field starts.
 //
-// If the provided error is a nested decodeError then the offset is updated to
+// If the provided error is a nested DecodeError then the offset is updated to
 // provide the offset from the beginning of the enclosing field, and the field
 // names are combined in outer.inner format.
+//
+// An io.EOF or io.ErrUnexpectedEOF is replaced by ErrUnderflow.
 func NewDecodeError(f string, o int, e error) DecodeError {
 	if s, ok := e.(DecodeError); ok {
 		s.Field = fmt.Sprintf("%s.%s", f, s.Field)
 		s.Offset = s.Offset + o
 		return s
 	}
-	if e == io.EOF {
+	if errors.Is(e, io.EOF) || errors.Is(e, io.ErrUnexpectedEOF) {
 		e = ErrUnderflow
 	}
 	return DecodeError{f, o, e}
-}
-
-type encodeError struct {
-	Field string
-	Err   error
-}
-
-// EncodeError creates an encodeError which identifies the field being encoded.
-//
-// If the provided error is a nested encodeError then the error is returned as
-// is rather than wrapping it.
-func EncodeError(f string, e error) error {
-	if s, ok := e.(encodeError); ok {
-		s.Field = fmt.Sprintf("%s.%s", f, s.Field)
-		return s
-	}
-	return encodeError{f, e}
-}
-
-func (e encodeError) Error() string {
-	return fmt.Sprintf("tpdu: error encoding %s: %v", e.Field, e.Err)
 }
 
 func (e DecodeError) Error() string {
 	return fmt.Sprintf("tpdu: error decoding %s at octet %d: %v", e.Field, e.Offset, e.Err)
 }
 
+// Unwrap returns the error that caused the DecodeError.
+func (e DecodeError) Unwrap() error {
+	return e.Err
+}
+
+// EncodeError contains the details of an error detected while encoding a
+// TPDU.
+//
+// The Err it wraps can be matched with errors.Is and errors.As.
+type EncodeError struct {
+	Field string
+	Err   error
+}
+
+// NewEncodeError creates an EncodeError which identifies the field being
+// encoded.
+//
+// If the provided error is a nested EncodeError then the field names are
+// combined in outer.inner format rather than wrapping it.
+func NewEncodeError(f string, e error) EncodeError {
+	if s, ok := e.(EncodeError); ok {
+		s.Field = fmt.Sprintf("%s.%s", f, s.Field)
+		return s
+	}
+	return EncodeError{f, e}
+}
+
+func (e EncodeError) Error() string {
+	return fmt.Sprintf("tpdu: error encoding %s: %v", e.Field, e.Err)
+}
+
+// Unwrap returns the error that caused the EncodeError.
+func (e EncodeError) Unwrap() error {
+	return e.Err
+}
+
 // ErrUnsupportedSmsType indicates the type of TPDU being decoded is not
-// unsupported by the decoder.
+// supported by the decoder.
 type ErrUnsupportedSmsType byte
 
 func (e ErrUnsupportedSmsType) Error() string {
@@ -76,10 +95,11 @@ var (
 	ErrOddUCS2Length = errors.New("odd UCS2 length")
 
 	// ErrOverlength indicates the binary provided contains more bytes than
-	// expected by the TPDU decoder.
+	// expected by the TPDU decoder, or a field provided to an encoder is
+	// longer than it can encode.
 	ErrOverlength = errors.New("overlength")
 
-	// ErrMissing indicates a field requiored to marshal an object is missing.
+	// ErrMissing indicates a field required to marshal an object is missing.
 	ErrMissing = errors.New("missing")
 
 	// ErrNonZero indicates a field which is expected to be zeroed, but contains
@@ -89,4 +109,8 @@ var (
 	// ErrUnderflow indicates the binary provided does not contain
 	// sufficient bytes to correctly decode the TPDU.
 	ErrUnderflow = errors.New("underflow")
+
+	// ErrTooManySegments indicates a message is too long to be carried in
+	// the 255 segments of a concatenated message.
+	ErrTooManySegments = errors.New("more than 255 segments")
 )

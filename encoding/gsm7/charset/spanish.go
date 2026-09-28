@@ -6,7 +6,6 @@ var (
 	spanishExtDecoder = Decoder{
 		0x09: 'ç',
 		0x0a: '\f',
-		0x0d: '\n',
 		0x14: '^',
 		0x28: '{',
 		0x29: '}',
@@ -25,9 +24,5 @@ var (
 		0x6f: 'ó',
 		0x75: 'ú',
 	}
-	spanishExtEncoder Encoder
+	spanishExtEncoder = generateEncoder(spanishExtDecoder)
 )
-
-func generateSpanishExtEncoder() Encoder {
-	return generateEncoder(spanishExtDecoder)
-}

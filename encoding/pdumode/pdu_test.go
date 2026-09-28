@@ -3,7 +3,9 @@
 package pdumode_test
 
 import (
+	"encoding"
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/gomaja/go-sms/encoding/pdumode"
@@ -34,10 +36,18 @@ func TestUnmarshalBinary(t *testing.T) {
 			"valid",
 			"0791361907002039010203040506070809",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Present: true,
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
+		},
+		{
+			"overlength smsc",
+			"0c91214365870921436587092101020304",
+			nil,
+			nil,
+			tpdu.NewDecodeError("length", 0, tpdu.ErrOverlength),
 		},
 	}
 	for _, p := range decodePatterns {
@@ -79,7 +89,8 @@ func TestUnmarshalHexString(t *testing.T) {
 		{
 			"valid", "0791361907002039010203040506070809",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Present: true,
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
@@ -101,6 +112,93 @@ func TestUnmarshalHexString(t *testing.T) {
 	}
 }
 
+// PDU implements encoding.BinaryUnmarshaler, which must copy any data it
+// keeps after returning.
+var _ encoding.BinaryUnmarshaler = (*pdumode.PDU)(nil)
+
+// TestUnmarshalBinaryCopies checks that the decoded TPDU does not share
+// memory with the source, so the caller can reuse its buffer.
+func TestUnmarshalBinaryCopies(t *testing.T) {
+	src := []byte{0x00, 0x01, 0x02}
+	var p pdumode.PDU
+	require.NoError(t, p.UnmarshalBinary(src))
+	q, err := pdumode.UnmarshalBinary(src)
+	require.NoError(t, err)
+	src[1] = 0xff
+	assert.Equal(t, []byte{0x01, 0x02}, p.TPDU)
+	assert.Equal(t, []byte{0x01, 0x02}, q.TPDU)
+}
+
+// TestUnmarshalReuse checks that decoding into a used PDU gives the same
+// result as decoding into a new one, and that a failed decode leaves the PDU
+// empty rather than holding the previous message.
+func TestUnmarshalReuse(t *testing.T) {
+	patterns := []testPattern{
+		{
+			"default smsc",
+			"000102",
+			&pdumode.SMSCAddress{},
+			[]byte{0x01, 0x02},
+			nil,
+		},
+		{
+			"smsc",
+			"07913619070020390102",
+			&pdumode.SMSCAddress{
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Present: true,
+			},
+			[]byte{0x01, 0x02},
+			nil,
+		},
+		{
+			"empty",
+			"",
+			&pdumode.SMSCAddress{},
+			nil,
+			tpdu.NewDecodeError("length", 0, tpdu.ErrUnderflow),
+		},
+		{
+			"underflow",
+			"0791361907",
+			&pdumode.SMSCAddress{},
+			nil,
+			tpdu.NewDecodeError("addr", 2, tpdu.ErrUnderflow),
+		},
+	}
+	used := func() pdumode.PDU {
+		return pdumode.PDU{
+			SMSC: pdumode.SMSCAddress{
+				Address: tpdu.Address{Addr: "61409865629", TOA: 0x91},
+			},
+			TPDU: []byte{0xde, 0xad},
+		}
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			want := pdumode.PDU{SMSC: *p.smsc, TPDU: p.tpdu}
+			b, err := hex.DecodeString(p.pdu)
+			require.NoError(t, err)
+
+			pdu := used()
+			err = pdu.UnmarshalBinary(b)
+			assert.Equal(t, p.err, err)
+			assert.Equal(t, want, pdu)
+
+			pdu = used()
+			err = pdu.UnmarshalHexString(p.pdu)
+			assert.Equal(t, p.err, err)
+			assert.Equal(t, want, pdu)
+		}
+		t.Run(p.name, f)
+	}
+
+	pdu := used()
+	err := pdu.UnmarshalHexString("nothex")
+	assert.Equal(t, hex.InvalidByteError('n'), err)
+	assert.Equal(t, pdumode.PDU{}, pdu)
+}
+
 func TestMarshalBinary(t *testing.T) {
 	patterns := []testPattern{
 		{
@@ -113,7 +211,7 @@ func TestMarshalBinary(t *testing.T) {
 		{
 			"valid", "0791361907002039010203040506070809",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
@@ -121,10 +219,29 @@ func TestMarshalBinary(t *testing.T) {
 		{
 			"invalid addr", "",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "banana"},
+				Address: tpdu.Address{Addr: "banana"},
 			},
 			nil,
-			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
+			tpdu.NewEncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
+		},
+		{
+			"set number",
+			"07911604895626f90102",
+			func() *pdumode.SMSCAddress {
+				var a pdumode.SMSCAddress
+				a.SetNumber("+61409865629")
+				return &a
+			}(),
+			[]byte{0x01, 0x02},
+			nil,
+		},
+		{
+			"overlength smsc", "",
+			&pdumode.SMSCAddress{
+				Address: tpdu.Address{Addr: strings.Repeat("1", 510), TOA: 0x91},
+			},
+			[]byte{0x01, 0x02, 0x03, 0x04},
+			tpdu.NewEncodeError("addr", tpdu.ErrOverlength),
 		},
 	}
 	for _, p := range patterns {
@@ -152,7 +269,7 @@ func TestMarshalHexString(t *testing.T) {
 			"valid",
 			"0791361907002039010203040506070809",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "639170000293", TOA: 0x91},
+				Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
 			nil,
@@ -161,10 +278,10 @@ func TestMarshalHexString(t *testing.T) {
 			"invalid addr",
 			"",
 			&pdumode.SMSCAddress{
-				tpdu.Address{Addr: "banana"},
+				Address: tpdu.Address{Addr: "banana"},
 			},
 			nil,
-			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
+			tpdu.NewEncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
 		},
 	}
 	for _, p := range patterns {
@@ -176,4 +293,81 @@ func TestMarshalHexString(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+// FuzzUnmarshalBinary checks that a PDU decodes as its SMSC field followed
+// by the TPDU, and that a decoded PDU marshals to a PDU that decodes to the
+// same value, with only bit 7 of the SMSC TOA set.
+func FuzzUnmarshalBinary(f *testing.F) {
+	for _, s := range smscSeeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, src []byte) {
+		var a pdumode.SMSCAddress
+		n, aerr := a.UnmarshalBinary(src)
+
+		p := pdumode.PDU{SMSC: a, TPDU: []byte{0xde, 0xad}}
+		err := p.UnmarshalBinary(src)
+		require.Equal(t, aerr, err)
+		if err != nil {
+			require.Equal(t, pdumode.PDU{}, p)
+			q, qerr := pdumode.UnmarshalBinary(src)
+			require.Equal(t, err, qerr)
+			require.Nil(t, q)
+			return
+		}
+		require.Equal(t, a, p.SMSC)
+		require.Equal(t, hex.EncodeToString(src[n:]), hex.EncodeToString(p.TPDU))
+
+		b, err := p.MarshalBinary()
+		require.NoError(t, err)
+		q, err := pdumode.UnmarshalBinary(b)
+		require.NoError(t, err)
+		want := p
+		if want.SMSC.Present {
+			want.SMSC.TOA |= 0x80
+		}
+		assert.Equal(t, want, *q)
+		b2, err := q.MarshalBinary()
+		require.NoError(t, err)
+		assert.Equal(t, b, b2)
+	})
+}
+
+// FuzzUnmarshalHexString checks that decoding a hex string gives the same
+// result as decoding its binary form, and that MarshalHexString gives a
+// string that decodes to the same PDU, with only bit 7 of the SMSC TOA set.
+func FuzzUnmarshalHexString(f *testing.F) {
+	for _, s := range smscSeeds {
+		f.Add(hex.EncodeToString(s))
+	}
+	f.Add("nothex")
+	f.Add("0")
+	f.Add("07911604895626F90102")
+	f.Fuzz(func(t *testing.T, s string) {
+		p := pdumode.PDU{TPDU: []byte{0xde, 0xad}}
+		err := p.UnmarshalHexString(s)
+		b, herr := hex.DecodeString(s)
+		if herr != nil {
+			require.Equal(t, herr, err)
+			require.Equal(t, pdumode.PDU{}, p)
+			return
+		}
+		var want pdumode.PDU
+		werr := want.UnmarshalBinary(b)
+		require.Equal(t, werr, err)
+		require.Equal(t, want, p)
+		if err != nil {
+			return
+		}
+
+		h, err := p.MarshalHexString()
+		require.NoError(t, err)
+		var q pdumode.PDU
+		require.NoError(t, q.UnmarshalHexString(h))
+		if want.SMSC.Present {
+			want.SMSC.TOA |= 0x80
+		}
+		assert.Equal(t, want, q)
+	})
 }

@@ -23,7 +23,6 @@ var (
 		0x15: '\u0b95',
 		0x19: '\u0b99',
 		0x1a: '\u0b9a',
-		0x1b: 0x1b,
 		0x1d: '\u0b9c',
 		0x1f: '\u0b9e',
 		0x20: 0x20,
@@ -122,7 +121,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -136,7 +134,6 @@ var (
 		0x18: '*',
 		0x19: '\u0964',
 		0x1a: '\u0965',
-		0x1b: 0x1b,
 		0x1c: '\u0be6',
 		0x1d: '\u0be7',
 		0x1e: '\u0be8',
@@ -145,6 +142,8 @@ var (
 		0x21: '\u0beb',
 		0x22: '\u0bec',
 		0x23: '\u0bed',
+		// TS 23.038 V20.0.0 A.2.11 prints 0BEF here and again at 0x25, and
+		// has no 0BEE, the digit eight that fits the run of 0x1C-0x25.
 		0x24: '\u0bee',
 		0x25: '\u0bef',
 		0x26: '\u0bf3',
@@ -189,14 +188,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	tamilEncoder    Encoder
-	tamilExtEncoder Encoder
+	tamilEncoder    = generateEncoder(tamilDecoder)
+	tamilExtEncoder = generateEncoder(tamilExtDecoder)
 )
-
-func generateTamilEncoder() Encoder {
-	return generateEncoder(tamilDecoder)
-}
-
-func generateTamilExtEncoder() Encoder {
-	return generateEncoder(tamilExtDecoder)
-}

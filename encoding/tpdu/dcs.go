@@ -23,33 +23,36 @@ const (
 	// AlphaUCS2 indicates that the UD is encoded as UCS-2 (16bit) characters.
 	AlphaUCS2
 
-	// AlphaReserved indicates the alphabet is not defined.
+	// AlphaReserved is the reserved character set of the general data coding
+	// groups (bits 3..2 set to 11).
+	//
+	// DCS.Alphabet never returns it, as a receiving entity treats reserved
+	// codings as the GSM 7 bit default alphabet, and DCS.WithAlphabet does not
+	// accept it.
 	AlphaReserved
 )
 
 // Alphabet returns the alphabet used to encode the User Data according to the DCS.
 //
-// The DCS is assumed to be defined as per 3GPP TS 23.038 Section 4.
-func (d DCS) Alphabet() (Alphabet, error) {
-	alpha := Alpha7Bit
+// The DCS is interpreted as per 3GPP TS 23.038 Section 4, which requires a
+// receiving entity to assume that any reserved coding, including the reserved
+// coding groups 1000..1011 and the reserved character set of groups 00xx and
+// 01xx, is the GSM 7 bit default alphabet.
+func (d DCS) Alphabet() Alphabet {
 	switch {
 	case d&0x80 == 0x00: // 0xxx
-		alpha = Alphabet((d >> 2) & 0x3)
-		if alpha == AlphaReserved {
-			alpha = Alpha7Bit
+		if alpha := Alphabet((d >> 2) & 0x3); alpha != AlphaReserved {
+			return alpha
 		}
-	case d&0xe0 == 0xc0: // 110x
-		// is 7bit
 	case d&0xf0 == 0xe0: // 1110
-		alpha = AlphaUCS2
+		return AlphaUCS2
 	case d&0xf0 == 0xf0: // 1111
 		if d&0x04 == 0x04 {
-			alpha = Alpha8Bit
-		} // else 7bit
-	default: // includes 10xx reserved coding groups
-		return Alpha7Bit, ErrInvalid
+			return Alpha8Bit
+		}
 	}
-	return alpha, nil
+	// 110x, and the reserved codings including the 10xx coding groups.
+	return Alpha7Bit
 }
 
 // ApplyTPDUOption applies the DCS value to the TPDU DCS field.
@@ -60,11 +63,7 @@ func (d DCS) ApplyTPDUOption(t *TPDU) error {
 
 func (d DCS) String() string {
 	str := fmt.Sprintf("0x%02x", int(d))
-	alpha, err := d.Alphabet()
-	if err != nil {
-		return str
-	}
-	switch alpha {
+	switch d.Alphabet() {
 	case Alpha7Bit:
 		str += " 7bit"
 	case Alpha8Bit:
@@ -78,8 +77,12 @@ func (d DCS) String() string {
 // WithAlphabet sets the Alphabet bits of the DCS, given the state of the other
 // bits.
 //
-// An error is returned if the state is incompatible with setting the alphabet.
+// An error is returned if the alphabet is not one of Alpha7Bit, Alpha8Bit or
+// AlphaUCS2, or if the state is incompatible with setting the alphabet.
 func (d DCS) WithAlphabet(a Alphabet) (DCS, error) {
+	if a < Alpha7Bit || a >= AlphaReserved {
+		return d, ErrInvalid
+	}
 	switch {
 	case d&0x80 == 0x00: // 0xxx
 		return d&^0x0c | (DCS(a) << 2), nil
@@ -87,9 +90,9 @@ func (d DCS) WithAlphabet(a Alphabet) (DCS, error) {
 		return d, nil
 	case d&0xf0 == 0xe0 && a == AlphaUCS2: // 1110 is UCS2
 		return d, nil
-	case d&0xf0 == 0xf0 && a <= Alpha8Bit:
+	case d&0xf0 == 0xf0 && a <= Alpha8Bit: // 1111, with reserved bit 3 cleared
 		return d&^0x0c | (DCS(a) << 2), nil
-	default: // includes 110x, 1110, and 10xx reserved coding groups
+	default: // 110x or 1110 with another alphabet, and 10xx reserved coding groups
 		return d, ErrInvalid
 	}
 }
@@ -123,31 +126,52 @@ const (
 	MClassUnknown
 )
 
-// Class returns the MessageClass indicated by the DCS.
-// The DCS is assumed to be defined as per 3GPP TS 23.038 Section 4.
-func (d DCS) Class() (MessageClass, error) {
-	switch {
-	case d&0x90 == 0x10, d&0xf0 == 0xf0: // 0xx1 and 1111
-		return MessageClass(d & 0x3), nil
-	case d&0xe0 == 0xc0, d&0xf0 == 0xe0: // 110x and 1110
-		return MClassUnknown, nil
-	default: // includes 10xx reserved coding groups
-		return MClassUnknown, ErrInvalid
+// Class returns the MessageClass indicated by the DCS, or MClassUnknown if the
+// DCS carries no message class.
+//
+// The DCS is interpreted as per 3GPP TS 23.038 Section 4. Only groups 00xx and
+// 01xx with bit 4 set, and group 1111, carry a message class. A reserved
+// coding is assumed to be 00000000, which has no message class.
+func (d DCS) Class() MessageClass {
+	if d.reserved() {
+		return MClassUnknown
 	}
+	if d&0x90 == 0x10 || d&0xf0 == 0xf0 { // 0xx1 and 1111
+		return MessageClass(d & 0x3)
+	}
+	return MClassUnknown
 }
 
 // WithClass sets the MessageClass bits of the DCS, given the state of the
 // other bits.
 //
-// An error is returned if the state is incompatible with setting the message
-// class.
+// MClassUnknown removes the message class, which is only possible in the
+// groups 00xx and 01xx, and is a no-op for the groups 110x and 1110, which
+// never carry a class.
+//
+// An error is returned if the class is out of range, or if the state is
+// incompatible with setting the message class.
 func (d DCS) WithClass(c MessageClass) (DCS, error) {
 	switch {
+	case c < MClass0 || c > MClassUnknown, d.reserved():
+		return d, ErrInvalid
 	case d&0x80 == 0x00: // 0xxx
-		return (d&^0x03 | 0x10 | DCS(c)), nil
-	case d&0xf0 == 0xf0: // 1111
-		return (d&^0x03 | DCS(c)), nil
-	default: // includes 10xx reserved coding groups
+		if c == MClassUnknown {
+			// bit 4 cleared, so bits 1..0 are reserved and set to 0.
+			return d &^ 0x13, nil
+		}
+		return d&^0x03 | 0x10 | DCS(c), nil
+	case d&0xf0 == 0xf0: // 1111 always carries a class
+		if c == MClassUnknown {
+			return d, ErrInvalid
+		}
+		return d&^0x03 | DCS(c), nil
+	case d&0xe0 == 0xc0, d&0xf0 == 0xe0: // 110x and 1110 never carry a class
+		if c == MClassUnknown {
+			return d, nil
+		}
+		return d, ErrInvalid
+	default: // 10xx reserved coding groups
 		return d, ErrInvalid
 	}
 }
@@ -158,5 +182,19 @@ func (d DCS) WithClass(c MessageClass) (DCS, error) {
 // The DCS is assumed to be defined as per 3GPP TS 23.038 Section 4.
 func (d DCS) Compressed() bool {
 	// only true for 0x1xxxxx (binary)
-	return (d&0xa0 == 0x20)
+	return !d.reserved() && d&0xa0 == 0x20
+}
+
+// reserved reports whether the DCS is a reserved coding, which a receiving
+// entity assumes to be the same as codepoint 00000000 (3GPP TS 23.038 Section
+// 4): one of the reserved coding groups 10xx, or the reserved character set,
+// bits 3..2 set to 11, of the general data coding groups 00xx and 01xx.
+//
+// A reserved bit, such as bit 3 of group 1111 or bit 2 of the message waiting
+// groups, which the sender is to "set to 0", does not make a reserved coding:
+// the receiver ignores it, and reads the other bits as defined, as it does a
+// reserved bit of the TP-PI (3GPP TS 23.040 Section 9.2.3.27). So DCS 0xfc is
+// 8 bit data of class 0, as 0xf4 is.
+func (d DCS) reserved() bool {
+	return d&0xc0 == 0x80 || (d&0x80 == 0x00 && d&0x0c == 0x0c)
 }

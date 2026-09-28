@@ -5,7 +5,6 @@ package tpdu
 import (
 	"testing"
 
-	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +16,7 @@ func TestDecodeUserData(t *testing.T) {
 		inSrc  []byte
 		outUD  UserData
 		outUDH UserDataHeader
+		n      int
 		err    error
 	}{
 		{"nil",
@@ -24,6 +24,7 @@ func TestDecodeUserData(t *testing.T) {
 			nil,
 			nil,
 			nil,
+			0,
 			NewDecodeError("udl", 0, ErrUnderflow),
 		},
 		{"empty",
@@ -31,6 +32,7 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0},
 			nil,
 			nil,
+			1,
 			nil,
 		},
 		{"7bit",
@@ -38,20 +40,25 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			[]byte("message"),
 			nil,
+			8,
 			nil,
 		},
-		{"sm overlength 7bit",
+		// TS 23.040 9.2.2.1: "Any unused bits shall be set to zero by the
+		// sending entity and shall be ignored by the receiving entity."
+		{"non-zero spare septet 7bit",
 			TPDU{},
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0xf1},
+			[]byte("message"),
 			nil,
+			8,
 			nil,
-			NewDecodeError("sm", 1, ErrOverlength),
 		},
 		{"sm underflow",
 			TPDU{},
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97},
 			nil,
 			nil,
+			0,
 			NewDecodeError("sm", 1, ErrUnderflow),
 		},
 		{"7bit udh",
@@ -62,6 +69,7 @@ func TestDecodeUserData(t *testing.T) {
 			},
 			[]byte("message"),
 			UserDataHeader([]InformationElement{{ID: 0, Data: []byte{1, 2, 3}}}),
+			14,
 			nil,
 		},
 		{"8bit",
@@ -69,6 +77,7 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			[]byte{0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			nil,
+			8,
 			nil,
 		},
 		{"ucs2",
@@ -82,6 +91,7 @@ func TestDecodeUserData(t *testing.T) {
 				0x00, 0x67, 0x00, 0x65,
 			},
 			nil,
+			15,
 			nil,
 		},
 		{"odd ucs2",
@@ -92,6 +102,7 @@ func TestDecodeUserData(t *testing.T) {
 			},
 			nil,
 			nil,
+			0,
 			NewDecodeError("sm", 1, ErrOddUCS2Length),
 		},
 		{"udh only",
@@ -99,44 +110,55 @@ func TestDecodeUserData(t *testing.T) {
 			[]byte{0x06, 0x05, 0x01, 0x03, 0x01, 0x02, 0x03},
 			nil,
 			UserDataHeader([]InformationElement{{ID: 1, Data: []byte{1, 2, 3}}}),
+			7,
 			nil,
 		},
-		{"bad dcs",
-			TPDU{
-				FirstOctet: 0x40,
-				DCS:        0xaa,
-			},
-			[]byte{0x06, 0x04, 0x01, 0x03, 0x01, 0x02},
+		{"reserved dcs",
+			TPDU{DCS: 0xaa},
+			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
+			[]byte("message"),
 			nil,
+			8,
 			nil,
-			NewDecodeError("alphabet", 1, ErrInvalid),
 		},
-		{"overlength",
-			TPDU{FirstOctet: 0x40},
+		{"trailing octet left to caller",
+			TPDU{FirstOctet: 0x40, DCS: 0xf4},
 			[]byte{0x06, 0x05, 0x01, 0x03, 0x01, 0x02, 0x03, 0x04},
 			nil,
+			UserDataHeader([]InformationElement{{ID: 1, Data: []byte{1, 2, 3}}}),
+			7,
 			nil,
-			NewDecodeError("ud", 1, ErrOverlength),
+		},
+		{"trailing octets after udl 0 left to caller",
+			TPDU{},
+			[]byte{0x00, 0x41},
+			nil,
+			nil,
+			1,
+			nil,
 		},
 		{"short udh",
 			TPDU{FirstOctet: 0x40},
 			[]byte{0x05, 0x05, 0x01, 0x03, 0x01, 0x02},
 			nil,
 			nil,
+			0,
 			NewDecodeError("udh.ie", 2, ErrUnderflow),
 		},
-		{"bad udh",
+		{"ignored udh",
 			TPDU{FirstOctet: 0x40},
 			[]byte{0x05, 0x04, 0x01, 0x03, 0x01, 0x02},
 			nil,
+			UserDataHeader{},
+			6,
 			nil,
-			NewDecodeError("udh.ied", 4, ErrUnderflow),
 		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			err := p.inPDU.decodeUserData(p.inSrc)
+			n, err := p.inPDU.decodeUserData(p.inSrc)
 			require.Equal(t, p.err, err)
+			assert.Equal(t, p.n, n)
 			assert.Equal(t, p.outUDH, p.inPDU.UDH)
 			assert.Equal(t, p.outUD, p.inPDU.UD)
 		}
@@ -174,8 +196,9 @@ func TestDecode7BitHandlesSurplusSeptets(t *testing.T) {
 		err   error
 	}{
 		{"drops single trailing zero septet", 0, []byte{0x00}, []byte{}, nil},
-		{"drops trailing zero after message septets", 2, gsm7.Pack7Bit([]byte("OK\x00"), 0), []byte("OK"), nil},
-		{"rejects single non-zero surplus septet", 0, []byte{0x01}, nil, ErrOverlength},
+		{"drops trailing zero after message septets", 2, []byte{0xcf, 0x25, 0x00}, []byte("OK"), nil}, // "OK\x00" packed
+		{"drops single non-zero surplus septet", 0, []byte{0x01}, []byte{}, nil},
+		{"drops non-zero surplus septet after message septets", 2, []byte{0xcf, 0x25, 0xfe}, []byte("OK"), nil},
 		{"rejects multiple surplus septets", 0, []byte{0x00, 0x00}, nil, ErrOverlength},
 	}
 	for _, p := range patterns {
@@ -289,20 +312,22 @@ func TestEncodeUserData(t *testing.T) {
 				},
 			},
 			nil,
-			EncodeError("sm", ErrOddUCS2Length),
+			NewEncodeError("sm", ErrOddUCS2Length),
 		},
 		{"udh only",
 			TPDU{
 				FirstOctet: 0x40,
 				UDH: UserDataHeader(
 					[]InformationElement{{ID: 1, Data: []byte{1, 2, 3}}})},
-			[]byte{0x06, 0x05, 0x01, 0x03, 0x01, 0x02, 0x03},
+			// TS 23.040 9.2.3.16: the header and its fill bits are 7
+			// septets, which take 7 octets.
+			[]byte{0x07, 0x05, 0x01, 0x03, 0x01, 0x02, 0x03, 0x00},
 			nil,
 		},
-		{"unknown alphabet",
-			TPDU{DCS: 0x80},
+		{"reserved dcs",
+			TPDU{DCS: 0x80, UD: []byte("message")},
+			[]byte{0x07, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			nil,
-			EncodeError("alphabet", ErrInvalid),
 		},
 	}
 	for _, p := range patterns {
@@ -364,6 +389,19 @@ func TestChunk(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+	// a block too small for a character of the alphabet is refused, rather
+	// than looping or panicking.
+	msg := []byte{0x1b, 0x65, 0xd8, 0x3d, 0xde, 0x01}
+	for _, bs := range []int{-1, 0, 1} {
+		assert.Nil(t, chunk(msg, Alpha7Bit, bs), "7bit %d", bs)
+	}
+	for _, bs := range []int{-1, 0, 1, 2, 3} {
+		assert.Nil(t, chunk(msg, AlphaUCS2, bs), "ucs2 %d", bs)
+	}
+	for _, bs := range []int{-1, 0} {
+		assert.Nil(t, chunk(msg, Alpha8Bit, bs), "8bit %d", bs)
+	}
+	assert.Len(t, chunk(msg, Alpha8Bit, 1), 6)
 }
 
 func TestChunk7Bit(t *testing.T) {
@@ -433,6 +471,56 @@ func TestChunk7Bit(t *testing.T) {
 				{7, 8},
 			},
 		},
+		{
+			// TS 23.038 6.2.1.1: ESC ESC is itself a sequence, so the
+			// third ESC starts the sequence ESC 'e'.
+			"escape run odd",
+			[]byte{'a', 0x1b, 0x1b, 0x1b, 'e', 'b'},
+			4,
+			[][]byte{
+				{'a', 0x1b, 0x1b},
+				{0x1b, 'e', 'b'},
+			},
+		},
+		{
+			"escape run of five",
+			[]byte{0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 'e', 'b'},
+			5,
+			[][]byte{
+				{0x1b, 0x1b, 0x1b, 0x1b},
+				{0x1b, 'e', 'b'},
+			},
+		},
+		{
+			"escape run even",
+			[]byte{'a', 0x1b, 0x1b, 0x1b, 0x1b, 'b'},
+			5,
+			[][]byte{
+				{'a', 0x1b, 0x1b, 0x1b, 0x1b},
+				{'b'},
+			},
+		},
+		{
+			"escapes in blocks of 2",
+			[]byte{0x1b, 0x1b, 0x1b, 'e', 'a', 0x1b, 'e'},
+			2,
+			[][]byte{
+				{0x1b, 0x1b},
+				{0x1b, 'e'},
+				{'a'},
+				{0x1b, 'e'},
+			},
+		},
+		{
+			"escape at block start",
+			[]byte{'a', 'b', 0x1b, 'e', 'c', 'd'},
+			2,
+			[][]byte{
+				{'a', 'b'},
+				{0x1b, 'e'},
+				{'c', 'd'},
+			},
+		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -441,6 +529,9 @@ func TestChunk7Bit(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+	// Below the minimum of 2, which Segment never uses, an escape cannot be
+	// kept with the next septet, but every chunk still holds a septet.
+	assert.Equal(t, [][]byte{{0x1b}, {0x1b}, {0x1b}}, chunk7Bit([]byte{0x1b, 0x1b, 0x1b}, 1))
 }
 
 func TestChunk8Bit(t *testing.T) {
@@ -565,6 +656,27 @@ func TestChunkUCS2(t *testing.T) {
 				{1, 2, 3, 4},
 				{5, 6, 7, 8},
 				{9},
+			},
+		},
+		{
+			// a block of 2 cannot hold a surrogate pair, so it is split
+			// rather than looping.
+			"surrogate in blocks of 2",
+			[]byte{0xd8, 0x3d, 0xde, 0x01, 0x00, 0x61},
+			2,
+			[][]byte{
+				{0xd8, 0x3d},
+				{0xde, 0x01},
+				{0x00, 0x61},
+			},
+		},
+		{
+			"surrogate pairs",
+			[]byte{0xd8, 0x3d, 0xde, 0x01, 0xd8, 0x3d, 0xde, 0x01},
+			6,
+			[][]byte{
+				{0xd8, 0x3d, 0xde, 0x01},
+				{0xd8, 0x3d, 0xde, 0x01},
 			},
 		},
 	}

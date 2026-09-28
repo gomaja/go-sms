@@ -32,7 +32,6 @@ var (
 		0x18: 'ح',
 		0x19: 'خ',
 		0x1a: 'د',
-		0x1b: 0x1b,
 		0x1c: 'ڌ',
 		0x1d: 'ڈ',
 		0x1e: 'ډ',
@@ -148,7 +147,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -162,7 +160,6 @@ var (
 		0x18: '*',
 		0x19: '؀',
 		0x1a: '؁',
-		0x1b: 0x1b,
 		0x1c: '۰',
 		0x1d: '۱',
 		0x1e: '۲',
@@ -228,14 +225,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	urduEncoder    Encoder
-	urduExtEncoder Encoder
+	urduEncoder    = generateEncoder(urduDecoder)
+	urduExtEncoder = generateEncoder(urduExtDecoder)
 )
-
-func generateUrduEncoder() Encoder {
-	return generateEncoder(urduDecoder)
-}
-
-func generateUrduExtEncoder() Encoder {
-	return generateEncoder(urduExtDecoder)
-}

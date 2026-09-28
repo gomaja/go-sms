@@ -28,7 +28,6 @@ var (
 		0x18: '\u0c98',
 		0x19: '\u0c99',
 		0x1a: '\u0c9a',
-		0x1b: 0x1b,
 		0x1c: '\u0c9b',
 		0x1d: '\u0c9c',
 		0x1e: '\u0c9d',
@@ -37,6 +36,8 @@ var (
 		0x21: '!',
 		0x22: '\u0c9f',
 		0x23: '\u0ca0',
+		// TS 23.038 V20.0.0 A.3.7 prints 0CAA here and again at 0x3D, and has
+		// no 0CA1, which fits the run 0C9F, 0CA0, _, 0CA2 of 0x22-0x25.
 		0x24: '\u0ca1',
 		0x25: '\u0ca2',
 		0x26: '\u0ca3',
@@ -140,7 +141,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -154,7 +154,6 @@ var (
 		0x18: '*',
 		0x19: '\u0964',
 		0x1a: '\u0965',
-		0x1b: 0x1b,
 		0x1c: '\u0ce6',
 		0x1d: '\u0ce7',
 		0x1e: '\u0ce8',
@@ -203,14 +202,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	kannadaEncoder    Encoder
-	kannadaExtEncoder Encoder
+	kannadaEncoder    = generateEncoder(kannadaDecoder)
+	kannadaExtEncoder = generateEncoder(kannadaExtDecoder)
 )
-
-func generateKannadaEncoder() Encoder {
-	return generateEncoder(kannadaDecoder)
-}
-
-func generateKannadaExtEncoder() Encoder {
-	return generateEncoder(kannadaExtDecoder)
-}

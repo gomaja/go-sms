@@ -36,15 +36,17 @@ func DecodeSigned(bcd byte) (int, error) {
 
 // Encode converts an integer in the range 0..99 into two BCD digits.
 //
-// The return value is the two BCD digits encoded into a byte in big endian,
+// The return value is the two BCD digits encoded into a byte, with the most
+// significant digit stored in the lowest nibble as per the semi-octet
+// representation of 3GPP TS 23.040 Section 9.1.2.3, so 12 is encoded as 0x21,
 // and any error detected during conversion.
 func Encode(u int) (byte, error) {
 	if u < 0 || u > 99 {
 		return 0, ErrInvalidInteger(u)
 	}
-	msn := u % 10
-	lsn := u / 10
-	b := (msn << 4) | lsn
+	tens := u / 10
+	units := u % 10
+	b := (units << 4) | tens
 	return byte(b), nil
 }
 
@@ -62,9 +64,9 @@ func EncodeSigned(s int) (byte, error) {
 		b = 0x08
 		s = -s
 	}
-	msn := s % 10
-	lsn := s / 10
-	b = b | (msn << 4) | lsn
+	tens := s / 10
+	units := s % 10
+	b = b | (units << 4) | tens
 	return byte(b), nil
 }
 

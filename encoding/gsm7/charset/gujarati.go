@@ -29,7 +29,6 @@ var (
 		0x18: '\u0a98',
 		0x19: '\u0a99',
 		0x1a: '\u0a9a',
-		0x1b: 0x1b,
 		0x1c: '\u0a9b',
 		0x1d: '\u0a9c',
 		0x1e: '\u0a9d',
@@ -140,7 +139,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -154,7 +152,6 @@ var (
 		0x18: '*',
 		0x19: '\u0964',
 		0x1a: '\u0965',
-		0x1b: 0x1b,
 		0x1c: '\u0ae6',
 		0x1d: '\u0ae7',
 		0x1e: '\u0ae8',
@@ -200,14 +197,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	gujaratiEncoder    Encoder
-	gujaratiExtEncoder Encoder
+	gujaratiEncoder    = generateEncoder(gujaratiDecoder)
+	gujaratiExtEncoder = generateEncoder(gujaratiExtDecoder)
 )
-
-func generateGujaratiEncoder() Encoder {
-	return generateEncoder(gujaratiDecoder)
-}
-
-func generateGujaratiExtEncoder() Encoder {
-	return generateEncoder(gujaratiExtDecoder)
-}

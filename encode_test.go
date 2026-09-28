@@ -35,17 +35,30 @@ var patterns = []struct {
 	err     error
 }{
 	{
+		// an empty message is carried by one TPDU with a TP-UDL of 0.
 		"nil",
 		nil,
 		nil,
-		nil,
+		[]tpdu.TPDU{
+			{
+				Direction:  tpdu.MO,
+				FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+				MR:         1,
+			},
+		},
 		nil,
 	},
 	{
 		"empty",
 		[]byte{},
 		nil,
-		nil,
+		[]tpdu.TPDU{
+			{
+				Direction:  tpdu.MO,
+				FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+				MR:         1,
+			},
+		},
 		nil,
 	},
 	{
@@ -125,7 +138,7 @@ var patterns = []struct {
 				MR:         1,
 				PI:         tpdu.PiUDL,
 				UDH: tpdu.UserDataHeader{
-					tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 				},
 				UD: []byte("hello \x07"),
 			},
@@ -143,7 +156,7 @@ var patterns = []struct {
 				MR:         1,
 				PI:         tpdu.PiUDL,
 				UDH: tpdu.UserDataHeader{
-					tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 				},
 				UD: []byte("hello \x07"),
 			},
@@ -161,7 +174,7 @@ var patterns = []struct {
 				MR:         1,
 				PI:         tpdu.PiUDL,
 				UDH: tpdu.UserDataHeader{
-					tpdu.InformationElement{ID: 24, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{0x0d}},
 				},
 				UD: []byte("hello \x1b\x2a"),
 			},
@@ -179,8 +192,8 @@ var patterns = []struct {
 				MR:         1,
 				PI:         tpdu.PiUDL,
 				UDH: tpdu.UserDataHeader{
-					tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
-					tpdu.InformationElement{ID: 24, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{0x0d}},
 				},
 				UD: []byte("hello \x07\x1b\x2a"),
 			},
@@ -211,18 +224,22 @@ var patterns = []struct {
 		sms.ErrDcsConflict,
 	},
 	{
+		// An SMS-DELIVER has no TP-MR, so draws none (TS 23.040 9.2.3.6).
 		"deliver single segment",
 		[]byte("hello"),
 		[]sms.EncoderOption{sms.AsDeliver},
 		[]tpdu.TPDU{
 			{
-				MR: 1,
 				UD: []byte("hello"),
 			},
 		},
 		nil,
 	},
 	{
+		// A number without a '+' is not known to be international, so it
+		// is sent with a type of number of unknown (3GPP TS 27.005 Section
+		// 3.1, <toda>: "when first character of <da> is + (IRA 43) default
+		// is 145, otherwise default is 129").
 		"number",
 		[]byte("hello"),
 		[]sms.EncoderOption{sms.To("1234")},
@@ -231,7 +248,7 @@ var patterns = []struct {
 				Direction:  tpdu.MO,
 				FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
 				MR:         1,
-				DA:         tpdu.Address{TOA: 0x91, Addr: "1234"},
+				DA:         tpdu.Address{TOA: 0x81, Addr: "1234"},
 				UD:         []byte("hello"),
 			},
 		},
@@ -243,7 +260,18 @@ var patterns = []struct {
 		[]sms.EncoderOption{sms.AsDeliver, sms.From("1234")},
 		[]tpdu.TPDU{
 			{
-				MR: 1,
+				OA: tpdu.Address{TOA: 0x81, Addr: "1234"},
+				UD: []byte("hello"),
+			},
+		},
+		nil,
+	},
+	{
+		"deliver plus number",
+		[]byte("hello"),
+		[]sms.EncoderOption{sms.AsDeliver, sms.From("+1234")},
+		[]tpdu.TPDU{
+			{
 				OA: tpdu.Address{TOA: 0x91, Addr: "1234"},
 				UD: []byte("hello"),
 			},
@@ -268,7 +296,7 @@ var patterns = []struct {
 	{
 		"two segment 7bit",
 		twoSegmentMsg,
-		[]sms.EncoderOption{sms.To("1234")},
+		[]sms.EncoderOption{sms.To("+1234")},
 		[]tpdu.TPDU{
 			{
 				Direction:  tpdu.MO,
@@ -299,7 +327,7 @@ var patterns = []struct {
 		"two segment 7bit with UDH",
 		twoSegmentMsg,
 		[]sms.EncoderOption{
-			sms.To("1234"),
+			sms.To("+1234"),
 			sms.WithTemplateOption(
 				tpdu.WithUDH(
 					tpdu.UserDataHeader{
@@ -336,13 +364,13 @@ var patterns = []struct {
 		nil,
 	},
 	{
-		"two segment 7bit with template",
+		"two segment 8bit with template",
 		twoSegmentMsg,
 		[]sms.EncoderOption{
 			sms.To("1234"), // overridden by template
 			sms.WithTemplate(
 				tpdu.TPDU{
-					DCS: 0x34,
+					DCS: 0x14,
 					DA:  tpdu.Address{TOA: 0x91, Addr: "4321"},
 					UDH: tpdu.UserDataHeader{
 						tpdu.InformationElement{ID: 3, Data: []byte{1, 2, 3}},
@@ -356,7 +384,7 @@ var patterns = []struct {
 				FirstOctet: 0x41, // Submit | UDHI
 				MR:         1,
 				PI:         tpdu.PiUDL, // not relevant for Submit, but set as side-effect
-				DCS:        0x34,
+				DCS:        0x14,
 				DA:         tpdu.Address{TOA: 0x91, Addr: "4321"},
 				UDH: tpdu.UserDataHeader{
 					tpdu.InformationElement{ID: 3, Data: []byte{1, 2, 3}},
@@ -369,7 +397,7 @@ var patterns = []struct {
 				FirstOctet: 0x41,
 				MR:         2,
 				PI:         tpdu.PiUDL, // not relevant for Submit, but set as side-effect
-				DCS:        0x34,
+				DCS:        0x14,
 				DA:         tpdu.Address{TOA: 0x91, Addr: "4321"},
 				UDH: tpdu.UserDataHeader{
 					tpdu.InformationElement{ID: 3, Data: []byte{1, 2, 3}},
@@ -383,7 +411,7 @@ var patterns = []struct {
 	{
 		"two segment 8bit",
 		twoSegmentMsg,
-		[]sms.EncoderOption{sms.To("1234"), sms.As8Bit},
+		[]sms.EncoderOption{sms.To("+1234"), sms.As8Bit},
 		[]tpdu.TPDU{
 			{
 				Direction:  tpdu.MO,
@@ -415,11 +443,10 @@ var patterns = []struct {
 	{
 		"deliver two segment 7bit",
 		twoSegmentMsg,
-		[]sms.EncoderOption{sms.AsDeliver, sms.From("1234")},
+		[]sms.EncoderOption{sms.AsDeliver, sms.From("+1234")},
 		[]tpdu.TPDU{
 			{
-				FirstOctet: 0x40, // UDHI
-				MR:         1,
+				FirstOctet: 0x40,       // UDHI
 				PI:         tpdu.PiUDL, // not relevant for Deliver, but set as side-effect
 				OA:         tpdu.Address{TOA: 0x91, Addr: "1234"},
 				UDH: tpdu.UserDataHeader{
@@ -429,7 +456,6 @@ var patterns = []struct {
 			},
 			{
 				FirstOctet: 0x40,
-				MR:         2,
 				PI:         tpdu.PiUDL, // not relevant for Deliver, but set as side-effect
 				OA:         tpdu.Address{TOA: 0x91, Addr: "1234"},
 				UDH: tpdu.UserDataHeader{
@@ -442,14 +468,42 @@ var patterns = []struct {
 	},
 }
 
+// freshCounters makes the TP-MR and concatenation reference of the patterns
+// start at 1, rather than continue those shared by Encode.
+func freshCounters(options ...sms.EncoderOption) []sms.EncoderOption {
+	return append([]sms.EncoderOption{
+		sms.WithMR(&sms.Counter{}),
+		sms.WithConcatRef(&sms.Counter{}),
+	}, options...)
+}
+
 func TestEncode(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			out, err := sms.Encode(p.msg, p.options...)
+			out, err := sms.Encode(p.msg, freshCounters(p.options...)...)
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.out, out)
 		}
 		t.Run(p.name, f)
+	}
+}
+
+func TestEncodeInvalidUTF8(t *testing.T) {
+	for _, msg := range [][]byte{
+		{'h', 0xff, 'i'},
+		{0xc3},
+		{0xed, 0xa0, 0x80}, // encoded surrogate
+		[]byte("hello \xf0\x9f\x98"),
+	} {
+		out, err := sms.Encode(msg)
+		assert.Equal(t, tpdu.ErrInvalidUTF8, err, "% x", msg)
+		assert.Nil(t, out, "% x", msg)
+	}
+	// U+FFFD itself is valid UTF-8, and is encoded as UCS2
+	out, err := sms.Encode([]byte("h�i"))
+	assert.Nil(t, err)
+	if assert.Len(t, out, 1) {
+		assert.Equal(t, tpdu.UserData{0x00, 'h', 0xff, 0xfd, 0x00, 'i'}, out[0].UD)
 	}
 }
 
@@ -471,7 +525,7 @@ func TestEncoderEncodeReturnsNewEncoderTemplateOptionError(t *testing.T) {
 func TestEncoderEncode(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			e := sms.NewEncoder(sms.AsSubmit)
+			e := sms.NewEncoder(freshCounters(sms.AsSubmit)...)
 			out, err := e.Encode(p.msg, p.options...)
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.out, out)
@@ -481,27 +535,21 @@ func TestEncoderEncode(t *testing.T) {
 }
 
 func TestEncoderCounters(t *testing.T) {
-	e := sms.NewEncoder()
-	msgC, ok := e.MsgCount.(*sms.Counter)
-	assert.True(t, ok)
+	msgC := &sms.Counter{}
+	concatC := &sms.Counter{}
+	e := sms.NewEncoder(sms.AsSubmit, sms.WithMR(msgC), sms.WithConcatRef(concatC))
 	assert.Equal(t, 0, msgC.Read())
-	concatC, ok := e.ConcatRef.(*sms.Counter)
-	assert.True(t, ok)
 	assert.Equal(t, 0, concatC.Read())
 
 	p, err := e.Encode([]byte("blah"))
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(p))
-	assert.True(t, ok)
 	assert.Equal(t, 1, msgC.Read())
-	assert.True(t, ok)
 	assert.Equal(t, 0, concatC.Read())
 
 	p, err = e.Encode(twoSegmentMsg)
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(p))
-	assert.True(t, ok)
 	assert.Equal(t, 3, msgC.Read())
-	assert.True(t, ok)
 	assert.Equal(t, 1, concatC.Read())
 }

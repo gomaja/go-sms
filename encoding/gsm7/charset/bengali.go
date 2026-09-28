@@ -27,7 +27,6 @@ var (
 		0x18: '\u0998',
 		0x19: '\u0999',
 		0x1a: '\u099a',
-		0x1b: 0x1b,
 		0x1c: '\u099b',
 		0x1d: '\u099c',
 		0x1e: '\u099d',
@@ -134,7 +133,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -148,7 +146,6 @@ var (
 		0x18: '*',
 		0x19: '\u09e6',
 		0x1a: '\u09e7',
-		0x1b: 0x1b,
 		0x1c: '\u09e8',
 		0x1d: '\u09e9',
 		0x1e: '\u09ea',
@@ -206,14 +203,6 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	bengaliEncoder    Encoder
-	bengaliExtEncoder Encoder
+	bengaliEncoder    = generateEncoder(bengaliDecoder)
+	bengaliExtEncoder = generateEncoder(bengaliExtDecoder)
 )
-
-func generateBengaliEncoder() Encoder {
-	return generateEncoder(bengaliDecoder)
-}
-
-func generateBengaliExtEncoder() Encoder {
-	return generateEncoder(bengaliExtDecoder)
-}

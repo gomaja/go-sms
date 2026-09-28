@@ -37,6 +37,10 @@ func TestParameterIndicatorString(t *testing.T) {
 		{tpdu.PiPID | tpdu.PiUDL, "PID|UDL"},
 		{tpdu.PiDCS | tpdu.PiUDL, "DCS|UDL"},
 		{tpdu.PiPID | tpdu.PiDCS | tpdu.PiUDL, "PID|DCS|UDL"},
+		{0x08, "0x08"},
+		{0x44, "UDL|0x40"},
+		{tpdu.PiExt, "EXT"},
+		{0xff, "PID|DCS|UDL|0x78|EXT"},
 	}
 	for _, p := range patterns {
 		assert.Equal(t, p.out, p.in.String())

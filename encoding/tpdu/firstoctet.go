@@ -51,16 +51,24 @@ func (f FirstOctet) VPF() ValidityPeriodFormat {
 }
 
 // WithMTI returns a FirstOctet with the TP-MTI field set.
+//
+// The TP-MTI is the 2 bit field defined in 3GPP TS 23.040 Section 9.2.3.1,
+// so only the 2 low bits of mti are used, and no other bit of the
+// FirstOctet is changed.
 func (f FirstOctet) WithMTI(mti MessageType) FirstOctet {
 	f &^= FoMTIMask
-	f |= FirstOctet(mti << FoMTIShift)
+	f |= FirstOctet(mti<<FoMTIShift) & FoMTIMask
 	return f
 }
 
 // WithVPF returns a FirstOctet with the TP-VPF field set.
+//
+// The TP-VPF is the 2 bit field defined in 3GPP TS 23.040 Section 9.2.3.3,
+// so only the 2 low bits of vpf are used, and no other bit of the FirstOctet
+// is changed.
 func (f FirstOctet) WithVPF(vpf ValidityPeriodFormat) FirstOctet {
 	f &^= FoVPFMask
-	f |= FirstOctet(vpf << FoVPFShift)
+	f |= FirstOctet(vpf<<FoVPFShift) & FoVPFMask
 	return f
 }
 

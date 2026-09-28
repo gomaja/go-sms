@@ -29,7 +29,6 @@ var (
 		0x18: '\u0c18',
 		0x19: '\u0c19',
 		0x1a: '\u0c1a',
-		0x1b: 0x1b,
 		0x1c: '\u0c1b',
 		0x1d: '\u0c1c',
 		0x1e: '\u0c1d',
@@ -140,7 +139,6 @@ var (
 		0x0a: '\f',
 		0x0b: '*',
 		0x0c: '+',
-		0x0d: '\r',
 		0x0e: '-',
 		0x0f: '/',
 		0x10: '<',
@@ -152,13 +150,14 @@ var (
 		0x16: '_',
 		0x17: '#',
 		0x18: '*',
-		0x1b: 0x1b,
 		0x1c: '\u0c66',
 		0x1d: '\u0c67',
 		0x1e: '\u0c68',
 		0x1f: '\u0c69',
 		0x20: '\u0c6a',
 		0x21: '\u0c6b',
+		// TS 23.038 V20.0.0 A.2.12 prints the Arabic 06CC and 06CD at 0x22
+		// and 0x23, among the Telugu digits 0C66-0C6F of 0x1C-0x25.
 		0x22: '\u0c6c',
 		0x23: '\u0c6d',
 		0x24: '\u0c6e',
@@ -206,16 +205,11 @@ var (
 		0x58: 'X',
 		0x59: 'Y',
 		0x5a: 'Z',
-		0x65: '€',
+		// 0x65 has no symbol in 3GPP TS 23.038 V20.0.0 Annex A.2.12, where
+		// the other single shift tables have €, so € is not sent with this
+		// table. Android's GsmAlphabet does map 0x65 to €, but a receiver
+		// following the table decodes ESC 0x65 as the locking shift 'e'.
 	}
-	teluguEncoder    Encoder
-	teluguExtEncoder Encoder
+	teluguEncoder    = generateEncoder(teluguDecoder)
+	teluguExtEncoder = generateEncoder(teluguExtDecoder)
 )
-
-func generateTeluguEncoder() Encoder {
-	return generateEncoder(teluguDecoder)
-}
-
-func generateTeluguExtEncoder() Encoder {
-	return generateEncoder(teluguExtDecoder)
-}
