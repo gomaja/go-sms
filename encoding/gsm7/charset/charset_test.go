@@ -437,7 +437,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Gujaranti, 120, 70, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
+		{charset.Gujarati, 120, 70, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
 			[]testPattern{
 				{0x00, '\u0a81'},
 				{0x0a, '\n'},

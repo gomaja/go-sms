@@ -115,7 +115,7 @@ var specNames = map[int]string{
 	charset.Spanish:    "Spanish",
 	charset.Portuguese: "Portuguese",
 	charset.Bengali:    "Bengali",
-	charset.Gujaranti:  "Gujarati",
+	charset.Gujarati:   "Gujarati",
 	charset.Hindi:      "Hindi",
 	charset.Kannada:    "Kannada",
 	charset.Malayalam:  "Malayalam",

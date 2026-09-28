@@ -97,8 +97,8 @@ const (
 	Portuguese
 	// Bengali character set
 	Bengali
-	// Gujaranti character set
-	Gujaranti
+	// Gujarati character set
+	Gujarati
 	// Hindi character set
 	Hindi
 	// Kannada character set
@@ -167,7 +167,7 @@ var (
 		// Spanish uses default
 		Portuguese: portugueseDecoder,
 		Bengali:    bengaliDecoder,
-		Gujaranti:  gujaratiDecoder,
+		Gujarati:   gujaratiDecoder,
 		Hindi:      hindiDecoder,
 		Kannada:    kannadaDecoder,
 		Malayalam:  malayalamDecoder,
@@ -186,7 +186,7 @@ var (
 		Spanish:    spanishExtDecoder,
 		Portuguese: portugueseExtDecoder,
 		Bengali:    bengaliExtDecoder,
-		Gujaranti:  gujaratiExtDecoder,
+		Gujarati:   gujaratiExtDecoder,
 		Hindi:      hindiExtDecoder,
 		Kannada:    kannadaExtDecoder,
 		Malayalam:  malayalamExtDecoder,
@@ -201,7 +201,7 @@ var (
 		// Spanish uses default
 		Portuguese: portugueseEncoder,
 		Bengali:    bengaliEncoder,
-		Gujaranti:  gujaratiEncoder,
+		Gujarati:   gujaratiEncoder,
 		Hindi:      hindiEncoder,
 		Kannada:    kannadaEncoder,
 		Malayalam:  malayalamEncoder,
@@ -216,7 +216,7 @@ var (
 		Spanish:    spanishExtEncoder,
 		Portuguese: portugueseExtEncoder,
 		Bengali:    bengaliExtEncoder,
-		Gujaranti:  gujaratiExtEncoder,
+		Gujarati:   gujaratiExtEncoder,
 		Hindi:      hindiExtEncoder,
 		Kannada:    kannadaExtEncoder,
 		Malayalam:  malayalamExtEncoder,

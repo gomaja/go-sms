@@ -14,7 +14,7 @@ var charsetName = []string{
 	"Spanish",
 	"Portuguese",
 	"Bengali",
-	"Gujaranti",
+	"Gujarati",
 	"Hindi",
 	"Kannada",
 	"Malayalam",
