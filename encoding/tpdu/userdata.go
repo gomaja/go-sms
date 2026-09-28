@@ -43,8 +43,12 @@ func (udh UserDataHeader) UDHL() int {
 
 // MarshalBinary marshals the User Data Header, including the UDHL, into
 // binary.
+//
+// A nil UDH indicates that no header is present and marshals to nil. An empty,
+// but not nil, UDH is a header without IEs and marshals to the single UDHL
+// octet 0.
 func (udh UserDataHeader) MarshalBinary() ([]byte, error) {
-	if len(udh) == 0 {
+	if udh == nil {
 		return nil, nil
 	}
 	udhl := udh.UDHL()
@@ -60,9 +64,12 @@ func (udh UserDataHeader) MarshalBinary() ([]byte, error) {
 // UnmarshalBinary reads the InformationElements from the binary User Data
 // Header.
 //
-// The src contains the complete UDH, including the UDHL and all IEs.
+// The src contains the complete UDH, including the UDHL and all IEs, and may
+// be followed by the short message.
 // The function returns the number of bytes read from src, and any error
 // detected while unmarshalling.
+//
+// A UDHL of 0 results in an empty, but not nil, UDH.
 func (udh *UserDataHeader) UnmarshalBinary(src []byte) (int, error) {
 	if len(src) < 1 {
 		return 0, NewDecodeError("udhl", 0, ErrUnderflow)
@@ -73,7 +80,7 @@ func (udh *UserDataHeader) UnmarshalBinary(src []byte) (int, error) {
 	if len(src) < udhl {
 		return ri, NewDecodeError("ie", ri, ErrUnderflow)
 	}
-	ies := []InformationElement(nil)
+	ies := UserDataHeader{}
 	for ri < udhl {
 		if udhl < ri+2 {
 			return ri, NewDecodeError("ie", ri, ErrUnderflow)

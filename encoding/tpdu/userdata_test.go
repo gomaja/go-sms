@@ -20,9 +20,14 @@ func TestUserDataHeaderMarshalBinary(t *testing.T) {
 		out  []byte
 		err  error
 	}{
+		{"nil",
+			nil,
+			nil,
+			nil,
+		},
 		{"empty",
 			tpdu.UserDataHeader{},
-			nil,
+			[]byte{0},
 			nil,
 		},
 		{"one",
@@ -39,7 +44,6 @@ func TestUserDataHeaderMarshalBinary(t *testing.T) {
 				tpdu.InformationElement{ID: 2, Data: []byte{1, 2, 3}},
 			},
 			[]byte{15, 1, 3, 1, 2, 3, 1, 3, 5, 6, 7, 2, 3, 1, 2, 3}, nil},
-		// error is always nil so no error cases to test.
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -89,6 +93,26 @@ func TestUserDataHeaderUnmarshalBinary(t *testing.T) {
 			1,
 			tpdu.NewDecodeError("ie", 1, tpdu.ErrUnderflow),
 		},
+		{"empty",
+			[]byte{0},
+			tpdu.UserDataHeader{},
+			1,
+			nil,
+		},
+		{"empty with sm",
+			[]byte{0, 0x41, 0x42},
+			tpdu.UserDataHeader{},
+			1,
+			nil,
+		},
+		{"empty ie",
+			[]byte{2, 1, 0, 0x41},
+			tpdu.UserDataHeader{
+				tpdu.InformationElement{ID: 1},
+			},
+			3,
+			nil,
+		},
 		{"short ie",
 			[]byte{1, 1},
 			tpdu.UserDataHeader{},
@@ -104,11 +128,61 @@ func TestUserDataHeaderUnmarshalBinary(t *testing.T) {
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			a := tpdu.UserDataHeader{}
+			a := tpdu.UserDataHeader{{ID: 0xff}}
+			if p.err != nil {
+				a = tpdu.UserDataHeader{}
+			}
 			n, err := a.UnmarshalBinary(p.in)
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.n, n)
-			assert.Equal(t, a, p.out)
+			assert.Equal(t, p.out, a)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+func TestUserDataHeaderEmptyRoundTrip(t *testing.T) {
+	// A UDH that is present (TP-UDHI set) but empty (UDHL 0) must survive
+	// unmarshalling and marshalling, as must the SM that follows it.
+	patterns := []struct {
+		name string
+		in   []byte
+		ud   tpdu.UserData
+	}{
+		{"8bit",
+			[]byte{
+				0x44,                                           // first octet, UDHI set
+				0x0b, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9, // OA
+				0x00,                                     // PID
+				0x04,                                     // DCS 8-bit
+				0x71, 0x80, 0x13, 0x11, 0x12, 0x45, 0x23, // SCTS
+				0x03, 0x00, 0x41, 0x42, // UDL, UDHL and SM
+			},
+			tpdu.UserData("AB"),
+		},
+		{"7bit",
+			[]byte{
+				0x44,                                           // first octet, UDHI set
+				0x0b, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9, // OA
+				0x00,                                     // PID
+				0x00,                                     // DCS 7-bit
+				0x71, 0x80, 0x13, 0x11, 0x12, 0x45, 0x23, // SCTS
+				0x04, 0x00, 0x00, 0x3a, 0x0d, // UDL, UDHL, fill bits and SM
+			},
+			tpdu.UserData("hi"),
+		},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			var pdu tpdu.TPDU
+			err := pdu.UnmarshalBinary(p.in)
+			require.Nil(t, err)
+			assert.True(t, pdu.UDHI())
+			assert.Equal(t, tpdu.UserDataHeader{}, pdu.UDH)
+			assert.Equal(t, p.ud, pdu.UD)
+			b, err := pdu.MarshalBinary()
+			require.Nil(t, err)
+			assert.Equal(t, p.in, b)
 		}
 		t.Run(p.name, f)
 	}
