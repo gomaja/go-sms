@@ -44,7 +44,7 @@ func main() {
 			log.Printf("unmarshal error: %v", err)
 			continue
 		}
-		pdus, err := c.Collect(*t)
+		pdus, err := c.Collect(t)
 		if err != nil {
 			log.Printf("collect error: %v", err)
 		}
@@ -60,10 +60,9 @@ func main() {
 		}
 	}
 	// report active collect pipes
-	pipes := c.Pipes()
-	for k, v := range pipes {
-		fmt.Println("incomplete reassembly: ", k)
-		fmt.Println(v)
+	for _, p := range c.Pipes() {
+		fmt.Println("incomplete reassembly: ", p.Address.Number(), p.Ref, p.Total)
+		fmt.Println(p.Segments)
 	}
 }
 

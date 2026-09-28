@@ -28,9 +28,18 @@ func TestCollectorClose(t *testing.T) {
 	d := tpdu.TPDU{}
 	d.OA = tpdu.Address{Addr: "1234", TOA: 0x91}
 	d.SetUDH(tpdu.UserDataHeader{tpdu.InformationElement{ID: 0, Data: []byte{5, 2, 1}}})
-	_, err := c.Collect(d)
+	_, err := c.Collect(&d)
 	require.NoError(t, err)
 	c.Close() // with pipe active
+}
+
+// collectOptions returns the options to collect the TPDU with, which are the
+// originator an SMS-SUBMIT requires.
+func collectOptions(p *tpdu.TPDU) []sms.CollectOption {
+	if p.SmsType() == tpdu.SmsSubmit {
+		return []sms.CollectOption{sms.WithOriginator("+15550001")}
+	}
+	return nil
 }
 
 func TestCollectorCollect(t *testing.T) {
@@ -519,7 +528,7 @@ func TestCollectorCollect(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			ae = nil
-			out, err := c.Collect(p.in)
+			out, err := c.Collect(&p.in, collectOptions(&p.in)...)
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.out, out)
 			assert.Nil(t, ae)
@@ -555,7 +564,7 @@ func TestCollectorCollect(t *testing.T) {
 	}
 	for _, p := range patterns {
 		ae = nil
-		out, err := c.Collect(p.in)
+		out, err := c.Collect(&p.in, collectOptions(&p.in)...)
 		assert.Equal(t, p.err, err, p.name)
 		assert.Equal(t, p.out, out, p.name)
 		assert.Nil(t, ae, p.name)
@@ -606,7 +615,7 @@ func TestCollectorReassemblyTimeout(t *testing.T) {
 			for i, s := range p.in {
 				ci, _ := s.ConcatInfo()
 				pexp[ci.Seqno-1] = &p.in[i]
-				m, err := c.Collect(s)
+				m, err := c.Collect(&s)
 				assert.Nil(t, err)
 				assert.Nil(t, m)
 			}
@@ -630,7 +639,7 @@ func TestCollectorPipes(t *testing.T) {
 		name string
 		in   tpdu.TPDU
 		m    []*tpdu.TPDU
-		out  map[string][]*tpdu.TPDU
+		out  []sms.Pipe
 	}{
 		{
 			"deliver one a",
@@ -641,15 +650,21 @@ func TestCollectorPipes(t *testing.T) {
 				},
 			},
 			nil,
-			map[string][]*tpdu.TPDU{
-				"0:91:1234:1:2": {
-					{
-						OA: tpdu.Address{Addr: "1234", TOA: 0x91},
-						UDH: tpdu.UserDataHeader{
-							tpdu.InformationElement{ID: 0, Data: []byte{1, 2, 1}},
+			[]sms.Pipe{
+				{
+					SmsType: tpdu.SmsDeliver,
+					Address: tpdu.Address{Addr: "1234", TOA: 0x91},
+					Ref:     1,
+					Total:   2,
+					Segments: []*tpdu.TPDU{
+						{
+							OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+							UDH: tpdu.UserDataHeader{
+								tpdu.InformationElement{ID: 0, Data: []byte{1, 2, 1}},
+							},
 						},
+						nil,
 					},
-					nil,
 				},
 			},
 		},
@@ -662,22 +677,34 @@ func TestCollectorPipes(t *testing.T) {
 				},
 			},
 			nil,
-			map[string][]*tpdu.TPDU{
-				"0:91:1234:1:2": {
-					{
-						OA: tpdu.Address{Addr: "1234", TOA: 0x91},
-						UDH: tpdu.UserDataHeader{
-							tpdu.InformationElement{ID: 0, Data: []byte{1, 2, 1}},
+			[]sms.Pipe{
+				{
+					SmsType: tpdu.SmsDeliver,
+					Address: tpdu.Address{Addr: "1234", TOA: 0x91},
+					Ref:     1,
+					Total:   2,
+					Segments: []*tpdu.TPDU{
+						{
+							OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+							UDH: tpdu.UserDataHeader{
+								tpdu.InformationElement{ID: 0, Data: []byte{1, 2, 1}},
+							},
 						},
+						nil,
 					},
-					nil,
 				},
-				"0:91:1234:2:2": {
-					nil,
-					{
-						OA: tpdu.Address{Addr: "1234", TOA: 0x91},
-						UDH: tpdu.UserDataHeader{
-							tpdu.InformationElement{ID: 0, Data: []byte{2, 2, 2}},
+				{
+					SmsType: tpdu.SmsDeliver,
+					Address: tpdu.Address{Addr: "1234", TOA: 0x91},
+					Ref:     2,
+					Total:   2,
+					Segments: []*tpdu.TPDU{
+						nil,
+						{
+							OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+							UDH: tpdu.UserDataHeader{
+								tpdu.InformationElement{ID: 0, Data: []byte{2, 2, 2}},
+							},
 						},
 					},
 				},
@@ -705,13 +732,19 @@ func TestCollectorPipes(t *testing.T) {
 					},
 				},
 			},
-			map[string][]*tpdu.TPDU{
-				"0:91:1234:2:2": {
-					nil,
-					{
-						OA: tpdu.Address{Addr: "1234", TOA: 0x91},
-						UDH: tpdu.UserDataHeader{
-							tpdu.InformationElement{ID: 0, Data: []byte{2, 2, 2}},
+			[]sms.Pipe{
+				{
+					SmsType: tpdu.SmsDeliver,
+					Address: tpdu.Address{Addr: "1234", TOA: 0x91},
+					Ref:     2,
+					Total:   2,
+					Segments: []*tpdu.TPDU{
+						nil,
+						{
+							OA: tpdu.Address{Addr: "1234", TOA: 0x91},
+							UDH: tpdu.UserDataHeader{
+								tpdu.InformationElement{ID: 0, Data: []byte{2, 2, 2}},
+							},
 						},
 					},
 				},
@@ -719,8 +752,7 @@ func TestCollectorPipes(t *testing.T) {
 		},
 	}
 	for _, p := range patterns {
-
-		m, err := c.Collect(p.in)
+		m, err := c.Collect(&p.in)
 		assert.Nil(t, err, p.name)
 		assert.Equal(t, p.m, m, p.name)
 		out := c.Pipes()
@@ -744,7 +776,7 @@ func TestCollectorConcatIEValues(t *testing.T) {
 				}
 				p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}}
 				p.SetUDH(tpdu.UserDataHeader{ie})
-				out, err := c.Collect(p)
+				out, err := c.Collect(&p)
 				require.NoError(t, err, "ref16 %t total %d seqno %d", ref16, total, seqno)
 				switch {
 				case seqno == 0 || seqno > total || total == 1:
@@ -768,12 +800,12 @@ func TestCollectorConcatIEValues(t *testing.T) {
 func TestCollectorKeyIncludesTotal(t *testing.T) {
 	c := sms.NewCollector()
 	defer c.Close()
-	seg := func(total, seqno byte) tpdu.TPDU {
+	seg := func(total, seqno byte) *tpdu.TPDU {
 		p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}}
 		p.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{7, total, seqno}}})
-		return p
+		return &p
 	}
-	for _, p := range []tpdu.TPDU{seg(2, 2), seg(3, 3), seg(3, 1)} {
+	for _, p := range []*tpdu.TPDU{seg(2, 2), seg(3, 3), seg(3, 1)} {
 		out, err := c.Collect(p)
 		require.NoError(t, err)
 		require.Nil(t, out)
@@ -815,7 +847,7 @@ func TestCollectorIgnoresInvalidConcatIE(t *testing.T) {
 	} {
 		pdu, err := sms.Unmarshal(deliver(udh...))
 		require.NoError(t, err, "% x", udh)
-		out, err := c.Collect(*pdu)
+		out, err := c.Collect(pdu)
 		require.NoError(t, err, "% x", udh)
 		require.Len(t, out, 1, "% x", udh)
 		assert.True(t, sms.IsCompleteMessage(out), "% x", udh)
@@ -827,7 +859,7 @@ func TestCollectorIgnoresInvalidConcatIE(t *testing.T) {
 	for seqno := byte(1); seqno <= 2; seqno++ {
 		pdu, err := sms.Unmarshal(deliver(0x00, 0x03, 0x09, 0x02, 0x00, 0x08, 0x04, 0x01, 0x09, 0x02, seqno))
 		require.NoError(t, err)
-		out, err := c.Collect(*pdu)
+		out, err := c.Collect(pdu)
 		require.NoError(t, err)
 		if seqno == 1 {
 			assert.Nil(t, out)
@@ -847,18 +879,16 @@ func TestCollectorIgnoresInvalidConcatIE(t *testing.T) {
 func TestCollectorPipesSnapshot(t *testing.T) {
 	c := sms.NewCollector()
 	defer c.Close()
-	seg := func(seqno byte) tpdu.TPDU {
+	seg := func(seqno byte) *tpdu.TPDU {
 		p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}, UD: []byte{'a' + seqno}}
 		p.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 3, seqno}}})
-		return p
+		return &p
 	}
 	_, err := c.Collect(seg(1))
 	require.NoError(t, err)
 	snap := c.Pipes()
 	require.Len(t, snap, 1)
-	var segs []*tpdu.TPDU
-	for _, segs = range snap {
-	}
+	segs := snap[0].Segments
 	require.Len(t, segs, 3)
 	require.Nil(t, segs[1])
 	// a later Collect does not change the snapshot
@@ -892,7 +922,7 @@ func TestCollectorPipesConcurrent(t *testing.T) {
 			for seqno := byte(1); seqno <= 2; seqno++ {
 				p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}, UD: []byte{'a'}}
 				p.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{byte(ref), 3, seqno}}})
-				_, err := c.Collect(p)
+				_, err := c.Collect(&p)
 				assert.NoError(t, err)
 			}
 		}
@@ -903,8 +933,8 @@ func TestCollectorPipesConcurrent(t *testing.T) {
 			finished = true
 		default:
 		}
-		for _, segs := range c.Pipes() {
-			for _, s := range segs {
+		for _, pipe := range c.Pipes() {
+			for _, s := range pipe.Segments {
 				if s != nil {
 					assert.Equal(t, tpdu.UserData("a"), s.UD)
 					assert.Len(t, s.UDH, 1)
@@ -949,7 +979,7 @@ func TestCollectorRejectsOtherTypes(t *testing.T) {
 		single := tpdu.TPDU{}
 		require.NoError(t, single.SetSmsType(st))
 		for _, p := range []tpdu.TPDU{seg("111", 1), seg("222", 2), seg("111", 1), single} {
-			out, err := c.Collect(p)
+			out, err := c.Collect(&p)
 			assert.Equal(t, tpdu.ErrUnsupportedSmsType(st), err, "%s", st)
 			assert.Nil(t, out, "%s", st)
 			assert.Empty(t, c.Pipes(), "%s", st)

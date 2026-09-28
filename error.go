@@ -26,6 +26,10 @@ var (
 	ErrDuplicateSegment = errors.New("duplicate segment")
 	// ErrMissingSegment indicates a segment passed to Decode is nil, as the
 	// Collector gives for a segment of a concatenated message that was not
-	// received.
+	// received, or that the TPDU passed to Collect is nil.
 	ErrMissingSegment = errors.New("missing segment")
+	// ErrMissingOriginator indicates an SMS-SUBMIT was passed to Collect
+	// without WithOriginator, which is required as the TPDU does not carry
+	// its originating address.
+	ErrMissingOriginator = errors.New("missing originator")
 )

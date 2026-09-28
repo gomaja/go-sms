@@ -64,7 +64,7 @@ func collect() {
 	for {
 		bintpdu := <-pduChan
 		pdu, _ := sms.Unmarshal(bintpdu)
-		tpdus, _ := c.Collect(*pdu)
+		tpdus, _ := c.Collect(pdu)
 		if len(tpdus) > 0 {
 			msg, _ := sms.Decode(tpdus)
 			// handle msg...
