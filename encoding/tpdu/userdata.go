@@ -141,7 +141,7 @@ func (udh UserDataHeader) ConcatInfo() (segments, seqno, mref int, ok bool) {
 // If the UDH contains no segmentation information then ok is false and zero
 // values are returned.
 func (udh UserDataHeader) ConcatInfo8() (segments, seqno, mref int, ok bool) {
-	if c, k := udh.IE(0x00); k && len(c.Data) == 3 {
+	if c, k := udh.IE(IEIConcat8Bit); k && len(c.Data) == 3 {
 		ok = true
 		mref = int(c.Data[0])
 		segments = int(c.Data[1])
@@ -156,7 +156,7 @@ func (udh UserDataHeader) ConcatInfo8() (segments, seqno, mref int, ok bool) {
 // If the UDH contains no segmentation information then ok is false and zero
 // values are returned.
 func (udh UserDataHeader) ConcatInfo16() (segments, seqno, mref int, ok bool) {
-	if c, k := udh.IE(0x08); k && len(c.Data) == 4 {
+	if c, k := udh.IE(IEIConcat16Bit); k && len(c.Data) == 4 {
 		ok = true
 		mref = int(binary.BigEndian.Uint16(c.Data[0:2]))
 		segments = int(c.Data[2])
@@ -199,7 +199,7 @@ func DecodeUserData(ud UserData, udh UserDataHeader, alpha Alphabet, options ...
 			cfg = option.applyDecodeOption(cfg)
 		}
 		options := []gsm7.DecoderOption{}
-		if ie, ok := udh.IE(lockingIEI); ok {
+		if ie, ok := udh.IE(IEINationalLanguageLockingShift); ok {
 			if len(ie.Data) >= 1 {
 				nli := int(ie.Data[0])
 				if _, ok := cfg.locking[nli]; ok {
@@ -207,7 +207,7 @@ func DecodeUserData(ud UserData, udh UserDataHeader, alpha Alphabet, options ...
 				}
 			}
 		}
-		if ie, ok := udh.IE(shiftIEI); ok {
+		if ie, ok := udh.IE(IEINationalLanguageSingleShift); ok {
 			if len(ie.Data) >= 1 {
 				nli := int(ie.Data[0])
 				if _, ok := cfg.shift[nli]; ok {
@@ -344,9 +344,25 @@ func WithShiftCharset(nli ...int) ShiftCharsetOption {
 	return ShiftCharsetOption{nli}
 }
 
+// Information Element Identifiers interpreted by this package.
+//
+// 3GPP TS 23.040 Section 9.2.3.24 lists the IEI values in hex.
 const (
-	shiftIEI   byte = 24
-	lockingIEI byte = 25
+	// IEIConcat8Bit identifies the Concatenated short messages, 8-bit
+	// reference number IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.1.
+	IEIConcat8Bit byte = 0x00
+
+	// IEIConcat16Bit identifies the Concatenated short messages, 16-bit
+	// reference number IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.8.
+	IEIConcat16Bit byte = 0x08
+
+	// IEINationalLanguageSingleShift identifies the National Language Single
+	// Shift IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.15.
+	IEINationalLanguageSingleShift byte = 0x24
+
+	// IEINationalLanguageLockingShift identifies the National Language
+	// Locking Shift IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.16.
+	IEINationalLanguageLockingShift byte = 0x25
 )
 
 // EncodeUserData converts a UTF8 message into corresponding TPDU User Data.
@@ -380,7 +396,7 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 		enc, err = gsm7.Encode(msg, gsm7.WithCharset(nli))
 		if err == nil {
 			return enc, UserDataHeader{
-					InformationElement{ID: lockingIEI, Data: []byte{byte(nli)}},
+					InformationElement{ID: IEINationalLanguageLockingShift, Data: []byte{byte(nli)}},
 				},
 				Alpha7Bit
 		}
@@ -390,7 +406,7 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 		enc, err = gsm7.Encode(msg, gsm7.WithExtCharset(nli))
 		if err == nil {
 			return enc, UserDataHeader{
-					InformationElement{ID: shiftIEI, Data: []byte{byte(nli)}},
+					InformationElement{ID: IEINationalLanguageSingleShift, Data: []byte{byte(nli)}},
 				},
 				Alpha7Bit
 		}
@@ -404,8 +420,8 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 			enc, err = gsm7.Encode(msg, gsm7.WithCharset(nli), gsm7.WithExtCharset(nli))
 			if err == nil {
 				return enc, UserDataHeader{
-						InformationElement{ID: lockingIEI, Data: []byte{byte(nli)}},
-						InformationElement{ID: shiftIEI, Data: []byte{byte(nli)}},
+						InformationElement{ID: IEINationalLanguageLockingShift, Data: []byte{byte(nli)}},
+						InformationElement{ID: IEINationalLanguageSingleShift, Data: []byte{byte(nli)}},
 					},
 					Alpha7Bit
 			}

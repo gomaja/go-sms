@@ -125,7 +125,7 @@ var patterns = []struct {
 				MR:         1,
 				PI:         tpdu.PiUDL,
 				UDH: tpdu.UserDataHeader{
-					tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 				},
 				UD: []byte("hello \x07"),
 			},
@@ -143,7 +143,7 @@ var patterns = []struct {
 				MR:         1,
 				PI:         tpdu.PiUDL,
 				UDH: tpdu.UserDataHeader{
-					tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 				},
 				UD: []byte("hello \x07"),
 			},
@@ -161,7 +161,7 @@ var patterns = []struct {
 				MR:         1,
 				PI:         tpdu.PiUDL,
 				UDH: tpdu.UserDataHeader{
-					tpdu.InformationElement{ID: 24, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{0x0d}},
 				},
 				UD: []byte("hello \x1b\x2a"),
 			},
@@ -179,8 +179,8 @@ var patterns = []struct {
 				MR:         1,
 				PI:         tpdu.PiUDL,
 				UDH: tpdu.UserDataHeader{
-					tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
-					tpdu.InformationElement{ID: 24, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
+					tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{0x0d}},
 				},
 				UD: []byte("hello \x07\x1b\x2a"),
 			},

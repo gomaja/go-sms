@@ -458,7 +458,7 @@ func TestDecodeUserData(t *testing.T) {
 		{"message 7bit locking",
 			[]byte("\x01\x02\x03"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 25, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			[]tpdu.UDDecodeOption{tpdu.WithLockingCharset(charset.Kannada)},
@@ -467,7 +467,7 @@ func TestDecodeUserData(t *testing.T) {
 		},
 		{"message 7bit shift", []byte("\x1b\x1e\x1b\x1f\x1b\x20"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 24, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			[]tpdu.UDDecodeOption{tpdu.WithShiftCharset(charset.Kannada)},
@@ -503,7 +503,7 @@ func TestDecodeUserData(t *testing.T) {
 		{"message 7bit locking defaulted",
 			[]byte("\x01\x02\x03"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 25, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			nil,
@@ -513,7 +513,7 @@ func TestDecodeUserData(t *testing.T) {
 		{"message 7bit shift defaulted",
 			[]byte("\x1b\x1e\x1b\x1f\x1b\x20"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 24, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			nil,
@@ -580,7 +580,7 @@ func TestDecodeUserDataAllCharsets(t *testing.T) {
 		{"message 7bit locking all cs",
 			[]byte("\x01\x02\x03"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 25, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			[]byte("\u0c82\u0c83\u0c85"),
 			[]tpdu.UDDecodeOption{
@@ -591,7 +591,7 @@ func TestDecodeUserDataAllCharsets(t *testing.T) {
 		{"message 7bit locking kannada",
 			[]byte("\x01\x02\x03"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 25, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			[]byte("\u0c82\u0c83\u0c85"),
 			[]tpdu.UDDecodeOption{
@@ -602,7 +602,7 @@ func TestDecodeUserDataAllCharsets(t *testing.T) {
 		{"message 7bit shift all cs",
 			[]byte("\x1b\x1e\x1b\x1f\x1b\x20"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 24, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			[]byte("\u0ce8\u0ce9\u0cea"),
 			[]tpdu.UDDecodeOption{
@@ -613,7 +613,7 @@ func TestDecodeUserDataAllCharsets(t *testing.T) {
 		{"message 7bit shift kannada",
 			[]byte("\x1b\x1e\x1b\x1f\x1b\x20"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 24, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			[]byte("\u0ce8\u0ce9\u0cea"),
 			[]tpdu.UDDecodeOption{
@@ -676,7 +676,7 @@ func TestEncodeUserData(t *testing.T) {
 		{"message 7bit locking all cs",
 			[]byte("\x01\x02\x03"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 25, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			[]tpdu.UDEncodeOption{
@@ -687,7 +687,7 @@ func TestEncodeUserData(t *testing.T) {
 		{"message 7bit shift all cs",
 			[]byte("\x1b\x1e\x1b\x1f\x1b\x20"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 24, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			[]tpdu.UDEncodeOption{
@@ -698,7 +698,7 @@ func TestEncodeUserData(t *testing.T) {
 		{"message 7bit kannada",
 			[]byte("\x01\x02\x03"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 25, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			[]tpdu.UDEncodeOption{
@@ -709,7 +709,7 @@ func TestEncodeUserData(t *testing.T) {
 		{"message 7bit locking kannada",
 			[]byte("\x01\x02\x03"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 25, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			[]tpdu.UDEncodeOption{
@@ -720,7 +720,7 @@ func TestEncodeUserData(t *testing.T) {
 		{"message 7bit shift kannada",
 			[]byte("\x1b\x1e\x1b\x1f\x1b\x20"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 24, Data: []byte{byte(charset.Kannada)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{byte(charset.Kannada)}},
 			},
 			tpdu.Alpha7Bit,
 			[]tpdu.UDEncodeOption{
@@ -731,8 +731,8 @@ func TestEncodeUserData(t *testing.T) {
 		{"message 7bit locking and shift urdu",
 			[]byte("hello \x07\x1b\x2a"),
 			tpdu.UserDataHeader{
-				tpdu.InformationElement{ID: 25, Data: []byte{byte(charset.Urdu)}},
-				tpdu.InformationElement{ID: 24, Data: []byte{byte(charset.Urdu)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{byte(charset.Urdu)}},
+				tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{byte(charset.Urdu)}},
 			},
 			tpdu.Alpha7Bit,
 			[]tpdu.UDEncodeOption{
@@ -789,4 +789,67 @@ func TestEncodeUserData(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+func TestNationalLanguageIEIWire(t *testing.T) {
+	// 3GPP TS 23.040 Section 9.2.3.24 lists the IEIs in hex: 0x24 is the
+	// National Language Single Shift and 0x25 the National Language Locking
+	// Shift (0x18 and 0x19 are WVG objects).
+	patterns := []struct {
+		name    string
+		msg     []byte
+		options []tpdu.UDEncodeOption
+		udh     []byte
+	}{
+		{"locking turkish",
+			[]byte("ş"),
+			[]tpdu.UDEncodeOption{tpdu.WithLockingCharset(charset.Turkish)},
+			[]byte{0x03, 0x25, 0x01, 0x01},
+		},
+		{"shift urdu",
+			[]byte("hello ؎"),
+			[]tpdu.UDEncodeOption{tpdu.WithShiftCharset(charset.Urdu)},
+			[]byte{0x03, 0x24, 0x01, 0x0d},
+		},
+		{"locking and shift urdu",
+			[]byte("hello ت؎"),
+			[]tpdu.UDEncodeOption{
+				tpdu.WithLockingCharset(charset.Urdu),
+				tpdu.WithShiftCharset(charset.Urdu),
+			},
+			[]byte{0x06, 0x25, 0x01, 0x0d, 0x24, 0x01, 0x0d},
+		},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			_, udh, alpha := tpdu.EncodeUserData(p.msg, p.options...)
+			assert.Equal(t, tpdu.Alpha7Bit, alpha)
+			b, err := udh.MarshalBinary()
+			require.Nil(t, err)
+			assert.Equal(t, p.udh, b)
+		}
+		t.Run(p.name, f)
+	}
+}
+
+func TestNationalLanguageIEIDeliver(t *testing.T) {
+	// SMS-DELIVER from +61409865629 carrying a National Language Locking
+	// Shift IE (0x25) selecting Turkish (NLI 1), followed by 3 fill bits and
+	// the septet 0x1d, which is 'ş' in the Turkish locking shift table.
+	b := []byte{
+		0x44,                                           // first octet, UDHI set
+		0x0b, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9, // OA
+		0x00,                                     // PID
+		0x00,                                     // DCS
+		0x71, 0x80, 0x13, 0x11, 0x12, 0x45, 0x23, // SCTS
+		0x06,                               // UDL (septets)
+		0x03, 0x25, 0x01, 0x01, 0xe8, 0x00, // UDH, fill bits and SM
+	}
+	var pdu tpdu.TPDU
+	err := pdu.UnmarshalBinary(b)
+	require.Nil(t, err)
+	msg, err := tpdu.DecodeUserData(pdu.UD, pdu.UDH, tpdu.Alpha7Bit,
+		tpdu.WithLockingCharset(charset.Turkish))
+	require.Nil(t, err)
+	assert.Equal(t, "ş", string(msg))
 }

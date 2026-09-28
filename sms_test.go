@@ -91,7 +91,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x03"),
 				},
@@ -105,7 +105,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x03"),
 				},
@@ -119,7 +119,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x03"),
 				},
@@ -133,7 +133,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 24, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageSingleShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x1b\x2b"),
 				},
@@ -147,7 +147,7 @@ func TestDecode(t *testing.T) {
 			[]*tpdu.TPDU{
 				{
 					UDH: tpdu.UserDataHeader{
-						tpdu.InformationElement{ID: 25, Data: []byte{0x0d}},
+						tpdu.InformationElement{ID: tpdu.IEINationalLanguageLockingShift, Data: []byte{0x0d}},
 					},
 					UD: []byte("hello \x03"),
 				},
