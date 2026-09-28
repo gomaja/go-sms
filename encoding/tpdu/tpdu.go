@@ -393,7 +393,7 @@ func (t *TPDU) MarshalBinary() (dst []byte, err error) {
 		return nil, ErrUnsupportedSmsType(st)
 	}
 	if err != nil {
-		err = EncodeError(st.String(), err)
+		err = NewEncodeError(st.String(), err)
 	}
 	return
 }
@@ -401,7 +401,7 @@ func (t *TPDU) MarshalBinary() (dst []byte, err error) {
 func (t *TPDU) marshalCommand() ([]byte, error) {
 	da, err := t.DA.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("da", err)
+		return nil, NewEncodeError("da", err)
 	}
 	cdl := len(t.UD)
 	l := 6 + len(da) + cdl
@@ -416,15 +416,15 @@ func (t *TPDU) marshalCommand() ([]byte, error) {
 func (t *TPDU) marshalDeliver() ([]byte, error) {
 	oa, err := t.OA.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("oa", err)
+		return nil, NewEncodeError("oa", err)
 	}
 	scts, err := t.SCTS.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("scts", err)
+		return nil, NewEncodeError("scts", err)
 	}
 	ud, err := t.encodeUserData()
 	if err != nil {
-		return nil, EncodeError("ud", err)
+		return nil, NewEncodeError("ud", err)
 	}
 	l := 3 + len(oa) + len(scts) + len(ud)
 	b := make([]byte, 0, l)
@@ -442,7 +442,7 @@ func (t *TPDU) marshalDeliverReport() ([]byte, error) {
 		var err error
 		ud, err = t.encodeUserData()
 		if err != nil {
-			return nil, EncodeError("ud", err)
+			return nil, NewEncodeError("ud", err)
 		}
 	}
 	l := 5 + len(ud) // assume FCS, PID and DCS
@@ -465,21 +465,21 @@ func (t *TPDU) marshalDeliverReport() ([]byte, error) {
 func (t *TPDU) marshalStatusReport() ([]byte, error) {
 	ra, err := t.RA.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("ra", err)
+		return nil, NewEncodeError("ra", err)
 	}
 	scts, err := t.SCTS.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("scts", err)
+		return nil, NewEncodeError("scts", err)
 	}
 	dt, err := t.DT.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("dt", err)
+		return nil, NewEncodeError("dt", err)
 	}
 	var ud []byte
 	if t.PI.UDL() {
 		ud, err = t.encodeUserData()
 		if err != nil {
-			return nil, EncodeError("ud", err)
+			return nil, NewEncodeError("ud", err)
 		}
 	}
 	l := 6 + len(ra) + len(scts) + len(dt) + len(ud) // assume PID and DCS
@@ -506,17 +506,17 @@ func (t *TPDU) marshalStatusReport() ([]byte, error) {
 func (t *TPDU) marshalSubmit() ([]byte, error) {
 	da, err := t.DA.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("da", err)
+		return nil, NewEncodeError("da", err)
 	}
 	ud, err := t.encodeUserData()
 	if err != nil {
-		return nil, EncodeError("ud", err)
+		return nil, NewEncodeError("ud", err)
 	}
 	var vp []byte
 	if t.VP.Format != VpfNotPresent {
 		vp, err = t.VP.MarshalBinary()
 		if err != nil {
-			return nil, EncodeError("vp", err)
+			return nil, NewEncodeError("vp", err)
 		}
 	}
 	l := 4 + len(da) + len(ud) + len(vp)
@@ -532,13 +532,13 @@ func (t *TPDU) marshalSubmit() ([]byte, error) {
 func (t *TPDU) marshalSubmitReport() ([]byte, error) {
 	scts, err := t.SCTS.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("scts", err)
+		return nil, NewEncodeError("scts", err)
 	}
 	var ud []byte
 	if t.PI.UDL() {
 		ud, err = t.encodeUserData()
 		if err != nil {
-			return nil, EncodeError("ud", err)
+			return nil, NewEncodeError("ud", err)
 		}
 	}
 	l := 5 + len(scts) + len(ud) // assume PID and DCS
@@ -927,7 +927,7 @@ func decode7Bit(sml, udhl int, src []byte) ([]byte, error) {
 func (t *TPDU) encodeUserData() (b []byte, err error) {
 	udh, err := t.UDH.MarshalBinary()
 	if err != nil {
-		return nil, EncodeError("udh", err)
+		return nil, NewEncodeError("udh", err)
 	}
 	ud := t.UD
 	alphabet := t.Alphabet()
@@ -940,7 +940,7 @@ func (t *TPDU) encodeUserData() (b []byte, err error) {
 		}
 		ud, err = gsm7.Pack7Bit(t.UD, fillBits)
 		if err != nil {
-			return nil, EncodeError("sm", err)
+			return nil, NewEncodeError("sm", err)
 		}
 		// udl is in septets so convert
 		if udl > 0 {
@@ -950,7 +950,7 @@ func (t *TPDU) encodeUserData() (b []byte, err error) {
 		}
 	case AlphaUCS2:
 		if udl&0x01 == 0x01 {
-			return nil, EncodeError("sm", ErrOddUCS2Length)
+			return nil, NewEncodeError("sm", ErrOddUCS2Length)
 		}
 		fallthrough
 	case Alpha8Bit:

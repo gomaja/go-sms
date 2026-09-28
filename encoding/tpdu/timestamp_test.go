@@ -84,7 +84,7 @@ func TestMarhalBinary(t *testing.T) {
 				Time: time.Date(2070, time.January, 1, 1, 2, 3, 0, time.UTC),
 			},
 			nil,
-			tpdu.EncodeError("year", tpdu.ErrInvalid),
+			tpdu.NewEncodeError("year", tpdu.ErrInvalid),
 		},
 		{
 			"19691231",
@@ -92,7 +92,7 @@ func TestMarhalBinary(t *testing.T) {
 				Time: time.Date(1969, time.December, 31, 23, 59, 59, 0, time.UTC),
 			},
 			nil,
-			tpdu.EncodeError("year", tpdu.ErrInvalid),
+			tpdu.NewEncodeError("year", tpdu.ErrInvalid),
 		},
 		{
 			"21001231",
@@ -100,7 +100,7 @@ func TestMarhalBinary(t *testing.T) {
 				Time: time.Date(2100, time.December, 31, 23, 59, 59, 0, time.FixedZone("SCTS", 15*60)),
 			},
 			nil,
-			tpdu.EncodeError("year", tpdu.ErrInvalid),
+			tpdu.NewEncodeError("year", tpdu.ErrInvalid),
 		},
 		// "The Time Zone indicates the difference, expressed in quarters of
 		// an hour, between the local time and GMT."
@@ -110,7 +110,7 @@ func TestMarhalBinary(t *testing.T) {
 				Time: time.Date(2017, time.August, 31, 11, 21, 54, 0, time.FixedZone("any", 5*3600+50*60)),
 			},
 			nil,
-			tpdu.EncodeError("tz", tpdu.ErrInvalid),
+			tpdu.NewEncodeError("tz", tpdu.ErrInvalid),
 		},
 		{
 			"tz beyond 79 quarters",

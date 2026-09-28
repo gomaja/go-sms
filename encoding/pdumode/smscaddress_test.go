@@ -103,7 +103,7 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 				Address: tpdu.Address{Addr: "messages", TOA: 0xd1},
 			},
 			nil,
-			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6d)),
+			tpdu.NewEncodeError("addr", semioctet.ErrInvalidDigit(0x6d)),
 		},
 		{
 			"invalid number",
@@ -111,7 +111,7 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 				Address: tpdu.Address{Addr: "6140f98656", TOA: 0x91},
 			},
 			nil,
-			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit('f')),
+			tpdu.NewEncodeError("addr", semioctet.ErrInvalidDigit('f')),
 		},
 		{
 			"max length",
@@ -130,7 +130,7 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 				Address: tpdu.Address{Addr: "123456789012345678901", TOA: 0x91},
 			},
 			nil,
-			tpdu.EncodeError("addr", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("addr", tpdu.ErrOverlength),
 		},
 		{
 			"length octet wrap",
@@ -138,7 +138,7 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 				Address: tpdu.Address{Addr: strings.Repeat("1", 510), TOA: 0x91},
 			},
 			nil,
-			tpdu.EncodeError("addr", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("addr", tpdu.ErrOverlength),
 		},
 	}
 	for _, p := range patterns {

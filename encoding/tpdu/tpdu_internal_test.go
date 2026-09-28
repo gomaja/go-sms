@@ -285,7 +285,7 @@ func TestEncodeUserData(t *testing.T) {
 				},
 			},
 			nil,
-			EncodeError("sm", ErrOddUCS2Length),
+			NewEncodeError("sm", ErrOddUCS2Length),
 		},
 		{"udh only",
 			TPDU{

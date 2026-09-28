@@ -155,7 +155,7 @@ func TestMarshalBinary(t *testing.T) {
 				DA:         tpdu.Address{Addr: "d391", TOA: 0x91},
 			},
 			nil,
-			tpdu.EncodeError("SmsCommand.da.addr", semioctet.ErrInvalidDigit('d')),
+			tpdu.NewEncodeError("SmsCommand.da.addr", semioctet.ErrInvalidDigit('d')),
 		},
 		{
 			"SmsDeliver haha",
@@ -187,7 +187,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			nil,
-			tpdu.EncodeError("SmsDeliver.oa.addr", semioctet.ErrInvalidDigit('d')),
+			tpdu.NewEncodeError("SmsDeliver.oa.addr", semioctet.ErrInvalidDigit('d')),
 		},
 		{
 			"SmsDeliver bad scts",
@@ -202,7 +202,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			nil,
-			tpdu.EncodeError("SmsDeliver.scts", bcd.ErrInvalidInteger(96)),
+			tpdu.NewEncodeError("SmsDeliver.scts", bcd.ErrInvalidInteger(96)),
 		},
 		{
 			"SmsDeliver bad ud",
@@ -218,7 +218,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			nil,
-			tpdu.EncodeError("SmsDeliver.ud.sm", tpdu.ErrOddUCS2Length),
+			tpdu.NewEncodeError("SmsDeliver.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 		{
 			"SmsDeliverReport minimal",
@@ -306,7 +306,7 @@ func TestMarshalBinary(t *testing.T) {
 				PI:         0x06,
 			},
 			nil,
-			tpdu.EncodeError("SmsDeliverReport.ud.sm", tpdu.ErrOddUCS2Length),
+			tpdu.NewEncodeError("SmsDeliverReport.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 		{
 			"SmsStatusReport minimal",
@@ -424,7 +424,7 @@ func TestMarshalBinary(t *testing.T) {
 				RA:         tpdu.Address{Addr: "63d1", TOA: 0x91},
 			},
 			nil,
-			tpdu.EncodeError("SmsStatusReport.ra.addr", semioctet.ErrInvalidDigit('d')),
+			tpdu.NewEncodeError("SmsStatusReport.ra.addr", semioctet.ErrInvalidDigit('d')),
 		},
 		{
 			"SmsStatusReport bad scts",
@@ -444,7 +444,7 @@ func TestMarshalBinary(t *testing.T) {
 				ST: 0xab,
 			},
 			nil,
-			tpdu.EncodeError("SmsStatusReport.scts", bcd.ErrInvalidInteger(96)),
+			tpdu.NewEncodeError("SmsStatusReport.scts", bcd.ErrInvalidInteger(96)),
 		},
 		{
 			"SmsStatusReport bad dt",
@@ -464,7 +464,7 @@ func TestMarshalBinary(t *testing.T) {
 				ST: 0xab,
 			},
 			nil,
-			tpdu.EncodeError("SmsStatusReport.dt", bcd.ErrInvalidInteger(96)),
+			tpdu.NewEncodeError("SmsStatusReport.dt", bcd.ErrInvalidInteger(96)),
 		},
 		{
 			"SmsStatusReport bad ud",
@@ -476,7 +476,7 @@ func TestMarshalBinary(t *testing.T) {
 				PI:         0x06,
 			},
 			nil,
-			tpdu.EncodeError("SmsStatusReport.ud.sm", tpdu.ErrOddUCS2Length),
+			tpdu.NewEncodeError("SmsStatusReport.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 		{
 			"SmsSubmit haha",
@@ -519,7 +519,7 @@ func TestMarshalBinary(t *testing.T) {
 				DA:         tpdu.Address{Addr: "d391", TOA: 0x91},
 			},
 			nil,
-			tpdu.EncodeError("SmsSubmit.da.addr", semioctet.ErrInvalidDigit('d')),
+			tpdu.NewEncodeError("SmsSubmit.da.addr", semioctet.ErrInvalidDigit('d')),
 		},
 		{
 			"SmsSubmit bad vp",
@@ -531,7 +531,7 @@ func TestMarshalBinary(t *testing.T) {
 				VP:         tpdu.ValidityPeriod{Format: 6},
 			},
 			nil,
-			tpdu.EncodeError("SmsSubmit.vp.vpf", tpdu.ErrInvalid),
+			tpdu.NewEncodeError("SmsSubmit.vp.vpf", tpdu.ErrInvalid),
 		},
 		{
 			"SmsSubmit bad ud",
@@ -543,7 +543,7 @@ func TestMarshalBinary(t *testing.T) {
 				DA:         tpdu.Address{Addr: "6391", TOA: 0x91},
 			},
 			nil,
-			tpdu.EncodeError("SmsSubmit.ud.sm", tpdu.ErrOddUCS2Length),
+			tpdu.NewEncodeError("SmsSubmit.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 		{
 			"SmsSubmitReport minimal",
@@ -655,7 +655,7 @@ func TestMarshalBinary(t *testing.T) {
 						time.FixedZone("SCTS", 24*3600))},
 			},
 			nil,
-			tpdu.EncodeError("SmsSubmitReport.scts", bcd.ErrInvalidInteger(96)),
+			tpdu.NewEncodeError("SmsSubmitReport.scts", bcd.ErrInvalidInteger(96)),
 		},
 		{
 			"SmsSubmitReport bad ud",
@@ -668,7 +668,7 @@ func TestMarshalBinary(t *testing.T) {
 				PI:         0x06,
 			},
 			nil,
-			tpdu.EncodeError("SmsSubmitReport.ud.sm", tpdu.ErrOddUCS2Length),
+			tpdu.NewEncodeError("SmsSubmitReport.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 	}
 	for _, p := range patterns {

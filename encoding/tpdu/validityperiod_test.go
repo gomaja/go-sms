@@ -229,66 +229,66 @@ func TestVPMarshalBinary(t *testing.T) {
 				Format:   tpdu.VpfRelative,
 				Duration: -time.Hour},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"relativeZero",
 			tpdu.ValidityPeriod{
 				Format: tpdu.VpfRelative},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"relativeBelowMin",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfRelative,
 				Duration: 5*time.Minute - time.Second},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"relativeAboveMax",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfRelative,
 				Duration: 63*7*24*time.Hour + time.Second},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"enhancedRelativeNegative",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfEnhanced,
 				EFI:      byte(tpdu.EvpfRelative),
 				Duration: -5 * time.Minute},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"enhancedRelativeSecondsNegative",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfEnhanced,
 				EFI:      byte(tpdu.EvpfRelativeSeconds),
 				Duration: -time.Second},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"enhancedRelativeSecondsBelowMin",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfEnhanced,
 				EFI:      byte(tpdu.EvpfRelativeSeconds),
 				Duration: time.Second - time.Millisecond},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"enhancedRelativeSecondsAboveMax",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfEnhanced,
 				EFI:      byte(tpdu.EvpfRelativeSeconds),
 				Duration: time.Hour},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"enhancedHHMMSSNegative",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfEnhanced,
 				EFI:      byte(tpdu.EvpfRelativeHHMMSS),
 				Duration: -time.Second},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"enhancedHHMMSSAboveMax",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfEnhanced,
 				EFI:      byte(tpdu.EvpfRelativeHHMMSS),
 				Duration: 100*time.Hour + 30*time.Minute},
 			nil,
-			tpdu.EncodeError("duration", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("duration", tpdu.ErrInvalid)},
 		{"enhancedHHMMSS",
 			tpdu.ValidityPeriod{
 				Format:   tpdu.VpfEnhanced,
@@ -300,7 +300,7 @@ func TestVPMarshalBinary(t *testing.T) {
 		{"invalid enhanced",
 			tpdu.ValidityPeriod{Format: tpdu.VpfEnhanced, EFI: 0xff},
 			nil,
-			tpdu.EncodeError("fi", tpdu.ErrInvalid)},
+			tpdu.NewEncodeError("fi", tpdu.ErrInvalid)},
 	}
 
 	for _, p := range patterns {
@@ -578,10 +578,10 @@ func TestVPEnhancedMarshalFI(t *testing.T) {
 		err  error
 	}{
 		{"single shot", 0x41, []byte{0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, nil},
-		{"reserved bit 3", 0x09, nil, tpdu.EncodeError("fi", tpdu.ErrInvalid)},
-		{"reserved bit 5", 0x21, nil, tpdu.EncodeError("fi", tpdu.ErrInvalid)},
+		{"reserved bit 3", 0x09, nil, tpdu.NewEncodeError("fi", tpdu.ErrInvalid)},
+		{"reserved bit 5", 0x21, nil, tpdu.NewEncodeError("fi", tpdu.ErrInvalid)},
 		// the extension octets are not known
-		{"extension", 0x81, nil, tpdu.EncodeError("fi", tpdu.ErrInvalid)},
+		{"extension", 0x81, nil, tpdu.NewEncodeError("fi", tpdu.ErrInvalid)},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -603,7 +603,7 @@ func TestVPEnhancedMarshalFI(t *testing.T) {
 	assert.Equal(t, []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, b)
 	v.SetEnhanced(5*time.Minute, 0x81)
 	b, err = v.MarshalBinary()
-	assert.Equal(t, tpdu.EncodeError("fi", tpdu.ErrInvalid), err)
+	assert.Equal(t, tpdu.NewEncodeError("fi", tpdu.ErrInvalid), err)
 	assert.Nil(t, b)
 }
 

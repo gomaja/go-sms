@@ -86,7 +86,7 @@ func (v *ValidityPeriod) MarshalBinary() ([]byte, error) {
 	case VpfEnhanced:
 		evpf := EnhancedFormat(v.EFI)
 		if evpf > EvpfRelativeHHMMSS || v.EFI&efiReserved != 0 {
-			return nil, EncodeError("fi", ErrInvalid)
+			return nil, NewEncodeError("fi", ErrInvalid)
 		}
 		dst := make([]byte, 7)
 		dst[0] = v.EFI
@@ -95,7 +95,7 @@ func (v *ValidityPeriod) MarshalBinary() ([]byte, error) {
 			// The extension octets have no defined bits other than the
 			// extension bit, which is set on all but the last.
 			if v.efiExt < 1 || 1+v.efiExt+enhancedValueLen[evpf] > len(dst) {
-				return nil, EncodeError("fi", ErrInvalid)
+				return nil, NewEncodeError("fi", ErrInvalid)
 			}
 			for vi < v.efiExt {
 				dst[vi] = efiExtension
@@ -112,12 +112,12 @@ func (v *ValidityPeriod) MarshalBinary() ([]byte, error) {
 			dst[vi] = t
 		case EvpfRelativeSeconds:
 			if v.Duration < minSecondsVP || v.Duration > maxSecondsVP {
-				return nil, EncodeError("duration", ErrInvalid)
+				return nil, NewEncodeError("duration", ErrInvalid)
 			}
 			dst[vi] = byte(v.Duration / time.Second)
 		case EvpfRelativeHHMMSS:
 			if v.Duration < 0 || v.Duration > maxHHMMSSVP {
-				return nil, EncodeError("duration", ErrInvalid)
+				return nil, NewEncodeError("duration", ErrInvalid)
 			}
 			d := v.Duration
 			f := []int{int(d / time.Hour), int(d / time.Minute % 60), int(d / time.Second % 60)}
@@ -125,7 +125,7 @@ func (v *ValidityPeriod) MarshalBinary() ([]byte, error) {
 				t, err := bcd.Encode(tf)
 				// this should never trip, as the encoded values should always be valid, but just in case...
 				if err != nil {
-					return nil, EncodeError("enhanced", err)
+					return nil, NewEncodeError("enhanced", err)
 				}
 				dst[vi+i] = t
 			}
@@ -140,7 +140,7 @@ func (v *ValidityPeriod) MarshalBinary() ([]byte, error) {
 	case VpfNotPresent:
 		return nil, nil
 	}
-	return nil, EncodeError("vpf", ErrInvalid)
+	return nil, NewEncodeError("vpf", ErrInvalid)
 }
 
 // UnmarshalBinary unmarshals a ValidityPeriod stored in the given format.
@@ -326,7 +326,7 @@ const (
 func durationToRelative(d time.Duration) (byte, error) {
 	switch {
 	case d < minRelativeVP || d > maxRelativeVP:
-		return 0, EncodeError("duration", ErrInvalid)
+		return 0, NewEncodeError("duration", ErrInvalid)
 	case d < time.Hour*12:
 		return byte(d/(time.Minute*5)) - 1, nil
 	case d < time.Hour*24:

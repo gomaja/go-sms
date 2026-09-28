@@ -54,14 +54,14 @@ const maxSMSCAddressLen = 11
 func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 	addr, err := semioctet.Encode([]byte(a.Addr))
 	if err != nil {
-		return nil, tpdu.EncodeError("addr", err)
+		return nil, tpdu.NewEncodeError("addr", err)
 	}
 	if len(addr) == 0 && !a.Present {
 		return []byte{0}, nil
 	}
 	l := len(addr) + 1 // in octets and includes the toa
 	if l > maxSMSCAddressLen {
-		return nil, tpdu.EncodeError("addr", tpdu.ErrOverlength)
+		return nil, tpdu.NewEncodeError("addr", tpdu.ErrOverlength)
 	}
 	dst = make([]byte, 2, l+1)
 	dst[0] = byte(l)

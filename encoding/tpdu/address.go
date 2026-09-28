@@ -63,23 +63,23 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 		e := gsm7.NewEncoder().WithExtCharset(nil) // without escapes
 		addr, err = e.Encode([]byte(a.Addr))
 		if err != nil {
-			return nil, EncodeError("addr", err)
+			return nil, NewEncodeError("addr", err)
 		}
 		l = (len(addr)*7 + 3) / 4
 		if l > maxAddressLength {
-			return nil, EncodeError("addr", ErrOverlength)
+			return nil, NewEncodeError("addr", ErrOverlength)
 		}
 		addr, err = gsm7.Pack7Bit(addr, 0)
 		if err != nil {
-			return nil, EncodeError("addr", err)
+			return nil, NewEncodeError("addr", err)
 		}
 	default:
 		if len(a.Addr) > maxAddressLength {
-			return nil, EncodeError("addr", ErrOverlength)
+			return nil, NewEncodeError("addr", ErrOverlength)
 		}
 		addr, err = semioctet.Encode([]byte(a.Addr))
 		if err != nil {
-			return nil, EncodeError("addr", err)
+			return nil, NewEncodeError("addr", err)
 		}
 		l = len(a.Addr)
 	}

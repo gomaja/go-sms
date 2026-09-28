@@ -130,11 +130,11 @@ func encodeTimestamp(t time.Time) (dst [7]byte, err error) {
 	}
 	year := t.Year()
 	if year < 1970 || year > 2069 {
-		return dst, EncodeError("year", ErrInvalid)
+		return dst, NewEncodeError("year", ErrInvalid)
 	}
 	_, tz := t.Zone()
 	if tz%(15*60) != 0 {
-		return dst, EncodeError("tz", ErrInvalid)
+		return dst, NewEncodeError("tz", ErrInvalid)
 	}
 	f := []int{year % 100, int(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second()}
 	for i, v := range f {

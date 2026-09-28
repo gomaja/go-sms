@@ -61,12 +61,12 @@ func (udh UserDataHeader) MarshalBinary() ([]byte, error) {
 	}
 	for _, ie := range udh {
 		if len(ie.Data) > maxLengthOctet {
-			return nil, EncodeError("ied", ErrOverlength)
+			return nil, NewEncodeError("ied", ErrOverlength)
 		}
 	}
 	udhl := udh.UDHL()
 	if udhl > maxLengthOctet {
-		return nil, EncodeError("udhl", ErrOverlength)
+		return nil, NewEncodeError("udhl", ErrOverlength)
 	}
 	b := make([]byte, 0, udhl+1)
 	b = append(b, byte(udhl))

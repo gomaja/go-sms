@@ -68,7 +68,7 @@ func TestAddressMarshalBinary(t *testing.T) {
 		{"invalid number",
 			tpdu.Address{Addr: "6140f98656", TOA: 0x91},
 			nil,
-			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit('f')),
+			tpdu.NewEncodeError("addr", semioctet.ErrInvalidDigit('f')),
 		},
 		// 3GPP TS 23.040 Section 9.1.2.5: "The maximum length of the full
 		// address field (Address-Length, Type-of-Address and Address-Value)
@@ -81,12 +81,12 @@ func TestAddressMarshalBinary(t *testing.T) {
 		{"overlength number",
 			tpdu.Address{Addr: "123456789012345678901", TOA: 0x91},
 			nil,
-			tpdu.EncodeError("addr", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("addr", tpdu.ErrOverlength),
 		},
 		{"length wraps",
 			tpdu.Address{Addr: strings.Repeat("1", 256), TOA: 0x81},
 			nil,
-			tpdu.EncodeError("addr", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("addr", tpdu.ErrOverlength),
 		},
 		{"max alpha",
 			tpdu.Address{Addr: "Hello World", TOA: 0xd0},
@@ -96,7 +96,7 @@ func TestAddressMarshalBinary(t *testing.T) {
 		{"overlength alpha",
 			tpdu.Address{Addr: "Hello World!", TOA: 0xd0},
 			nil,
-			tpdu.EncodeError("addr", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("addr", tpdu.ErrOverlength),
 		},
 		// A command not tied to a particular SM has a zero length DA with a
 		// zero TOA.
@@ -110,18 +110,18 @@ func TestAddressMarshalBinary(t *testing.T) {
 		{"invalid alpha euro",
 			tpdu.Address{Addr: "a euro €32", TOA: 0xd1},
 			nil,
-			tpdu.EncodeError("addr", gsm7.ErrInvalidUTF8('€')),
+			tpdu.NewEncodeError("addr", gsm7.ErrInvalidUTF8('€')),
 		},
 		{"invalid alpha bar",
 			tpdu.Address{Addr: "a bar | ", TOA: 0xd1},
 			nil,
-			tpdu.EncodeError("addr", gsm7.ErrInvalidUTF8('|')),
+			tpdu.NewEncodeError("addr", gsm7.ErrInvalidUTF8('|')),
 		},
 		// test characters not available in the default character set at all.
 		{"invalid alpha",
 			tpdu.Address{Addr: "mes⌘sages", TOA: 0xd1},
 			nil,
-			tpdu.EncodeError("addr", gsm7.ErrInvalidUTF8('⌘')),
+			tpdu.NewEncodeError("addr", gsm7.ErrInvalidUTF8('⌘')),
 		},
 	}
 	for _, p := range patterns {
@@ -319,7 +319,7 @@ func TestAddressOverlengthTPDU(t *testing.T) {
 	require.Nil(t, err)
 	pdu.UD = []byte("hello")
 	b, err := pdu.MarshalBinary()
-	assert.Equal(t, tpdu.EncodeError("SmsSubmit.da.addr", tpdu.ErrOverlength), err)
+	assert.Equal(t, tpdu.NewEncodeError("SmsSubmit.da.addr", tpdu.ErrOverlength), err)
 	assert.Nil(t, b)
 }
 

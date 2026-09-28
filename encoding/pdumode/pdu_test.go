@@ -222,7 +222,7 @@ func TestMarshalBinary(t *testing.T) {
 				Address: tpdu.Address{Addr: "banana"},
 			},
 			nil,
-			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
+			tpdu.NewEncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
 		},
 		{
 			"set number",
@@ -241,7 +241,7 @@ func TestMarshalBinary(t *testing.T) {
 				Address: tpdu.Address{Addr: strings.Repeat("1", 510), TOA: 0x91},
 			},
 			[]byte{0x01, 0x02, 0x03, 0x04},
-			tpdu.EncodeError("addr", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("addr", tpdu.ErrOverlength),
 		},
 	}
 	for _, p := range patterns {
@@ -281,7 +281,7 @@ func TestMarshalHexString(t *testing.T) {
 				Address: tpdu.Address{Addr: "banana"},
 			},
 			nil,
-			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
+			tpdu.NewEncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
 		},
 	}
 	for _, p := range patterns {

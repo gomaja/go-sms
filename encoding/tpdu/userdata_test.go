@@ -57,7 +57,7 @@ func TestUserDataHeaderMarshalBinary(t *testing.T) {
 				tpdu.InformationElement{ID: 1, Data: make([]byte, 256)},
 			},
 			nil,
-			tpdu.EncodeError("ied", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("ied", tpdu.ErrOverlength),
 		},
 		{"udhl overlength",
 			tpdu.UserDataHeader{
@@ -65,14 +65,14 @@ func TestUserDataHeaderMarshalBinary(t *testing.T) {
 				tpdu.InformationElement{ID: 2, Data: make([]byte, 200)},
 			},
 			nil,
-			tpdu.EncodeError("udhl", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("udhl", tpdu.ErrOverlength),
 		},
 		{"udhl overlength by one",
 			tpdu.UserDataHeader{
 				tpdu.InformationElement{ID: 1, Data: make([]byte, 254)},
 			},
 			nil,
-			tpdu.EncodeError("udhl", tpdu.ErrOverlength),
+			tpdu.NewEncodeError("udhl", tpdu.ErrOverlength),
 		},
 	}
 	for _, p := range patterns {
@@ -95,7 +95,7 @@ func TestUserDataHeaderOverlengthTPDU(t *testing.T) {
 	})
 	pdu.UD = []byte("hello")
 	b, err := pdu.MarshalBinary()
-	assert.Equal(t, tpdu.EncodeError("SmsSubmit.ud.udh.ied", tpdu.ErrOverlength), err)
+	assert.Equal(t, tpdu.NewEncodeError("SmsSubmit.ud.udh.ied", tpdu.ErrOverlength), err)
 	assert.Nil(t, b)
 }
 
