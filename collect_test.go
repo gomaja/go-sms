@@ -19,11 +19,11 @@ func TestNewCollector(t *testing.T) {
 }
 
 func TestCollectorClose(t *testing.T) {
-	c := sms.NewCollector(sms.WithReassemblyTimeout(time.Minute, nil))
+	c := sms.NewCollector(sms.WithReassemblyTimeout(time.Minute))
 	require.NotNil(t, c)
 	c.Close() // when open
 	c.Close() // when closed
-	c = sms.NewCollector(sms.WithReassemblyTimeout(time.Minute, nil))
+	c = sms.NewCollector(sms.WithReassemblyTimeout(time.Minute))
 	require.NotNil(t, c)
 	d := tpdu.TPDU{}
 	d.OA = tpdu.Address{Addr: "1234", TOA: 0x91}
@@ -520,10 +520,10 @@ func TestCollectorCollect(t *testing.T) {
 		},
 	}
 	var ae []*tpdu.TPDU
-	exph := func(pp []*tpdu.TPDU) {
+	exph := func(pp []*tpdu.TPDU, _ error) {
 		ae = pp
 	}
-	c := sms.NewCollector(sms.WithReassemblyTimeout(time.Minute, exph))
+	c := sms.NewCollector(sms.WithReassemblyTimeout(time.Minute), sms.WithExpiryHandler(exph))
 	require.NotNil(t, c)
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -604,13 +604,13 @@ func TestCollectorReassemblyTimeout(t *testing.T) {
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			var done = make(chan struct{})
-			var aechan = make(chan []*tpdu.TPDU)
-			exph := func(tt []*tpdu.TPDU) {
-				close(done)
-				aechan <- tt
+			expired := make(chan []*tpdu.TPDU, 2)
+			exph := func(tt []*tpdu.TPDU, reason error) {
+				assert.Equal(t, sms.ErrReassemblyTimeout, reason)
+				expired <- tt
 			}
-			c := sms.NewCollector(sms.WithReassemblyTimeout(time.Millisecond, exph))
+			c := sms.NewCollector(sms.WithReassemblyTimeout(20*time.Millisecond), sms.WithExpiryHandler(exph))
+			defer c.Close()
 			pexp := make([]*tpdu.TPDU, len(p.in)+1)
 			for i, s := range p.in {
 				ci, _ := s.ConcatInfo()
@@ -619,14 +619,14 @@ func TestCollectorReassemblyTimeout(t *testing.T) {
 				assert.Nil(t, err)
 				assert.Nil(t, m)
 			}
+			var texp []*tpdu.TPDU
 			select {
-			case <-done:
-			case <-time.After(50 * time.Millisecond):
+			case texp = <-expired:
+			case <-time.After(time.Second):
 				t.Fatalf("didn't expire")
 			}
 			pipes := c.Pipes()
 			assert.Zero(t, len(pipes))
-			texp := <-aechan
 			assert.Equal(t, pexp, texp)
 		}
 		t.Run(p.name, f)
@@ -966,8 +966,8 @@ func TestCollectorRejectsOtherTypes(t *testing.T) {
 		tpdu.SmsDeliverReport, tpdu.SmsSubmitReport, tpdu.SmsStatusReport, tpdu.SmsCommand,
 	} {
 		expired := make(chan []*tpdu.TPDU, 2)
-		c := sms.NewCollector(sms.WithReassemblyTimeout(10*time.Millisecond,
-			func(s []*tpdu.TPDU) { expired <- s }))
+		c := sms.NewCollector(sms.WithReassemblyTimeout(10*time.Millisecond),
+			sms.WithExpiryHandler(func(s []*tpdu.TPDU, _ error) { expired <- s }))
 		seg := func(ra string, seqno byte) tpdu.TPDU {
 			p := tpdu.TPDU{}
 			require.NoError(t, p.SetSmsType(st))

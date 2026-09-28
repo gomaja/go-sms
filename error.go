@@ -8,8 +8,12 @@ import (
 
 var (
 	// ErrClosed indicates that the collector has been closed and is no longer
-	// accepting PDUs.
+	// accepting PDUs. It is also the reason given to the expiry handler for
+	// the reassemblies abandoned by Close.
 	ErrClosed = errors.New("closed")
+	// ErrReassemblyTimeout is the reason given to the expiry handler for a
+	// reassembly abandoned as its timeout has passed.
+	ErrReassemblyTimeout = errors.New("reassembly timeout")
 	// ErrDcsConflict indicates the required encoding for user data conflicts with the
 	// encoding specified in the template TPDU DCS.
 	ErrDcsConflict = errors.New("DCS conflict")
