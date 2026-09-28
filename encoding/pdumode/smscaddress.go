@@ -47,7 +47,7 @@ const maxSMSCAddressLen = 11
 // An absent address, one with no digits and Present not set, is marshalled as
 // a single zero length octet, with no TOA. Any other address is marshalled as
 // the length octet, the TOA and the digits, so an address with a TOA but no
-// digits has a length of 1.
+// digits has a length of 1. The TOA is always marshalled with bit 7 set.
 //
 // An address longer than 20 digits returns an error, as its length would not
 // fit the field.
@@ -65,7 +65,10 @@ func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 	}
 	dst = make([]byte, 2, l+1)
 	dst[0] = byte(l)
-	dst[1] = a.TOA
+	// Bit 7 of the TOA is always 1 (3GPP TS 23.040 Section 9.1.2.5,
+	// Type-of-Address figure), as in the 145 and 129 defaults for <tosca> of
+	// 3GPP TS 27.005 Section 3.1. SetNumber does not set it on a zero value.
+	dst[1] = a.TOA | 0x80
 	dst = append(dst, addr...)
 	return dst, nil
 }

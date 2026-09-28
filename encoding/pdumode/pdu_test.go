@@ -207,6 +207,17 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.EncodeError("addr", semioctet.ErrInvalidDigit(0x6e)),
 		},
 		{
+			"set number",
+			"07911604895626f90102",
+			func() *pdumode.SMSCAddress {
+				var a pdumode.SMSCAddress
+				a.SetNumber("+61409865629")
+				return &a
+			}(),
+			[]byte{0x01, 0x02},
+			nil,
+		},
+		{
 			"overlength smsc", "",
 			&pdumode.SMSCAddress{
 				Address: tpdu.Address{Addr: strings.Repeat("1", 510), TOA: 0x91},

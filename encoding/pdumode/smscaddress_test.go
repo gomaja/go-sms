@@ -14,6 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// smscFromNumber returns an SMSCAddress set up the way a caller would, with
+// the SetNumber method promoted from tpdu.Address.
+func smscFromNumber(number string) pdumode.SMSCAddress {
+	var a pdumode.SMSCAddress
+	a.SetNumber(number)
+	return a
+}
+
 func TestSMSCAddressMarshalBinary(t *testing.T) {
 	patterns := []struct {
 		name string
@@ -59,6 +67,26 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 				Address: tpdu.Address{TOA: 0x91},
 			},
 			[]byte{0},
+			nil,
+		},
+		{
+			"set number",
+			smscFromNumber("+61409865629"),
+			[]byte{7, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
+			nil,
+		},
+		{
+			"toa without bit 7",
+			pdumode.SMSCAddress{
+				Address: tpdu.Address{Addr: "61409865629", TOA: 0x11},
+			},
+			[]byte{7, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
+			nil,
+		},
+		{
+			"only zero toa",
+			pdumode.SMSCAddress{Present: true},
+			[]byte{1, 0x80},
 			nil,
 		},
 		{
@@ -196,6 +224,16 @@ func TestSMSCAddressUnmarshalBinary(t *testing.T) {
 			nil,
 		},
 		{
+			"toa without bit 7",
+			[]byte{7, 0x11, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
+			pdumode.SMSCAddress{
+				Address: tpdu.Address{Addr: "61409865629", TOA: 0x11},
+				Present: true,
+			},
+			8,
+			nil,
+		},
+		{
 			"zero length",
 			[]byte{0},
 			pdumode.SMSCAddress{},
@@ -295,7 +333,12 @@ func TestSMSCAddressRoundTrip(t *testing.T) {
 		{"default", []byte{0}, []byte{0}},
 		{"only toa", []byte{1, 0x91}, []byte{1, 0x91}},
 		{"only unknown toa", []byte{1, 0x81}, []byte{1, 0x81}},
-		{"only zero toa", []byte{1, 0x00}, []byte{1, 0x00}},
+		{"only zero toa", []byte{1, 0x00}, []byte{1, 0x80}},
+		{
+			"toa without bit 7",
+			[]byte{7, 0x11, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
+			[]byte{7, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
+		},
 		{"only fill", []byte{2, 0x91, 0xff}, []byte{1, 0x91}},
 		{
 			"number",
