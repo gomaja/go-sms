@@ -76,18 +76,17 @@ func TestNewSubmit(t *testing.T) {
 
 func TestAlphabet(t *testing.T) {
 	patterns := []dcsAlphabetPattern{
-		{0x00, tpdu.Alpha7Bit, nil},
-		{0x04, tpdu.Alpha8Bit, nil},
-		{0x08, tpdu.AlphaUCS2, nil},
-		{0x0c, tpdu.Alpha7Bit, nil},
-		{0x80, tpdu.Alpha7Bit, tpdu.ErrInvalid},
+		{0x00, tpdu.Alpha7Bit},
+		{0x04, tpdu.Alpha8Bit},
+		{0x08, tpdu.AlphaUCS2},
+		{0x0c, tpdu.Alpha7Bit},
+		{0x80, tpdu.Alpha7Bit},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			d := tpdu.TPDU{}
 			d.DCS = tpdu.DCS(p.in)
-			c, err := d.Alphabet()
-			require.Equal(t, p.err, err, p.in)
+			c := d.Alphabet()
 			assert.Equal(t, p.out, c)
 		}
 		t.Run(fmt.Sprintf("%02x", p.in), f)
@@ -291,8 +290,8 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 4,
-				DCS:        0x80,
-				UD:         []byte("Hahahaha"),
+				DCS:        0x08,
+				UD:         []byte("Hahahah"),
 				OA:         tpdu.Address{Addr: "6391", TOA: 0x91},
 				SCTS: tpdu.Timestamp{
 					Time: time.Date(2015, time.May, 17, 23, 02, 50, 0,
@@ -300,7 +299,7 @@ func TestMarshalBinary(t *testing.T) {
 				},
 			},
 			nil,
-			tpdu.EncodeError("SmsDeliver.ud.alphabet", tpdu.ErrInvalid),
+			tpdu.EncodeError("SmsDeliver.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 		{
 			"SmsDeliverReport minimal",
@@ -382,13 +381,13 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0,
-				DCS:        0x80,
-				UD:         []byte("report"),
+				DCS:        0x08,
+				UD:         []byte("report!"),
 				FCS:        0x12,
 				PI:         0x06,
 			},
 			nil,
-			tpdu.EncodeError("SmsDeliverReport.ud.alphabet", tpdu.ErrInvalid),
+			tpdu.EncodeError("SmsDeliverReport.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 		{
 			"SmsStatusReport minimal",
@@ -553,12 +552,12 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x02,
-				DCS:        0x80,
-				UD:         []byte("report"),
+				DCS:        0x08,
+				UD:         []byte("report!"),
 				PI:         0x06,
 			},
 			nil,
-			tpdu.EncodeError("SmsStatusReport.ud.alphabet", tpdu.ErrInvalid),
+			tpdu.EncodeError("SmsStatusReport.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 		{
 			"SmsSubmit haha",
@@ -620,12 +619,12 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MO,
 				FirstOctet: 0x01,
-				DCS:        0x80,
-				UD:         []byte("Hahahaha"),
+				DCS:        0x08,
+				UD:         []byte("Hahahah"),
 				DA:         tpdu.Address{Addr: "6391", TOA: 0x91},
 			},
 			nil,
-			tpdu.EncodeError("SmsSubmit.ud.alphabet", tpdu.ErrInvalid),
+			tpdu.EncodeError("SmsSubmit.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 		{
 			"SmsSubmitReport minimal",
@@ -744,13 +743,13 @@ func TestMarshalBinary(t *testing.T) {
 			tpdu.TPDU{
 				Direction:  tpdu.MT,
 				FirstOctet: 0x01,
-				DCS:        0x80,
-				UD:         []byte("report"),
+				DCS:        0x08,
+				UD:         []byte("report!"),
 				FCS:        0x12,
 				PI:         0x06,
 			},
 			nil,
-			tpdu.EncodeError("SmsSubmitReport.ud.alphabet", tpdu.ErrInvalid),
+			tpdu.EncodeError("SmsSubmitReport.ud.sm", tpdu.ErrOddUCS2Length),
 		},
 	}
 	for _, p := range patterns {

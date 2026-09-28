@@ -135,7 +135,7 @@ func NewSubmit(options ...Option) (*TPDU, error) {
 }
 
 // Alphabet returns the alphabet field from the DCS of the SMS TPDU.
-func (t *TPDU) Alphabet() (Alphabet, error) {
+func (t *TPDU) Alphabet() Alphabet {
 	return t.DCS.Alphabet()
 }
 
@@ -205,7 +205,7 @@ func (t TPDU) Segment(msg []byte, options ...SegmentationOption) []TPDU {
 	t.SetUDH(append(t.UDH, cfg.ief(0, 0, 0)))
 	bs = t.UDBlockSize()
 	t.UDH = t.UDH[:len(t.UDH)-1]
-	alpha, _ := t.Alphabet()
+	alpha := t.Alphabet()
 	chunks := chunk(msg, alpha, bs)
 	count := len(chunks)
 	pdus := make([]TPDU, count)
@@ -338,7 +338,7 @@ func (t *TPDU) UDBlockSize() int {
 		bs = 131 // conservative
 		// precise answer depends on variable length fields...
 	}
-	alpha, _ := t.Alphabet()
+	alpha := t.Alphabet()
 	udhl := t.UDHL()
 	if alpha == Alpha7Bit {
 		// work in septets
@@ -839,10 +839,7 @@ func (t *TPDU) decodeUserData(src []byte) error {
 	var udh UserDataHeader
 	sml7 := 0
 	ri := 1
-	alphabet, err := t.Alphabet()
-	if err != nil {
-		return NewDecodeError("alphabet", ri, err)
-	}
+	alphabet := t.Alphabet()
 	if alphabet == Alpha7Bit {
 		sml7 = udl
 		// length is septets - convert to octets
@@ -934,10 +931,7 @@ func (t *TPDU) encodeUserData() (b []byte, err error) {
 		return nil, EncodeError("udh", err)
 	}
 	ud := t.UD
-	alphabet, err := t.Alphabet()
-	if err != nil {
-		return nil, EncodeError("alphabet", err)
-	}
+	alphabet := t.Alphabet()
 	udl := len(t.UD) // assume octets
 	switch alphabet {
 	case Alpha7Bit:

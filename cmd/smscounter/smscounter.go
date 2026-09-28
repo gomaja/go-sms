@@ -48,7 +48,7 @@ func NewCount(msg string, nli int) (Count, error) {
 	if err != nil {
 		return c, err
 	}
-	alpha, _ := pdus[0].Alphabet()
+	alpha := pdus[0].Alphabet()
 	lastLen := len(pdus[len(pdus)-1].UD) // valid for 7bit as it is unpacked into octets.
 	pm := pdus[0].UDBlockSize()
 	switch alpha {

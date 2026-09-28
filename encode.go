@@ -95,7 +95,7 @@ func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, erro
 	}
 	sopts := append(e.sopts, tpdu.WithMR(e.MsgCount), tpdu.WithConcatRef(e.ConcatRef))
 	// take the DCS in the template TPDU as a hint...
-	alpha, _ := e.pdu.DCS.Alphabet()
+	alpha := e.pdu.DCS.Alphabet()
 	switch alpha {
 	case tpdu.Alpha8Bit, tpdu.AlphaUCS2:
 		return e.pdu.Segment(msg, sopts...), nil

@@ -33,7 +33,7 @@ func Decode(segments []*tpdu.TPDU, options ...DecodeOption) ([]byte, error) {
 		if s.DCS.Compressed() {
 			return nil, ErrCompressedUserData
 		}
-		a, _ := s.Alphabet()
+		a := s.Alphabet()
 		ud := s.UD
 		if danglingSurrogate != nil {
 			ud = append([]byte(danglingSurrogate), ud...)
