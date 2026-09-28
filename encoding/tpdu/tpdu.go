@@ -44,7 +44,7 @@ type TPDU struct {
 	// one with an RPMessage of RPAck, which has no TP-FCS.
 	FCS byte
 
-	// MR contains the TP-MP Message Reference field.
+	// MR contains the TP-MR Message Reference field.
 	//
 	// Only applies to SMS-COMMAND, SMS-SUBMIT and SMS-STATUS-REPORT
 	MR byte
@@ -123,7 +123,8 @@ type TPDU struct {
 	// UDH contains the TP-UDH User Data Header field.
 	UDH UserDataHeader
 
-	// UD contains the short message from the User Data.
+	// UD contains the short message from the User Data, or the TP-CD of an
+	// SMS-COMMAND.
 	//
 	// It does not include the User Data Header, which is provided separately
 	// in the UDH.
@@ -135,8 +136,10 @@ type TPDU struct {
 	// For AlphaUCS2, UD is an array of UCS2 characters packed into a byte
 	// array in Big Endian.
 	//  These have NOT been converted to the corresponding UTF8.
-	//  Use the usc2 package to convert to UTF8.
+	//  Use the ucs2 package to convert to UTF8.
 	// For Alpha8Bit, UD contains the raw octets.
+	// For compressed data, as indicated by the DCS, UD contains the compressed
+	// octets, as defined in 3GPP TS 23.042, whatever the Alphabet.
 	UD UserData
 }
 
@@ -215,7 +218,7 @@ func (t *TPDU) MTI() MessageType {
 	return t.FirstOctet.MTI()
 }
 
-// Counter provides a reference couunter that is incremented every time Count
+// Counter provides a reference counter that is incremented every time Count
 // is called.
 type Counter interface {
 	Count() int
@@ -380,7 +383,9 @@ var With16BitConcatRef = func(so *segmentationConfig) {
 
 // WithMR provides an MR generator to provide the TP-MR field for TPDUs.
 //
-// By default the MR is copied from the template TPDU.
+// By default the MR of each segment is the MR of the template TPDU
+// incremented by the position of the segment, so a single segment has the MR
+// of the template.
 func WithMR(mr Counter) SegmentationOption {
 	return func(so *segmentationConfig) {
 		so.mr = mr
@@ -442,7 +447,8 @@ func (t *TPDU) SmsType() SmsType {
 	return smsType(t.FirstOctet.MTI(), t.Direction)
 }
 
-// SetSmsType returns the type of SMS-TPDU this TPDU represents.
+// SetSmsType sets the type of SMS-TPDU this TPDU represents, which is its
+// Direction and TP-MTI.
 func (t *TPDU) SetSmsType(st SmsType) error {
 	if st < 0 || st > SmsCommand {
 		return ErrInvalid
