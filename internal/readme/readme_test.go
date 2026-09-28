@@ -57,6 +57,20 @@ func TestReadmeExamples(t *testing.T) {
 	}
 }
 
+// Every go get or go install of the module in the README names the main
+// branch, as a plain one, or one at @latest, may resolve to the obsolete
+// v1.0.1 cached by the Go module proxy.
+func TestReadmeInstallNamesMain(t *testing.T) {
+	md, err := os.ReadFile("../../README.md")
+	require.NoError(t, err)
+	re := regexp.MustCompile(`(?m)^(?:\$ )?go (?:get|install) (github\.com/gomaja/go-sms\S*)`)
+	cmds := re.FindAllStringSubmatch(string(md), -1)
+	require.NotEmpty(t, cmds)
+	for _, c := range cmds {
+		assert.True(t, strings.HasSuffix(c[1], "@main"), "%s", c[0])
+	}
+}
+
 func TestGoBlocks(t *testing.T) {
 	md := "text\n```go\na := 1\n```\n```shell\nls\n```\n```go\nb\nc\n```\n"
 	assert.Equal(t, []string{"a := 1\n", "b\nc\n"}, goBlocks(md))

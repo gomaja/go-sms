@@ -16,11 +16,21 @@ go-sms requires Go 1.23 or later.
 
 ## Installation
 
-go-sms publishes no tagged releases, so depend on its main branch:
+Depend on the main branch:
 
 ```shell
 go get github.com/gomaja/go-sms@main
 ```
+
+and install the command line tools from it the same way, such as:
+
+```shell
+go install github.com/gomaja/go-sms/cmd/smsdecode@main
+```
+
+Name the branch: a plain `go get github.com/gomaja/go-sms`, or one at
+`@latest`, may resolve to v1.0.1, an obsolete version cached by the Go module
+proxy, which predates the current API and its fixes.
 
 ## Standards scope
 
