@@ -149,6 +149,7 @@ var (
 		0x20: '\u0a6a',
 		0x21: '\u0a6b',
 		0x22: '\u0a6c',
+		// TS 23.038 V20.0.0 A.2.10 prints OA6D here, with a letter O.
 		0x23: '\u0a6d',
 		0x24: '\u0a6e',
 		0x25: '\u0a6f',

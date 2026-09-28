@@ -36,6 +36,8 @@ var (
 		0x21: '!',
 		0x22: '\u0c9f',
 		0x23: '\u0ca0',
+		// TS 23.038 V20.0.0 A.3.7 prints 0CAA here and again at 0x3D, and has
+		// no 0CA1, which fits the run 0C9F, 0CA0, _, 0CA2 of 0x22-0x25.
 		0x24: '\u0ca1',
 		0x25: '\u0ca2',
 		0x26: '\u0ca3',

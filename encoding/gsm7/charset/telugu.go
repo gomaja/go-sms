@@ -156,6 +156,8 @@ var (
 		0x1f: '\u0c69',
 		0x20: '\u0c6a',
 		0x21: '\u0c6b',
+		// TS 23.038 V20.0.0 A.2.12 prints the Arabic 06CC and 06CD at 0x22
+		// and 0x23, among the Telugu digits 0C66-0C6F of 0x1C-0x25.
 		0x22: '\u0c6c',
 		0x23: '\u0c6d',
 		0x24: '\u0c6e',

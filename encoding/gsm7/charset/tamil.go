@@ -142,6 +142,8 @@ var (
 		0x21: '\u0beb',
 		0x22: '\u0bec',
 		0x23: '\u0bed',
+		// TS 23.038 V20.0.0 A.2.11 prints 0BEF here and again at 0x25, and
+		// has no 0BEE, the digit eight that fits the run of 0x1C-0x25.
 		0x24: '\u0bee',
 		0x25: '\u0bef',
 		0x26: '\u0bf3',

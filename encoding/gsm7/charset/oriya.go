@@ -68,6 +68,7 @@ var (
 		0x43: '\u0b2f',
 		0x44: '\u0b30',
 		0x46: '\u0b32',
+		// TS 23.038 V20.0.0 A.3.9 prints a stray U+0B3C before 0B33 here.
 		0x47: '\u0b33',
 		0x49: '\u0b35',
 		0x4a: '\u0b36',
