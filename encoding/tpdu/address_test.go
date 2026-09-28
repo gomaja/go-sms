@@ -191,11 +191,42 @@ func TestAddressUnmarshalBinary(t *testing.T) {
 			9,
 			nil,
 		},
-		{"overlong number",
+		// TS 23.040 9.1.2.5: the Address-Length is "the number of useful
+		// semi-octets within the Address-Value field, i.e. excludes any semi
+		// octet containing only fill bits", so the fill semi-octet of an
+		// odd length address carries nothing, whatever the sender set it to
+		// in place of the 1111 of 9.1.2.3.
+		{"fill 0000",
 			[]byte{11, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0x09},
-			tpdu.Address{},
+			tpdu.Address{Addr: "61409865629", TOA: 0x91},
 			8,
-			tpdu.NewDecodeError("addr", 2, semioctet.ErrMissingFill),
+			nil,
+		},
+		{"fill 1110",
+			[]byte{11, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xe9},
+			tpdu.Address{Addr: "61409865629", TOA: 0x91},
+			8,
+			nil,
+		},
+		{"fill 1010 of one digit",
+			[]byte{1, 0x81, 0xa7},
+			tpdu.Address{Addr: "7", TOA: 0x81},
+			3,
+			nil,
+		},
+		// A 1111 before the last semi-octet is skipped, so the last is then
+		// a digit.
+		{"fill within odd number",
+			[]byte{3, 0x81, 0xf1, 0x23},
+			tpdu.Address{Addr: "132", TOA: 0x81},
+			4,
+			nil,
+		},
+		{"fill within odd number underflow",
+			[]byte{3, 0x81, 0xf1, 0xf3},
+			tpdu.Address{},
+			4,
+			tpdu.NewDecodeError("addr", 2, tpdu.ErrUnderflow),
 		},
 		{"short binary",
 			[]byte{0}, tpdu.Address{},
@@ -378,11 +409,18 @@ func midFill(value []byte) bool {
 	return false
 }
 
+// oddFill reports whether a semi-octet address of an odd number of digits
+// has a last semi-octet, its fill, other than 1111.
+func oddFill(src []byte) bool {
+	return src[0]%2 == 1 && src[len(src)-1]>>4 != 0x0f
+}
+
 // FuzzAddressUnmarshalBinary checks that a decoded address marshals back to
 // the octets it was decoded from.
 //
 // The exceptions are a semi-octet address with a fill semi-octet before the
-// last, which is ignored (3GPP TS 23.040 Section 9.1.2.3), and an
+// last, which is ignored, or with a last fill semi-octet other than 1111,
+// which carries nothing (3GPP TS 23.040 Sections 9.1.2.3 and 9.1.2.5), and an
 // alphanumeric address, where an Address-Length that does not match the
 // number of septets, or non-zero fill bits, carry no information, and an
 // escape that has no character is read as a substitute (3GPP TS 23.038
@@ -400,6 +438,8 @@ func FuzzAddressUnmarshalBinary(f *testing.F) {
 		{20, 0xd0, 0xc8, 0x32, 0x9b, 0xfd, 0x06, 0x5d, 0xdf, 0x72, 0x36, 0x19},
 		{21, 0x91, 0x21, 0x43, 0x65, 0x87, 0x09, 0x21, 0x43, 0x65, 0x87, 0x09, 0xf1},
 		{11, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0x09},
+		{11, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xe9},
+		{3, 0x81, 0xf1, 0x23},
 		{11, 0x91, 0x16, 0x04, 0x26, 0xf9, 0x89, 0x56},
 		{20, 0xd1, 0x61, 0x50, 0xb9, 0x2e, 0x7f, 0x83, 0x36, 0xe5, 0x99, 0x0c},
 		{4, 0xd0, 0xc1, 0x0d},
@@ -421,7 +461,7 @@ func FuzzAddressUnmarshalBinary(f *testing.F) {
 		if err != nil {
 			t.Fatalf("% x: %+v marshal error %v", src, a, err)
 		}
-		if a.TypeOfNumber() != tpdu.TonAlphanumeric && !midFill(src[2:n]) {
+		if a.TypeOfNumber() != tpdu.TonAlphanumeric && !midFill(src[2:n]) && !oddFill(src[:n]) {
 			if !bytes.Equal(src[:n], b) {
 				t.Fatalf("% x: remarshalled to % x", src[:n], b)
 			}

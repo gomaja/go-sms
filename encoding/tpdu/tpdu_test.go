@@ -1451,6 +1451,52 @@ func TestAlphanumericAddressEscapes(t *testing.T) {
 	}
 }
 
+// TestAddressFillSemiOctet checks that a TPDU whose address has an odd
+// number of digits and a fill semi-octet other than 1111 decodes, and is
+// marshalled with the fill a sender is to use.
+//
+// TS 23.040 9.1.2.3: "the bits with bit numbers 4 to 7 within the last octet
+// are fill bits and shall always be set to "1111"", and 9.1.2.5: the
+// Address-Length is "the number of useful semi-octets within the
+// Address-Value field, i.e. excludes any semi octet containing only fill
+// bits", so the fill carries nothing a receiver needs.
+func TestAddressFillSemiOctet(t *testing.T) {
+	number := tpdu.Address{Addr: "61409865629", TOA: 0x91}
+	patterns := []struct {
+		name    string
+		dirn    tpdu.Direction
+		in, out string
+		addr    func(*tpdu.TPDU) tpdu.Address
+	}{
+		{"deliver", tpdu.MT,
+			"04 0b 91 160489562609 00 00 51507132200523 01 41",
+			"04 0b 91 1604895626f9 00 00 51507132200523 01 41",
+			func(d *tpdu.TPDU) tpdu.Address { return d.OA }},
+		{"submit", tpdu.MO,
+			"01 00 0b 91 1604895626e9 00 00 01 41",
+			"01 00 0b 91 1604895626f9 00 00 01 41",
+			func(d *tpdu.TPDU) tpdu.Address { return d.DA }},
+		{"status report", tpdu.MT,
+			"02 42 0b 91 160489562659 51507132200523 51408132200542 ab",
+			"02 42 0b 91 1604895626f9 51507132200523 51408132200542 ab",
+			func(d *tpdu.TPDU) tpdu.Address { return d.RA }},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			in := unhex(t, p.in)
+			d := tpdu.TPDU{Direction: p.dirn}
+			require.NoError(t, d.UnmarshalBinary(in))
+			assert.Equal(t, number, p.addr(&d))
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, unhex(t, p.out), b)
+			// the input is not changed
+			assert.Equal(t, unhex(t, p.in), in)
+		}
+		t.Run(p.name, f)
+	}
+}
+
 // TestUDHIWithoutUD checks that a TPDU received with the TP-UDHI set but no
 // TP-UD has no UDH, as there is no header to decode, and keeps the bit, so
 // it marshals back to the octets it came from.

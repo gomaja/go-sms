@@ -104,6 +104,12 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 // An Address-Length greater than 20 exceeds the maximum length of the address
 // field and results in an ErrOverlength error.
 //
+// The Address-Length of a semi-octet address counts its digits, so the fill
+// semi-octet of an address with an odd number of digits, which a sender sets
+// to 1111 (3GPP TS 23.040 Section 9.1.2.3), is ignored whatever it holds, as
+// it carries nothing (Section 9.1.2.5), and a 1111 before the last
+// semi-octet is skipped (Section 9.1.2.3).
+//
 // An alphanumeric address is decoded from the GSM 7 bit default alphabet and
 // its extension table, as for MarshalBinary, and never results in an error,
 // so the TPDU it is in is not lost over its address. Where the tables have
@@ -141,7 +147,12 @@ func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 		ri += ol
 		a.Addr = string(baddr)
 	default:
-		baddr, n, err := semioctet.Decode(make([]byte, l), src[ri:ri+ol])
+		// Room for a digit more than the Address-Length, so that the last
+		// semi-octet of an odd length address, its fill, is decoded
+		// whatever it holds, and then dropped, as it is not counted by the
+		// Address-Length. A 1111 before it is skipped, and the last
+		// semi-octet is then a digit.
+		baddr, n, err := semioctet.Decode(make([]byte, l+1), src[ri:ri+ol])
 		ri += n
 		if err != nil {
 			return ri, NewDecodeError("addr", ri-n, err)
@@ -149,7 +160,7 @@ func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 		if n != ol || len(baddr) < l {
 			return ri, NewDecodeError("addr", ri-n, ErrUnderflow)
 		}
-		a.Addr = string(baddr)
+		a.Addr = string(baddr[:l])
 	}
 	a.TOA = toa
 	return ri, nil
