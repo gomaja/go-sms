@@ -3,10 +3,12 @@
 package tpdu_test
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -109,7 +111,8 @@ func TestConcat(t *testing.T) {
 			ci, ok := s.ConcatInfo()
 			assert.Equal(t, p.ok, ok)
 			assert.Equal(t, p.ci, ci)
-			assert.Equal(t, !p.ok, s.IsSingleSegment())
+			// a concatenated message of 1 segment is a single segment.
+			assert.Equal(t, !p.ok || p.ci.Total == 1, s.IsSingleSegment())
 		}
 		t.Run(p.name, f)
 	}
@@ -790,18 +793,19 @@ func TestSegment(t *testing.T) {
 		out     []tpdu.TPDU
 	}{
 		{
+			// an empty message is carried by one TPDU with a TP-UDL of 0.
 			"nil msg",
 			tpdu.TPDU{},
 			nil,
 			nil,
-			nil,
+			[]tpdu.TPDU{{}},
 		},
 		{
 			"empty msg",
-			tpdu.TPDU{},
+			tpdu.TPDU{MR: 3},
 			[]byte{},
 			nil,
-			nil,
+			[]tpdu.TPDU{{MR: 3}},
 		},
 		{
 			"single segment",
@@ -834,6 +838,9 @@ func TestSegment(t *testing.T) {
 				{
 					FirstOctet: tpdu.FoUDHI,
 					PI:         tpdu.PiUDL,
+					// TS 23.040 9.2.3.24.1: "TP-MR must be incremented for
+					// every segment of a concatenated message"
+					MR: 1,
 					UDH: []tpdu.InformationElement{
 						{
 							ID:   0,
@@ -958,12 +965,12 @@ func TestSegment(t *testing.T) {
 			tpdu.TPDU{
 				DCS: tpdu.DcsUCS2Data,
 			},
-			[]byte("hello"),
+			[]byte{0x00, 'h', 0x00, 'i'},
 			nil,
 			[]tpdu.TPDU{
 				{
 					DCS: tpdu.DcsUCS2Data,
-					UD:  []byte("hello"),
+					UD:  []byte{0x00, 'h', 0x00, 'i'},
 				},
 			},
 		},
@@ -984,7 +991,8 @@ func TestSegment(t *testing.T) {
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
-			out := p.in.Segment(p.msg, p.options...)
+			out, err := p.in.Segment(p.msg, p.options...)
+			require.NoError(t, err)
 			assert.Equal(t, p.out, out)
 		}
 		t.Run(p.name, f)
@@ -996,7 +1004,8 @@ func TestSegmentUCS2DoesNotSplitSurrogatePair(t *testing.T) {
 	msg := ucs2.Encode([]rune(strings.Repeat("a", 66) + "😁bbb"))
 	in := tpdu.TPDU{DCS: tpdu.DcsUCS2Data}
 
-	segments := in.Segment(msg)
+	segments, err := in.Segment(msg)
+	require.NoError(t, err)
 
 	require.Len(t, segments, 2)
 	require.Len(t, segments[0].UD, 132)
@@ -2867,14 +2876,16 @@ func TestMarshalDerivesFlags(t *testing.T) {
 // marshalled.
 func TestSegmentReportUD(t *testing.T) {
 	tmpl := tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0xd0}
-	pdus := tmpl.Segment([]byte("hi"))
+	pdus, err := tmpl.Segment([]byte("hi"))
+	require.NoError(t, err)
 	require.Len(t, pdus, 1)
 	b, err := pdus[0].MarshalBinary()
 	require.NoError(t, err)
 	assert.Equal(t, unhex(t, "00 d0 04 02 e834"), b)
 
 	tmpl.DCS = tpdu.DcsUCS2Data
-	pdus = tmpl.Segment([]byte{0x00, 0x41})
+	pdus, err = tmpl.Segment([]byte{0x00, 0x41})
+	require.NoError(t, err)
 	require.Len(t, pdus, 1)
 	b, err = pdus[0].MarshalBinary()
 	require.NoError(t, err)
@@ -3368,6 +3379,322 @@ func TestUDMaximaOnUnmarshal(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+// segmentWithin calls Segment, and fails the test if it panics or does not
+// return within a few seconds, rather than hanging the test run.
+func segmentWithin(t *testing.T, p tpdu.TPDU, msg []byte, options ...tpdu.SegmentationOption) ([]tpdu.TPDU, error) {
+	t.Helper()
+	type result struct {
+		pdus  []tpdu.TPDU
+		err   error
+		panic interface{}
+	}
+	done := make(chan result, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- result{panic: r}
+			}
+		}()
+		pdus, err := p.Segment(msg, options...)
+		done <- result{pdus: pdus, err: err}
+	}()
+	select {
+	case r := <-done:
+		require.Nil(t, r.panic, "Segment panicked")
+		return r.pdus, r.err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Segment did not return")
+		return nil, nil
+	}
+}
+
+// checkSegments checks each segment marshals, and holds no more UD than its
+// UDBlockSize, and that the segments carry consistent concatenation IEs.
+func checkSegments(t *testing.T, pdus []tpdu.TPDU, name string) {
+	t.Helper()
+	for i, p := range pdus {
+		_, err := p.MarshalBinary()
+		require.NoError(t, err, "%s segment %d", name, i)
+		assert.LessOrEqual(t, len(p.UD), p.UDBlockSize(), "%s segment %d", name, i)
+		if len(pdus) == 1 {
+			continue
+		}
+		ci, ok := p.ConcatInfo()
+		require.True(t, ok, "%s segment %d", name, i)
+		assert.Equal(t, len(pdus), ci.Total, "%s segment %d", name, i)
+		assert.Equal(t, i+1, ci.Seqno, "%s segment %d", name, i)
+	}
+}
+
+// TestSegmentLargeTemplateUDH checks Segment returns an error, rather than
+// panicking, looping or producing oversized TPDUs, when the template UDH
+// leaves too little room, whatever its size and the coding.
+func TestSegmentLargeTemplateUDH(t *testing.T) {
+	msgs := map[string][]byte{
+		"7bit": append([]byte{0x1b, 0x65}, bytes.Repeat([]byte("a"), 300)...),
+		"8bit": bytes.Repeat([]byte{0xa5}, 300),
+		"ucs2": ucs2.Encode([]rune(strings.Repeat("😁a", 100))),
+	}
+	dcs := map[string]tpdu.DCS{"7bit": 0x00, "8bit": 0x04, "ucs2": 0x08}
+	for name, msg := range msgs {
+		for n := 100; n <= 160; n++ {
+			p := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: dcs[name],
+				UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, n)}}}
+			for _, l := range []int{0, 2, 10, len(msg)} {
+				pdus, err := segmentWithin(t, p, msg[:l])
+				label := fmt.Sprintf("%s ie %d len %d", name, n, l)
+				if err != nil {
+					// no room, or blocks so small the message needs
+					// more than 255 of them.
+					if !errors.Is(err, tpdu.ErrTooManySegments) {
+						assert.ErrorIs(t, err, tpdu.ErrOverlength, label)
+					}
+					assert.Nil(t, pdus, label)
+					continue
+				}
+				checkSegments(t, pdus, label)
+			}
+		}
+	}
+
+	// the cases that used to panic or hang, from the least room each coding
+	// can use to none.
+	for _, p := range []struct {
+		name string
+		pdu  tpdu.TPDU
+		msg  []byte
+		ok   bool
+	}{
+		{"8bit 1 octet blocks", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x04,
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 131)}}}, make([]byte, 10), true},
+		{"8bit no room", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x04,
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 132)}}}, make([]byte, 10), false},
+		{"7bit 2 septet blocks", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01,
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 130)}}}, []byte("\x1be\x1bea\x1bebcdef"), true},
+		{"7bit 1 septet blocks", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01,
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 131)}}}, []byte("\x1beabcdefghij"), false},
+		{"ucs2 4 octet blocks", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x08,
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 128)}}}, ucs2.Encode([]rune("😁😁😁")), true},
+		{"ucs2 2 octet blocks", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x08,
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 130)}}}, ucs2.Encode([]rune("😁😁😁")), false},
+		{"udh alone too long", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x04,
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 138)}}}, nil, false},
+		{"udh alone fits", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x04,
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 137)}}}, nil, true},
+	} {
+		pdus, err := segmentWithin(t, p.pdu, p.msg)
+		if !p.ok {
+			assert.Equal(t, tpdu.NewEncodeError("udh", tpdu.ErrOverlength), err, p.name)
+			continue
+		}
+		require.NoError(t, err, p.name)
+		checkSegments(t, pdus, p.name)
+		var ud []byte
+		for _, s := range pdus {
+			ud = append(ud, s.UD...)
+		}
+		assert.Equal(t, p.msg, ud, p.name)
+	}
+}
+
+// TestSegmentCount checks a message of 255 segments is segmented, and a
+// longer one is rejected, rather than wrapping the count and sequence
+// numbers.
+//
+// TS 23.040 9.2.3.24.1: "The maximum length of an uncompressed concatenated
+// short message is 39015 (255*153) default alphabet characters, 34170
+// (255*134) octets or 17085 (255*67) UCS2 characters."
+func TestSegmentCount(t *testing.T) {
+	sixteen := []tpdu.SegmentationOption{tpdu.With16BitConcatRef}
+	patterns := []struct {
+		name string
+		dcs  tpdu.DCS
+		msg  []byte
+		opts []tpdu.SegmentationOption
+	}{
+		{"7bit", 0x00, bytes.Repeat([]byte("a"), 153*255), nil},
+		{"8bit", 0x04, bytes.Repeat([]byte{0xff}, 134*255), nil},
+		{"ucs2", 0x08, bytes.Repeat([]byte{0x00, 0x61}, 67*255), nil},
+		{"8bit 16 bit ref", 0x04, bytes.Repeat([]byte{0xff}, 133*255), sixteen},
+		{"7bit 16 bit ref", 0x00, bytes.Repeat([]byte("a"), 152*255), sixteen},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			mr := &counter{}
+			cr := &counter{}
+			opts := append([]tpdu.SegmentationOption{tpdu.WithMR(mr), tpdu.WithConcatRef(cr)}, p.opts...)
+			tmpl := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: p.dcs}
+			pdus, err := tmpl.Segment(p.msg, opts...)
+			require.NoError(t, err)
+			require.Len(t, pdus, 255)
+			checkSegments(t, pdus, p.name)
+			assert.Equal(t, 255, mr.c)
+			assert.Equal(t, 1, cr.c)
+
+			// one more unit needs a 256th segment
+			unit := 1
+			if p.dcs == 0x08 {
+				unit = 2
+			}
+			msg := append(p.msg, p.msg[:unit]...)
+			pdus, err = tmpl.Segment(msg, opts...)
+			assert.Equal(t, tpdu.NewEncodeError("sm", tpdu.ErrTooManySegments), err)
+			assert.Nil(t, pdus)
+			// and no counter was drawn from
+			assert.Equal(t, 255, mr.c)
+			assert.Equal(t, 1, cr.c)
+		}
+		t.Run(p.name, f)
+	}
+
+	// Escapes that are not split make blocks shorter, so a message of 39015
+	// septets with escapes on the block boundaries needs 256 segments.
+	msg := bytes.Repeat([]byte("a"), 153*255)
+	msg[152] = 0x1b
+	msg[153] = 0x65
+	tmpl := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01}
+	_, err := tmpl.Segment(msg)
+	assert.ErrorIs(t, err, tpdu.ErrTooManySegments)
+}
+
+// TestSegmentMR checks the TP-MR is incremented for each segment, from that
+// of the template, when no MR generator is provided.
+//
+// TS 23.040 9.2.3.24.1: "TP-MR must be incremented for every segment of a
+// concatenated message as defined in clause 9.2.3.6."
+func TestSegmentMR(t *testing.T) {
+	msg := bytes.Repeat([]byte("a"), 153*3)
+	for _, mr := range []byte{0, 7, 254} {
+		tmpl := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x05, MR: mr}
+		pdus, err := tmpl.Segment(msg)
+		require.NoError(t, err)
+		require.Len(t, pdus, 3)
+		for i, p := range pdus {
+			assert.Equal(t, mr+byte(i), p.MR) // modulo 256, as 9.2.3.6
+			b, err := p.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, mr+byte(i), b[1])
+		}
+	}
+	// a single segment keeps the template TP-MR
+	tmpl := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, MR: 9}
+	pdus, err := tmpl.Segment([]byte("hi"))
+	require.NoError(t, err)
+	assert.Equal(t, byte(9), pdus[0].MR)
+}
+
+// TestSegmentTemplateUnchanged checks Segment does not write to the template,
+// including the spare capacity of its UDH, so it can be shared.
+func TestSegmentTemplateUnchanged(t *testing.T) {
+	sentinel := tpdu.InformationElement{ID: 0x70, Data: []byte{0x70}}
+	udh := make(tpdu.UserDataHeader, 2, 4)
+	udh[0] = tpdu.InformationElement{ID: 1, Data: []byte{1}}
+	udh[1] = sentinel
+	udh = udh[:1]
+	tmpl := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, MR: 3, UDH: udh}
+	orig := tmpl
+	msg := bytes.Repeat([]byte("a"), 400)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			var opts []tpdu.SegmentationOption
+			if i%2 == 1 {
+				opts = append(opts, tpdu.With16BitConcatRef)
+			}
+			pdus, err := tmpl.Segment(msg, opts...)
+			assert.NoError(t, err)
+			assert.Len(t, pdus, 3)
+		}(i)
+	}
+	wg.Wait()
+	assert.Equal(t, orig, tmpl)
+	assert.Equal(t, sentinel, udh[:2][1])
+}
+
+// TestSegmentEscapes checks Segment does not split an escape sequence,
+// including one that follows an escape sequence of two escapes.
+//
+// TS 23.040 9.2.3.24.1: "A character represented by an escape-sequence shall
+// not be split in the middle."
+func TestSegmentEscapes(t *testing.T) {
+	// 150 'a' then ESC ESC, ESC 'e', which would end the 153 septet block
+	// between the last ESC and the 'e'.
+	msg := append(bytes.Repeat([]byte("a"), 150), 0x1b, 0x1b, 0x1b, 0x65)
+	msg = append(msg, bytes.Repeat([]byte("b"), 20)...)
+	tmpl := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01}
+	pdus, err := tmpl.Segment(msg)
+	require.NoError(t, err)
+	require.Len(t, pdus, 2)
+	assert.Equal(t, []byte{0x1b, 0x1b}, []byte(pdus[0].UD[len(pdus[0].UD)-2:]))
+	assert.Equal(t, []byte{0x1b, 0x65}, []byte(pdus[1].UD[:2]))
+	text, err := tpdu.DecodeUserData(pdus[1].UD, nil, tpdu.Alpha7Bit)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(text), "€b"))
+}
+
+// TestSegmentInvalidMessage checks a message that is not valid for the coding
+// of the template is rejected.
+func TestSegmentInvalidMessage(t *testing.T) {
+	tmpl := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01}
+	_, err := tmpl.Segment([]byte("caf\xc3\xa9"))
+	assert.Equal(t, tpdu.NewEncodeError("sm", gsm7.ErrInvalidSeptet{Offset: 3, Septet: 0xc3}), err)
+	tmpl.DCS = tpdu.DcsUCS2Data
+	_, err = tmpl.Segment([]byte{0x00, 0x61, 0x00})
+	assert.Equal(t, tpdu.NewEncodeError("sm", tpdu.ErrOddUCS2Length), err)
+	// but any octets are valid for 8 bit and compressed data
+	for _, dcs := range []tpdu.DCS{0x04, 0x20, 0x28} {
+		tmpl.DCS = dcs
+		pdus, err := tmpl.Segment([]byte{0xc3, 0xa9, 0x00})
+		require.NoError(t, err)
+		assert.Len(t, pdus, 1)
+	}
+	// and the type must be known
+	tmpl = tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x03}
+	_, err = tmpl.Segment([]byte("a"))
+	assert.Equal(t, tpdu.ErrUnsupportedSmsType(7), err)
+}
+
+// TestSegmentEmptyMessage checks an empty message is carried by one TPDU.
+func TestSegmentEmptyMessage(t *testing.T) {
+	for _, p := range []struct {
+		tmpl tpdu.TPDU
+		out  string
+	}{
+		{tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: tpdu.Address{Addr: "6391", TOA: 0x91}},
+			"01 01 04 91 3619 00 00 00"},
+		{tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: tpdu.Address{Addr: "6391", TOA: 0x91},
+			UDH: tpdu.UserDataHeader{{ID: 5, Data: []byte{0x0b, 0x84, 0x23, 0xf0}}}, DCS: 0x04},
+			"41 01 04 91 3619 00 04 07 0605040b8423f0"},
+		{tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0xd0}, "00 d0 00"},
+	} {
+		pdus, err := p.tmpl.Segment(nil, tpdu.WithMR(&counter{}))
+		require.NoError(t, err)
+		require.Len(t, pdus, 1)
+		b, err := pdus[0].MarshalBinary()
+		require.NoError(t, err)
+		assert.Equal(t, unhex(t, p.out), b)
+	}
+}
+
+// TestSegmentEmptyUDH checks the UDHL octet of an empty, but not nil, UDH is
+// counted, so the segments are not overfilled.
+func TestSegmentEmptyUDH(t *testing.T) {
+	tmpl := tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x04, UDH: tpdu.UserDataHeader{}}
+	assert.Equal(t, 139, tmpl.UDBlockSize())
+	pdus, err := tmpl.Segment(bytes.Repeat([]byte{1}, 140))
+	require.NoError(t, err)
+	require.Len(t, pdus, 2)
+	checkSegments(t, pdus, "8bit")
+	tmpl.DCS = 0
+	assert.Equal(t, 158, tmpl.UDBlockSize())
+	pdus, err = tmpl.Segment(bytes.Repeat([]byte("a"), 159))
+	require.NoError(t, err)
+	require.Len(t, pdus, 2)
+	checkSegments(t, pdus, "7bit")
 }
 
 // counter is an implementation of the tpdu.Counter interface.

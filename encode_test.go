@@ -35,17 +35,30 @@ var patterns = []struct {
 	err     error
 }{
 	{
+		// an empty message is carried by one TPDU with a TP-UDL of 0.
 		"nil",
 		nil,
 		nil,
-		nil,
+		[]tpdu.TPDU{
+			{
+				Direction:  tpdu.MO,
+				FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+				MR:         1,
+			},
+		},
 		nil,
 	},
 	{
 		"empty",
 		[]byte{},
 		nil,
-		nil,
+		[]tpdu.TPDU{
+			{
+				Direction:  tpdu.MO,
+				FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+				MR:         1,
+			},
+		},
 		nil,
 	},
 	{

@@ -389,6 +389,19 @@ func TestChunk(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+	// a block too small for a character of the alphabet is refused, rather
+	// than looping or panicking.
+	msg := []byte{0x1b, 0x65, 0xd8, 0x3d, 0xde, 0x01}
+	for _, bs := range []int{-1, 0, 1} {
+		assert.Nil(t, chunk(msg, Alpha7Bit, bs), "7bit %d", bs)
+	}
+	for _, bs := range []int{-1, 0, 1, 2, 3} {
+		assert.Nil(t, chunk(msg, AlphaUCS2, bs), "ucs2 %d", bs)
+	}
+	for _, bs := range []int{-1, 0} {
+		assert.Nil(t, chunk(msg, Alpha8Bit, bs), "8bit %d", bs)
+	}
+	assert.Len(t, chunk(msg, Alpha8Bit, 1), 6)
 }
 
 func TestChunk7Bit(t *testing.T) {
@@ -458,6 +471,56 @@ func TestChunk7Bit(t *testing.T) {
 				{7, 8},
 			},
 		},
+		{
+			// TS 23.038 6.2.1.1: ESC ESC is itself a sequence, so the
+			// third ESC starts the sequence ESC 'e'.
+			"escape run odd",
+			[]byte{'a', 0x1b, 0x1b, 0x1b, 'e', 'b'},
+			4,
+			[][]byte{
+				{'a', 0x1b, 0x1b},
+				{0x1b, 'e', 'b'},
+			},
+		},
+		{
+			"escape run of five",
+			[]byte{0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 'e', 'b'},
+			5,
+			[][]byte{
+				{0x1b, 0x1b, 0x1b, 0x1b},
+				{0x1b, 'e', 'b'},
+			},
+		},
+		{
+			"escape run even",
+			[]byte{'a', 0x1b, 0x1b, 0x1b, 0x1b, 'b'},
+			5,
+			[][]byte{
+				{'a', 0x1b, 0x1b, 0x1b, 0x1b},
+				{'b'},
+			},
+		},
+		{
+			"escapes in blocks of 2",
+			[]byte{0x1b, 0x1b, 0x1b, 'e', 'a', 0x1b, 'e'},
+			2,
+			[][]byte{
+				{0x1b, 0x1b},
+				{0x1b, 'e'},
+				{'a'},
+				{0x1b, 'e'},
+			},
+		},
+		{
+			"escape at block start",
+			[]byte{'a', 'b', 0x1b, 'e', 'c', 'd'},
+			2,
+			[][]byte{
+				{'a', 'b'},
+				{0x1b, 'e'},
+				{'c', 'd'},
+			},
+		},
 	}
 	for _, p := range patterns {
 		f := func(t *testing.T) {
@@ -466,6 +529,9 @@ func TestChunk7Bit(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+	// Below the minimum of 2, which Segment never uses, an escape cannot be
+	// kept with the next septet, but every chunk still holds a septet.
+	assert.Equal(t, [][]byte{{0x1b}, {0x1b}, {0x1b}}, chunk7Bit([]byte{0x1b, 0x1b, 0x1b}, 1))
 }
 
 func TestChunk8Bit(t *testing.T) {
@@ -590,6 +656,27 @@ func TestChunkUCS2(t *testing.T) {
 				{1, 2, 3, 4},
 				{5, 6, 7, 8},
 				{9},
+			},
+		},
+		{
+			// a block of 2 cannot hold a surrogate pair, so it is split
+			// rather than looping.
+			"surrogate in blocks of 2",
+			[]byte{0xd8, 0x3d, 0xde, 0x01, 0x00, 0x61},
+			2,
+			[][]byte{
+				{0xd8, 0x3d},
+				{0xde, 0x01},
+				{0x00, 0x61},
+			},
+		},
+		{
+			"surrogate pairs",
+			[]byte{0xd8, 0x3d, 0xde, 0x01, 0xd8, 0x3d, 0xde, 0x01},
+			6,
+			[][]byte{
+				{0xd8, 0x3d, 0xde, 0x01},
+				{0xd8, 0x3d, 0xde, 0x01},
 			},
 		},
 	}

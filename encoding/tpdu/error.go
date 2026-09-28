@@ -95,7 +95,8 @@ var (
 	ErrOddUCS2Length = errors.New("odd UCS2 length")
 
 	// ErrOverlength indicates the binary provided contains more bytes than
-	// expected by the TPDU decoder.
+	// expected by the TPDU decoder, or a field provided to an encoder is
+	// longer than it can encode.
 	ErrOverlength = errors.New("overlength")
 
 	// ErrMissing indicates a field required to marshal an object is missing.
@@ -108,4 +109,8 @@ var (
 	// ErrUnderflow indicates the binary provided does not contain
 	// sufficient bytes to correctly decode the TPDU.
 	ErrUnderflow = errors.New("underflow")
+
+	// ErrTooManySegments indicates a message is too long to be carried in
+	// the 255 segments of a concatenated message.
+	ErrTooManySegments = errors.New("more than 255 segments")
 )

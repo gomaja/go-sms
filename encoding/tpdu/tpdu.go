@@ -202,9 +202,12 @@ func (t *TPDU) ConcatInfo() (ConcatInfo, bool) {
 
 // IsSingleSegment returns true unless the TPDU is part of a multi-part
 // message.
+//
+// A TPDU without a valid concatenation IE, or with one whose total is 1, is
+// the only segment of its message.
 func (t *TPDU) IsSingleSegment() bool {
-	_, ok := t.ConcatInfo()
-	return !ok
+	ci, ok := t.ConcatInfo()
+	return !ok || ci.Total == 1
 }
 
 // MTI returns the MessageType from the first octet of the SMS TPDU.
@@ -236,50 +239,136 @@ type SegmentationOption func(*segmentationConfig)
 //
 // The TPDU acts as the template for the generated TPDUs and provides all the
 // fields in the resulting TPDUs, other than the UD, which is populated using
-// the message.  For multi-part messages, the UDH provided in the TPDU is
-// extended with a concatenation IE. The TPDU UDH must not contain a
-// concatenation IE (ID 0 or 8) or the resulting TPDUs will be non-conformant.
-func (t TPDU) Segment(msg []byte, options ...SegmentationOption) []TPDU {
-	if len(msg) == 0 {
-		return nil
-	}
+// the message, and the TP-MR. The message must be coded for the UD of the
+// template: GSM 7 bit septets, one per byte and unpacked, octets for 8 bit
+// data, compressed data and the TP-CD of an SMS-COMMAND, and UTF-16, big
+// endian, for UCS2.
+//
+// A message that fits in the UD of the template, including an empty message,
+// results in a single TPDU. A longer message is split into segments, whose
+// UDH is that of the template extended by a concatenation IE, as defined in
+// 3GPP TS 23.040 Section 9.2.3.24.1, or 9.2.3.24.8 With16BitConcatRef. The
+// template UDH must not contain a concatenation IE (ID 0 or 8) or the
+// resulting TPDUs will be non-conformant. The segments do not split an escape
+// sequence, as required by Section 9.2.3.24.1: "A character represented by an
+// escape-sequence shall not be split in the middle", nor a UCS2 character or
+// surrogate pair.
+//
+// Without WithMR, the TP-MR of each segment is the TP-MR of the template
+// incremented by its position in the message, as Section 9.2.3.24.1 says:
+// "TP-MR must be incremented for every segment of a concatenated message as
+// defined in clause 9.2.3.6."
+//
+// An error is returned, rather than any TPDU, if the message is not valid for
+// the coding, which is a byte above 0x7f for GSM 7 bit and an odd length for
+// UCS2, if the template UDH leaves no room for the message and a
+// concatenation IE, or if the message needs more than the 255 segments that a
+// concatenation IE can count. No counter is drawn from on error.
+//
+// The template, including the backing array of its UDH, is not changed.
+func (t TPDU) Segment(msg []byte, options ...SegmentationOption) ([]TPDU, error) {
 	cfg := segmentationConfig{newInfoElement, nil, nil}
 	for _, o := range options {
 		o(&cfg)
 	}
+	switch st := t.SmsType(); st {
+	case SmsDeliver, SmsDeliverReport, SmsSubmitReport, SmsSubmit,
+		SmsStatusReport, SmsCommand:
+	default:
+		return nil, ErrUnsupportedSmsType(st)
+	}
+	coding := t.udCoding()
+	if err := checkMessage(msg, coding); err != nil {
+		return nil, err
+	}
+	// A template UDH that alone does not fit leaves a negative block size,
+	// so even an empty message goes on to fail the check below.
 	bs := t.UDBlockSize()
 	if len(msg) <= bs {
-		// single segment
-		t.UD = msg
-		if cfg.mr != nil {
-			t.MR = byte(cfg.mr.Count())
+		p := t
+		p.UD = nil
+		if len(msg) > 0 {
+			p.UD = msg
 		}
-		return []TPDU{t}
+		if cfg.mr != nil {
+			p.MR = byte(cfg.mr.Count())
+		}
+		return []TPDU{p}, nil
 	}
-	// add contcat IE and recalc bs
-	t.SetUDH(append(t.UDH, cfg.ief(0, 0, 0)))
-	bs = t.UDBlockSize()
-	t.UDH = t.UDH[:len(t.UDH)-1]
-	alpha := t.udCoding()
-	chunks := chunk(msg, alpha, bs)
+	// the room left by the template UDH, which may be none, and the
+	// concatenation IE.
+	udho := udhOctets(t.UDH)
+	if udho == 0 {
+		udho = 1
+	}
+	bs = t.blockSize(udho + cfg.ief(0, 0, 0).marshalledLen())
+	if bs < minBlockSize(coding) {
+		return nil, NewEncodeError("udh", ErrOverlength)
+	}
+	chunks := chunk(msg, coding, bs)
 	count := len(chunks)
-	pdus := make([]TPDU, count)
+	// 3GPP TS 23.040 Sections 9.2.3.24.1 and 9.2.3.24.8: the total number of
+	// short messages is an octet, "in the range 0 to 255", and a total of 0
+	// is ignored.
+	if count > maxSegments {
+		return nil, NewEncodeError("sm", ErrTooManySegments)
+	}
 	concatRef := 1
 	if cfg.cr != nil {
 		concatRef = cfg.cr.Count()
 	}
-	for i := 0; i < count; i++ {
-		pdus[i] = t
+	pdus := make([]TPDU, count)
+	for i := range chunks {
+		p := t
 		if cfg.mr != nil {
-			pdus[i].MR = byte(cfg.mr.Count())
+			p.MR = byte(cfg.mr.Count())
+		} else {
+			p.MR = t.MR + byte(i)
 		}
-		udh := append(t.UDH[:0:0], t.UDH...)
+		udh := make(UserDataHeader, 0, len(t.UDH)+1)
+		udh = append(udh, t.UDH...)
 		udh = append(udh, cfg.ief(concatRef, count, i+1))
-		pdus[i].SetUDH(udh)
-		pdus[i].UD = chunks[i]
+		p.SetUDH(udh)
+		p.UD = chunks[i]
+		pdus[i] = p
 	}
-	return pdus
+	return pdus, nil
 }
+
+// checkMessage returns an error if the message is not valid for the coding.
+func checkMessage(msg []byte, coding Alphabet) error {
+	switch coding {
+	case Alpha7Bit:
+		for i, s := range msg {
+			if s > 0x7f {
+				return NewEncodeError("sm", gsm7.ErrInvalidSeptet{Offset: i, Septet: s})
+			}
+		}
+	case AlphaUCS2:
+		if len(msg)&0x1 == 0x1 {
+			return NewEncodeError("sm", ErrOddUCS2Length)
+		}
+	}
+	return nil
+}
+
+// minBlockSize returns the smallest block that can hold any character of the
+// coding: an escape sequence of 2 septets for GSM 7 bit, a surrogate pair of
+// 4 octets for UCS2, and an octet otherwise.
+func minBlockSize(coding Alphabet) int {
+	switch coding {
+	case Alpha7Bit:
+		return 2
+	case AlphaUCS2:
+		return 4
+	default:
+		return 1
+	}
+}
+
+// maxSegments is the most segments a concatenated message can have, as the
+// number of segments is carried in an octet of the concatenation IE.
+const maxSegments = 255
 
 // With16BitConcatRef specifies the usage of concat IEs with 16 bit reference
 // numbers (ID=8).
@@ -1427,7 +1516,12 @@ const (
 )
 
 // chunk splits a message into chunks that are not larger than bs.
+//
+// The bs must be at least minBlockSize, and chunk returns nil if it is not.
 func chunk(msg []byte, alpha Alphabet, bs int) [][]byte {
+	if bs < minBlockSize(alpha) {
+		return nil
+	}
 	switch alpha {
 	default: // default to 7Bit
 		return chunk7Bit(msg, bs)
@@ -1438,26 +1532,34 @@ func chunk(msg []byte, alpha Alphabet, bs int) [][]byte {
 	}
 }
 
-// chunk7Bit splits a GSM7 message into chunks that are not larger than bs.
+// chunk7Bit splits a GSM7 message into chunks that are not larger than bs,
+// which must be at least 2.
 //
-// Escaped characters are not split across blocks, so the resulting blocks may
-// be one septet shorter than bs.
+// Escape sequences are not split across blocks, so the resulting blocks may
+// be one septet shorter than bs. An escape followed by an escape is itself an
+// escape sequence, as 3GPP TS 23.038 Section 6.2.1.1 reserves it "for the
+// extension to another extension table", so the escapes of a run pair up
+// from its start, and a chunk that ends with an odd number of escapes ends
+// with the first septet of a sequence.
 func chunk7Bit(msg []byte, bs int) [][]byte {
 	if len(msg) == 0 {
 		return nil
 	}
-	count := 1 + len(msg)/bs
-	chunks := make([][]byte, 0, count)
+	chunks := make([][]byte, 0, 1+len(msg)/bs)
 	bstart := 0
-	bend := bs
-	for bend < len(msg) {
-		// don't split escapes
-		if msg[bend-1] == esc && msg[bend-2] != esc {
+	for len(msg)-bstart > bs {
+		bend := bstart + bs
+		// Each chunk starts at the start of a character, so the escapes
+		// at its end pair up from the first of the run in the chunk.
+		n := 0
+		for i := bend - 1; i >= bstart && msg[i] == esc; i-- {
+			n++
+		}
+		if n%2 == 1 && bend-1 > bstart {
 			bend--
 		}
 		chunks = append(chunks, msg[bstart:bend])
 		bstart = bend
-		bend = bstart + bs
 	}
 	chunks = append(chunks, msg[bstart:])
 	return chunks
@@ -1469,14 +1571,11 @@ func chunk8Bit(msg []byte, bs int) [][]byte {
 	if len(msg) == 0 {
 		return nil
 	}
-	count := 1 + len(msg)/bs
-	chunks := make([][]byte, 0, count)
+	chunks := make([][]byte, 0, 1+len(msg)/bs)
 	bstart := 0
-	bend := bs
-	for bend < len(msg) {
-		chunks = append(chunks, msg[bstart:bend])
-		bstart = bend
-		bend = bstart + bs
+	for len(msg)-bstart > bs {
+		chunks = append(chunks, msg[bstart:bstart+bs])
+		bstart += bs
 	}
 	chunks = append(chunks, msg[bstart:])
 	return chunks
@@ -1487,12 +1586,14 @@ const (
 	surrLowStart  = 0xdc00
 )
 
-// chunkUCS2 splits a UCS2/UTF-16 message into chunks that are not larger than bs.
+// chunkUCS2 splits a UCS2/UTF-16 message into chunks that are not larger than
+// bs, which must be at least 2, and should be at least 4.
 //
 // bs should be even, but if odd is reduced by one.
 // To allow for reassemblers that cannot handle split surrogate pairs, they are
 // not split during chunking, so the resulting blocks may be slightly smaller
-// than bs whenever a surrogate pair would span a block boundary.
+// than bs whenever a surrogate pair would span a block boundary, unless bs is
+// 2, which cannot hold a pair.
 // While the msg should have even length for UCS2, the chunker does not enforce
 // this, and if an odd length message is presented then the final chunk will
 // have an odd length.
@@ -1503,19 +1604,17 @@ func chunkUCS2(msg []byte, bs int) [][]byte {
 	bs &^= 0x1
 	// rough count of blocks - may be off due to not splitting surrogates, but
 	// not worth working out the precise count in advance.
-	count := 1 + len(msg)/bs
-	chunks := make([][]byte, 0, count)
+	chunks := make([][]byte, 0, 1+len(msg)/bs)
 	bstart := 0
-	bend := bstart + bs
-	for bend < len(msg) {
+	for len(msg)-bstart > bs {
+		bend := bstart + bs
 		// check last uint16 is a high surrogate, if so then leave for later
 		r := binary.BigEndian.Uint16(msg[bend-2 : bend])
-		if surrHighStart <= r && r < surrLowStart {
-			bend = bend - 2
+		if surrHighStart <= r && r < surrLowStart && bend-2 > bstart {
+			bend -= 2
 		}
 		chunks = append(chunks, msg[bstart:bend])
 		bstart = bend
-		bend = bstart + bs
 	}
 	chunks = append(chunks, msg[bstart:])
 	return chunks

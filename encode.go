@@ -98,7 +98,7 @@ func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, erro
 	alpha := e.pdu.DCS.Alphabet()
 	switch alpha {
 	case tpdu.Alpha8Bit, tpdu.AlphaUCS2:
-		return e.pdu.Segment(msg, sopts...), nil
+		return e.pdu.Segment(msg, sopts...)
 	default:
 		// encode as GSM7, or failing that UCS2...
 		d, udh, alpha, err := tpdu.EncodeUserData(msg, e.eopts...)
@@ -115,7 +115,7 @@ func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, erro
 		if udh != nil {
 			e.pdu.SetUDH(append(e.pdu.UDH[:0:0], udh...))
 		}
-		return e.pdu.Segment(d, sopts...), nil
+		return e.pdu.Segment(d, sopts...)
 	}
 }
 
