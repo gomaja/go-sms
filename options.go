@@ -93,7 +93,9 @@ var (
 	WithDefaultCharset = CharsetOption{}
 )
 
-// WithMR specifies the counter that provides the TP-MR of each TPDU.
+// WithMR specifies the counter that provides the TP-MR of each SMS-SUBMIT
+// and SMS-COMMAND TPDU. A TPDU of another type keeps the TP-MR of the
+// template, as described for NewEncoder.
 //
 // The counter must be safe for concurrent use if the Encoder is used
 // concurrently, as Counter is.

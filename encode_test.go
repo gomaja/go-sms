@@ -224,12 +224,12 @@ var patterns = []struct {
 		sms.ErrDcsConflict,
 	},
 	{
+		// An SMS-DELIVER has no TP-MR, so draws none (TS 23.040 9.2.3.6).
 		"deliver single segment",
 		[]byte("hello"),
 		[]sms.EncoderOption{sms.AsDeliver},
 		[]tpdu.TPDU{
 			{
-				MR: 1,
 				UD: []byte("hello"),
 			},
 		},
@@ -260,7 +260,6 @@ var patterns = []struct {
 		[]sms.EncoderOption{sms.AsDeliver, sms.From("1234")},
 		[]tpdu.TPDU{
 			{
-				MR: 1,
 				OA: tpdu.Address{TOA: 0x81, Addr: "1234"},
 				UD: []byte("hello"),
 			},
@@ -273,7 +272,6 @@ var patterns = []struct {
 		[]sms.EncoderOption{sms.AsDeliver, sms.From("+1234")},
 		[]tpdu.TPDU{
 			{
-				MR: 1,
 				OA: tpdu.Address{TOA: 0x91, Addr: "1234"},
 				UD: []byte("hello"),
 			},
@@ -448,8 +446,7 @@ var patterns = []struct {
 		[]sms.EncoderOption{sms.AsDeliver, sms.From("+1234")},
 		[]tpdu.TPDU{
 			{
-				FirstOctet: 0x40, // UDHI
-				MR:         1,
+				FirstOctet: 0x40,       // UDHI
 				PI:         tpdu.PiUDL, // not relevant for Deliver, but set as side-effect
 				OA:         tpdu.Address{TOA: 0x91, Addr: "1234"},
 				UDH: tpdu.UserDataHeader{
@@ -459,7 +456,6 @@ var patterns = []struct {
 			},
 			{
 				FirstOctet: 0x40,
-				MR:         2,
 				PI:         tpdu.PiUDL, // not relevant for Deliver, but set as side-effect
 				OA:         tpdu.Address{TOA: 0x91, Addr: "1234"},
 				UDH: tpdu.UserDataHeader{
@@ -541,7 +537,7 @@ func TestEncoderEncode(t *testing.T) {
 func TestEncoderCounters(t *testing.T) {
 	msgC := &sms.Counter{}
 	concatC := &sms.Counter{}
-	e := sms.NewEncoder(sms.WithMR(msgC), sms.WithConcatRef(concatC))
+	e := sms.NewEncoder(sms.AsSubmit, sms.WithMR(msgC), sms.WithConcatRef(concatC))
 	assert.Equal(t, 0, msgC.Read())
 	assert.Equal(t, 0, concatC.Read())
 

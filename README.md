@@ -117,13 +117,13 @@ func encoder(msgs <-chan []byte) error {
 }
 ```
 
-Each TPDU carries a TP-MR, and each concatenated message a reference number
-shared by its segments. Unless given counters with *WithMR* and
-*WithConcatRef*, Encoders, and *sms.Encode*, draw both from counters shared by
-all of them, so consecutive messages do not reuse a reference. The shared
-reference counter starts at a random value, so that successive runs of a
-program are unlikely to reuse one either. An MS continues the TP-MR of its
-(U)SIM, which *NewCounter* provides:
+Each SMS-SUBMIT and SMS-COMMAND carries a TP-MR, and each concatenated
+message a reference number shared by its segments. Unless given counters with
+*WithMR* and *WithConcatRef*, Encoders, and *sms.Encode*, draw both from
+counters shared by all of them, so consecutive messages do not reuse a
+reference. The shared reference counter starts at a random value, so that
+successive runs of a program are unlikely to reuse one either. An MS continues
+the TP-MR of its (U)SIM, which *NewCounter* provides:
 
 ```go
 func counters(lastUsedTPMR int) *sms.Encoder {
@@ -295,7 +295,7 @@ Option | Category | Description
 *AsDeliver*|Encode|Encode the TPDU as a SMS-DELIVER (default for *sms.NewEncoder*)
 *As8Bit*|Encode|Force the encoding of user data as 8-bit
 *AsUCS2*|Encode|Force the encoding of user data as UCS-2, from UTF-16
-*WithMR(counter)*|Encode|Draw the TP-MR of each TPDU from the counter
+*WithMR(counter)*|Encode|Draw the TP-MR of each SMS-SUBMIT and SMS-COMMAND from the counter
 *WithConcatRef(counter)*|Encode|Draw the reference of each concatenated message from the counter
 *With16BitConcatRef*|Encode|Use 16-bit rather than 8-bit concatenation references
 *WithAllCharsets*|Decode,Encode|Make all GSM7 character sets available

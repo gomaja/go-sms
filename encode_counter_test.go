@@ -87,6 +87,53 @@ func TestEncoderCounterOptions(t *testing.T) {
 	assert.Same(t, mr, e.MsgCount)
 }
 
+// Only an SMS-SUBMIT or SMS-COMMAND draws its TP-MR from the counter, as
+// only their originator allocates one (3GPP TS 23.040 Section 9.2.3.6). An
+// SMS-STATUS-REPORT keeps the TP-MR of the template, which is that of the
+// SMS-SUBMIT or SMS-COMMAND it reports on, in every TPDU, and the other
+// types, which have no TP-MR, keep it too, without using up the counter.
+func TestEncoderMRByType(t *testing.T) {
+	addr := tpdu.Address{Addr: "6391", TOA: 0x91}
+	patterns := []struct {
+		name      string
+		tmpl      tpdu.TPDU
+		allocated bool
+	}{
+		{"submit", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: addr}, true},
+		{"command", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02, DA: addr}, true},
+		{"status report", tpdu.TPDU{FirstOctet: 0x02, RA: addr}, false},
+		{"deliver", tpdu.TPDU{FirstOctet: 0x00, OA: addr}, false},
+		{"deliver report", tpdu.TPDU{Direction: tpdu.MO}, false},
+		{"submit report", tpdu.TPDU{FirstOctet: 0x01}, false},
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			tmpl := p.tmpl
+			tmpl.MR = 42
+			mr := sms.NewCounter(6)
+			e := sms.NewEncoder(sms.WithTemplate(tmpl), sms.WithMR(mr), sms.WithConcatRef(&sms.Counter{}))
+			drawn := 0
+			for _, msg := range [][]byte{[]byte("hi"), []byte(strings.Repeat("a", 400))} {
+				out, err := e.Encode(msg)
+				require.NoError(t, err)
+				require.Equal(t, len(msg) > 100, len(out) > 1)
+				for i, pdu := range out {
+					want := byte(42)
+					if p.allocated {
+						want = byte(7 + drawn + i)
+					}
+					assert.Equal(t, want, pdu.MR, "segment %d", i)
+				}
+				if p.allocated {
+					drawn += len(out)
+				}
+				assert.Equal(t, 6+drawn, mr.Read())
+			}
+		}
+		t.Run(p.name, f)
+	}
+}
+
 func TestNewCounter(t *testing.T) {
 	c := sms.NewCounter(254)
 	assert.Equal(t, 254, c.Read())

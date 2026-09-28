@@ -54,7 +54,8 @@ type Encoder struct {
 
 	err error
 
-	// MsgCount provides the TP-MR of each TPDU encoded.
+	// MsgCount provides the TP-MR of each SMS-SUBMIT and SMS-COMMAND TPDU
+	// encoded.
 	MsgCount tpdu.Counter
 
 	// ConcatRef provides the reference of each concatenated message encoded.
@@ -63,20 +64,27 @@ type Encoder struct {
 
 // NewEncoder creates an Encoder.
 //
-// The Encoder draws the TP-MR of each TPDU from the counter given by WithMR,
-// and the reference of each concatenated message from the counter given by
-// WithConcatRef. Without them it draws from counters shared by all such
-// Encoders, and by Encode, so that consecutive concatenated messages get
-// different references, which 3GPP TS 23.040 Section 9.2.3.24.1 requires to
-// tell them apart, even when an Encoder is created for each message. The
-// shared reference counter starts at a random value, so that different runs
-// of a program, which each start their counters afresh, are unlikely to reuse
-// a reference. The shared TP-MR counter starts at 0, so the first TP-MR is 1.
+// The Encoder draws the TP-MR of each SMS-SUBMIT and SMS-COMMAND TPDU from
+// the counter given by WithMR, and the reference of each concatenated message
+// from the counter given by WithConcatRef. Without them it draws from
+// counters shared by all such Encoders, and by Encode, so that consecutive
+// concatenated messages get different references, which 3GPP TS 23.040
+// Section 9.2.3.24.1 requires to tell them apart, even when an Encoder is
+// created for each message. The shared reference counter starts at a random
+// value, so that different runs of a program, which each start their
+// counters afresh, are unlikely to reuse a reference. The shared TP-MR
+// counter starts at 0, so the first TP-MR is 1.
 //
 // An MS continues the TP-MR from the LastUsedTPMR held by its (U)SIM, as
 // Section 9.2.3.6 requires, which WithMR(NewCounter(lastUsedTPMR)) provides.
 // An application sending on behalf of several originators needs a TP-MR
 // counter for each of them.
+//
+// Only the originator of an SMS-SUBMIT or SMS-COMMAND allocates a TP-MR
+// (Section 9.2.3.6), so a TPDU of another type keeps the TP-MR of the
+// template, and draws none, as tpdu.TPDU.Segment describes. That is the
+// TP-MR of the SMS-SUBMIT or SMS-COMMAND an SMS-STATUS-REPORT reports on,
+// which the template must hold, and the other types have no TP-MR.
 func NewEncoder(options ...EncoderOption) *Encoder {
 	e := Encoder{}
 	for _, option := range options {

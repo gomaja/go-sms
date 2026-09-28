@@ -820,12 +820,13 @@ func TestSegment(t *testing.T) {
 		},
 		{
 			"two segment 7bit",
-			tpdu.TPDU{},
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01},
 			[]byte("this is a very long message that does not fit in a single SMS message, at least it will if I keep adding more to it as 160 characters is more than you might think"),
 			nil,
 			[]tpdu.TPDU{
 				{
-					FirstOctet: tpdu.FoUDHI,
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FoUDHI | 0x01,
 					PI:         tpdu.PiUDL,
 					UDH: []tpdu.InformationElement{
 						{
@@ -836,7 +837,8 @@ func TestSegment(t *testing.T) {
 					UD: []byte("this is a very long message that does not fit in a single SMS message, at least it will if I keep adding more to it as 160 characters is more than you mi"),
 				},
 				{
-					FirstOctet: tpdu.FoUDHI,
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FoUDHI | 0x01,
 					PI:         tpdu.PiUDL,
 					// TS 23.040 9.2.3.24.1: "TP-MR must be incremented for
 					// every segment of a concatenated message"
@@ -853,7 +855,7 @@ func TestSegment(t *testing.T) {
 		},
 		{
 			"three segment 7bit withMR",
-			tpdu.TPDU{},
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01},
 			[]byte("this is a very long message that does not fit in a single SMS message, at least it will if I keep adding more to it as 160 characters is more than you might think, but wait, then we also need a really really long message to trigger a three segment concatenation which requires even more characters than I care to count"),
 			[]tpdu.SegmentationOption{
 				tpdu.WithMR(&counter{10}),
@@ -861,7 +863,8 @@ func TestSegment(t *testing.T) {
 			},
 			[]tpdu.TPDU{
 				{
-					FirstOctet: tpdu.FoUDHI,
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FoUDHI | 0x01,
 					PI:         tpdu.PiUDL,
 					MR:         11,
 					UDH: []tpdu.InformationElement{
@@ -873,7 +876,8 @@ func TestSegment(t *testing.T) {
 					UD: []byte("this is a very long message that does not fit in a single SMS message, at least it will if I keep adding more to it as 160 characters is more than you mi"),
 				},
 				{
-					FirstOctet: tpdu.FoUDHI,
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FoUDHI | 0x01,
 					PI:         tpdu.PiUDL,
 					MR:         12,
 					UDH: []tpdu.InformationElement{
@@ -885,7 +889,8 @@ func TestSegment(t *testing.T) {
 					UD: []byte("ght think, but wait, then we also need a really really long message to trigger a three segment concatenation which requires even more characters than I c"),
 				},
 				{
-					FirstOctet: tpdu.FoUDHI,
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FoUDHI | 0x01,
 					PI:         tpdu.PiUDL,
 					MR:         13,
 					UDH: []tpdu.InformationElement{
@@ -900,7 +905,7 @@ func TestSegment(t *testing.T) {
 		},
 		{
 			"three segment 7bit with16BitConcatRef",
-			tpdu.TPDU{},
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01},
 			[]byte("this is a very long message that does not fit in a single SMS message, at least it will if I keep adding more to it as 160 characters is more than you might think, but wait, then we also need a really really long message to trigger a three segment concatenation which requires even more characters than I care to count"),
 			[]tpdu.SegmentationOption{
 				tpdu.WithMR(&counter{20}),
@@ -909,7 +914,8 @@ func TestSegment(t *testing.T) {
 			},
 			[]tpdu.TPDU{
 				{
-					FirstOctet: tpdu.FoUDHI,
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FoUDHI | 0x01,
 					PI:         tpdu.PiUDL,
 					MR:         21,
 					UDH: []tpdu.InformationElement{
@@ -921,7 +927,8 @@ func TestSegment(t *testing.T) {
 					UD: []byte("this is a very long message that does not fit in a single SMS message, at least it will if I keep adding more to it as 160 characters is more than you m"),
 				},
 				{
-					FirstOctet: tpdu.FoUDHI,
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FoUDHI | 0x01,
 					PI:         tpdu.PiUDL,
 					MR:         22,
 					UDH: []tpdu.InformationElement{
@@ -933,7 +940,8 @@ func TestSegment(t *testing.T) {
 					UD: []byte("ight think, but wait, then we also need a really really long message to trigger a three segment concatenation which requires even more characters than I"),
 				},
 				{
-					FirstOctet: tpdu.FoUDHI,
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FoUDHI | 0x01,
 					PI:         tpdu.PiUDL,
 					MR:         23,
 					UDH: []tpdu.InformationElement{
@@ -976,15 +984,17 @@ func TestSegment(t *testing.T) {
 		},
 		{
 			"single segment withMR",
-			tpdu.TPDU{},
+			tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01},
 			[]byte("hello"),
 			[]tpdu.SegmentationOption{
 				tpdu.WithMR(&counter{42}),
 			},
 			[]tpdu.TPDU{
 				{
-					MR: 43,
-					UD: []byte("hello"),
+					Direction:  tpdu.MO,
+					FirstOctet: 0x01,
+					MR:         43,
+					UD:         []byte("hello"),
 				},
 			},
 		},
@@ -3814,6 +3824,81 @@ func TestSegmentMR(t *testing.T) {
 	assert.Equal(t, byte(9), pdus[0].MR)
 }
 
+// TestSegmentMRByType checks that only the types whose TP-MR is allocated by
+// their originator, SMS-SUBMIT and SMS-COMMAND, draw it from WithMR, or
+// increment it for each segment, and that every other type keeps the TP-MR
+// of the template in every TPDU, without drawing from the counter. An
+// SMS-STATUS-REPORT carries the TP-MR of the SMS-SUBMIT or SMS-COMMAND it
+// reports on, and the other types have no TP-MR.
+//
+// TS 23.040 9.2.3.6: "The MS increments TP-Message-Reference by 1 for each
+// SMS-SUBMIT or SMS-COMMAND being submitted", and "The value sent to the MS
+// shall be the same as the TP-Message-Reference value generated by the MS in
+// the earlier SMS-SUBMIT or SMS-COMMAND to which the status report relates."
+func TestSegmentMRByType(t *testing.T) {
+	addr := tpdu.Address{Addr: "6391", TOA: 0x91}
+	patterns := []struct {
+		name      string
+		tmpl      tpdu.TPDU
+		allocated bool
+		mrOctet   int // the index of the TP-MR in the TPDU, if any
+	}{
+		{"submit", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DA: addr}, true, 1},
+		{"command", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x02, DA: addr}, true, 1},
+		{"status report", tpdu.TPDU{FirstOctet: 0x02, RA: addr}, false, 1},
+		{"deliver", tpdu.TPDU{FirstOctet: 0x00, OA: addr}, false, -1},
+		{"deliver report", tpdu.TPDU{Direction: tpdu.MO}, false, -1},
+		{"submit report", tpdu.TPDU{FirstOctet: 0x01}, false, -1},
+	}
+	check := func(t *testing.T, pdus []tpdu.TPDU, mr func(i int) byte, mrOctet int) {
+		t.Helper()
+		for i, p := range pdus {
+			assert.Equal(t, mr(i), p.MR, "segment %d", i)
+			if mrOctet >= 0 {
+				b, err := p.MarshalBinary()
+				require.NoError(t, err)
+				assert.Equal(t, mr(i), b[mrOctet], "segment %d", i)
+			}
+		}
+	}
+	for _, p := range patterns {
+		f := func(t *testing.T) {
+			tmpl := p.tmpl
+			tmpl.MR = 0x42
+			long := bytes.Repeat([]byte{0x01}, 400)
+			for _, msg := range [][]byte{[]byte("hi"), long} {
+				// without a counter
+				pdus, err := tmpl.Segment(msg)
+				require.NoError(t, err)
+				require.Equal(t, len(msg) > 100, len(pdus) > 1)
+				check(t, pdus, func(i int) byte {
+					if p.allocated {
+						return 0x42 + byte(i)
+					}
+					return 0x42
+				}, p.mrOctet)
+				// with a counter, which only the types with an allocated
+				// TP-MR draw from.
+				c := &counter{c: 6}
+				pdus, err = tmpl.Segment(msg, tpdu.WithMR(c), tpdu.WithConcatRef(&counter{}))
+				require.NoError(t, err)
+				check(t, pdus, func(i int) byte {
+					if p.allocated {
+						return 7 + byte(i)
+					}
+					return 0x42
+				}, p.mrOctet)
+				drawn := 0
+				if p.allocated {
+					drawn = len(pdus)
+				}
+				assert.Equal(t, 6+drawn, c.c)
+			}
+		}
+		t.Run(p.name, f)
+	}
+}
+
 // TestSegmentTemplateUnchanged checks Segment does not write to the template,
 // including the spare capacity of its UDH, so it can be shared.
 func TestSegmentTemplateUnchanged(t *testing.T) {
@@ -4271,7 +4356,14 @@ func FuzzSegment(f *testing.F) {
 		for i, p := range pdus {
 			ud = append(ud, p.UD...)
 			require.LessOrEqual(t, len(p.UD), p.UDBlockSize())
-			require.Equal(t, mr+byte(i), p.MR)
+			// only the TP-MR of an SMS-SUBMIT or SMS-COMMAND is allocated
+			// by the originator, and so incremented (TS 23.040 9.2.3.6).
+			switch tmpl.SmsType() {
+			case tpdu.SmsSubmit, tpdu.SmsCommand:
+				require.Equal(t, mr+byte(i), p.MR)
+			default:
+				require.Equal(t, mr, p.MR)
+			}
 			b, err := p.MarshalBinary()
 			require.NoError(t, err)
 			d := tpdu.TPDU{Direction: p.Direction, RPMessage: p.RPMessage}
