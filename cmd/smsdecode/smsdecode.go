@@ -5,10 +5,10 @@ package main
 
 import (
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 
@@ -18,48 +18,84 @@ import (
 )
 
 func main() {
-	pm := flag.Bool("p", false, "PDU is prefixed with SCA (PDU mode)")
-	orig := flag.Bool("o", false, "PDU is mobile originated")
-	flag.Usage = usage
-	flag.Parse()
-	if flag.NArg() != 1 {
-		flag.Usage()
-		os.Exit(1)
-	}
-	tp, smsc, err := decode(flag.Arg(0), *pm, *orig)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if smsc != nil {
-		if err := dumpSMSC(os.Stdout, smsc); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if err := dumpTPDU(os.Stdout, tp); err != nil {
-		log.Fatal(err)
-	}
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func decode(s string, pm, mo bool) (p *tpdu.TPDU, a *pdumode.SMSCAddress, err error) {
+// run decodes the TPDU given by the arguments, writes its fields to stdout,
+// and returns the exit status: 0 on success, 1 if the TPDU cannot be decoded,
+// and 2 if the arguments are not valid.
+func run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("smsdecode", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	pm := fs.Bool("p", false, "PDU is prefixed with SCA (PDU mode)")
+	mo := fs.Bool("o", false, "PDU is mobile originated")
+	rpError := fs.Bool("e", false, "PDU is a report carried by an RP-ERROR, so has a TP-FCS")
+	fs.Usage = func() { usage(fs) }
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return 2
+	}
+	d, err := decode(fs.Arg(0), *pm, *mo, *rpError)
+	if err != nil {
+		warnf(stderr, "%v", err)
+		return 1
+	}
+	if d.smsc != nil {
+		if err := dumpSMSC(stdout, d.smsc); err != nil {
+			warnf(stderr, "%v", err)
+			return 1
+		}
+	}
+	if err := dumpTPDU(stdout, d.tpdu, d.raw); err != nil {
+		warnf(stderr, "%v", err)
+		return 1
+	}
+	return 0
+}
+
+// warnf writes a diagnostic to stderr, where a failed write can be reported
+// nowhere else.
+func warnf(stderr io.Writer, format string, args ...interface{}) {
+	_, _ = fmt.Fprintf(stderr, "smsdecode: "+format+"\n", args...)
+}
+
+// decoded is a decoded TPDU, with its SC address in PDU mode, and its octets.
+type decoded struct {
+	tpdu *tpdu.TPDU
+	smsc *pdumode.SMSCAddress
+	raw  []byte
+}
+
+func decode(s string, pm, mo, rpError bool) (decoded, error) {
+	var d decoded
 	b, err := hex.DecodeString(s)
 	if err != nil {
-		return
+		return d, err
 	}
 	if pm {
-		var pdu *pdumode.PDU
-		pdu, err = pdumode.UnmarshalHexString(s)
+		pdu, err := pdumode.UnmarshalBinary(b)
 		if err != nil {
-			return
+			return d, err
 		}
-		a = &pdu.SMSC
+		d.smsc = &pdu.SMSC
 		b = pdu.TPDU
 	}
+	options := []sms.UnmarshalOption{}
 	if mo {
-		p, err = sms.Unmarshal(b, sms.AsMO)
-		return
+		options = append(options, sms.AsMO)
 	}
-	p, err = sms.Unmarshal(b)
-	return
+	if rpError {
+		options = append(options, sms.AsRPError)
+	}
+	d.tpdu, err = sms.Unmarshal(b, options...)
+	if err != nil {
+		return decoded{}, err
+	}
+	d.raw = b
+	return d, nil
 }
 
 type dumper struct {
@@ -81,37 +117,54 @@ func dumpSMSC(w io.Writer, smsc *pdumode.SMSCAddress) error {
 	return d.err
 }
 
-func dumpTPDU(w io.Writer, t *tpdu.TPDU) error {
+// typeNames are the names of the TPDU types in 3GPP TS 23.040 Section 9.2.2.
+var typeNames = map[tpdu.SmsType]string{
+	tpdu.SmsDeliver:       "SMS-DELIVER",
+	tpdu.SmsDeliverReport: "SMS-DELIVER-REPORT",
+	tpdu.SmsSubmit:        "SMS-SUBMIT",
+	tpdu.SmsSubmitReport:  "SMS-SUBMIT-REPORT",
+	tpdu.SmsStatusReport:  "SMS-STATUS-REPORT",
+	tpdu.SmsCommand:       "SMS-COMMAND",
+}
+
+// errUnsupportedType indicates a TPDU of no type smsdecode can display.
+var errUnsupportedType = errors.New("unsupported TPDU type")
+
+// dumpTPDU writes the fields of the TPDU, whose octets are raw, to w.
+func dumpTPDU(w io.Writer, t *tpdu.TPDU, raw []byte) error {
 	d := dumper{w: w}
-	var st string
-	var dump func(d *dumper, t *tpdu.TPDU)
-	switch t.SmsType() {
-	case tpdu.SmsCommand:
-		st = "SMS-COMMAND"
-		dump = dumpCommand
-	case tpdu.SmsDeliver:
-		st = "SMS-DELIVER"
-		dump = dumpDeliver
-	case tpdu.SmsDeliverReport:
-		st = "SMS-DELIVER-REPORT"
-		dump = dumpDeliverReport
-	case tpdu.SmsStatusReport:
-		st = "SMS-STATUS-REPORT"
-		dump = dumpStatusReport
-	case tpdu.SmsSubmit:
-		st = "SMS-SUBMIT"
-		dump = dumpSubmit
-	case tpdu.SmsSubmitReport:
-		st = "SMS-SUBMIT-REPORT"
-		dump = dumpSubmitReport
+	st := t.SmsType()
+	name, ok := typeNames[st]
+	if !ok {
+		return fmt.Errorf("%w: %s", errUnsupportedType, st)
 	}
-	d.printf("TPDU: %s\n", st)
-	dump(&d, t)
+	d.printf("TPDU: %s\n", name)
+	// The TP-MTI means a type in each direction, as 3GPP TS 23.040 Section
+	// 9.2.3.1 defines, and an MS processes a Reserved TP-MTI "as if it were
+	// an SMS-DELIVER".
+	mti := t.FirstOctet.MTI()
+	if mti == tpdu.MtReserved {
+		name = "Reserved, processed as " + name
+	}
+	d.printf("TP-MTI: 0x%02x %s\n", int(mti), name)
+	switch st {
+	case tpdu.SmsCommand:
+		dumpCommand(&d, t, raw)
+	case tpdu.SmsDeliver:
+		dumpDeliver(&d, t)
+	case tpdu.SmsDeliverReport:
+		dumpDeliverReport(&d, t)
+	case tpdu.SmsStatusReport:
+		dumpStatusReport(&d, t)
+	case tpdu.SmsSubmit:
+		dumpSubmit(&d, t)
+	case tpdu.SmsSubmitReport:
+		dumpSubmitReport(&d, t)
+	}
 	return d.err
 }
 
-func dumpCommand(d *dumper, t *tpdu.TPDU) {
-	d.printf("TP-MTI: 0x%02x %s\n", int(t.SmsType().MTI()), t.SmsType().MTI())
+func dumpCommand(d *dumper, t *tpdu.TPDU, raw []byte) {
 	d.printf("TP-UDHI: %t\n", t.FirstOctet.UDHI())
 	d.printf("TP-SRR: %t\n", t.FirstOctet.SRR())
 	d.printf("TP-MR: %d\n", t.MR)
@@ -119,14 +172,54 @@ func dumpCommand(d *dumper, t *tpdu.TPDU) {
 	d.printf("TP-CT: 0x%02x\n", t.CT)
 	d.printf("TP-MN: %d\n", t.MN)
 	d.printf("TP-DA: %s\n", t.DA.Number())
-	d.printf("TP-SCTS: %s\n", t.SCTS)
-	d.printf("TP-CDL: %d\n", len(t.UD))
-	dumpCD(d, t.UD)
+	d.printf("TP-CDL: %d\n", commandDataLength(t, raw))
+	if t.UDH != nil {
+		dumpUDH(d, t.UDH)
+	}
+	dumpHex(d, "TP-CD", t.UD)
+}
+
+// commandDataLength returns the TP-CDL of an SMS-COMMAND, which counts the
+// octets of the TP-CD, including any header, as 3GPP TS 23.040 Section
+// 9.2.3.20 defines.
+//
+// It is read from the octets, which follow the TP-DA, whose length octet
+// counts its semi-octets (Section 9.1.2.5), as the UDH does not hold the
+// length of a header that was ignored when decoded.
+func commandDataLength(t *tpdu.TPDU, raw []byte) int {
+	const daOffset = 5
+	if len(raw) > daOffset {
+		if cdl := daOffset + 2 + (int(raw[daOffset])+1)/2; cdl < len(raw) {
+			return int(raw[cdl])
+		}
+	}
+	n := len(t.UD)
+	if t.UDH != nil {
+		n += 1 + t.UDH.UDHL()
+	}
+	return n
+}
+
+// dumpMMS writes the TP-MMS, whose bit set means no more messages are
+// waiting, as 3GPP TS 23.040 Section 9.2.3.2 defines.
+func dumpMMS(d *dumper, t *tpdu.TPDU) {
+	if t.FirstOctet.MMS() {
+		d.printf("TP-MMS: 0x01 No more messages are waiting\n")
+	} else {
+		d.printf("TP-MMS: 0x00 More messages are waiting\n")
+	}
+}
+
+// dumpFCS writes the TP-FCS of a report, which only one carried by an
+// RP-ERROR has.
+func dumpFCS(d *dumper, t *tpdu.TPDU) {
+	if t.RPMessage == tpdu.RPError {
+		d.printf("TP-FCS: 0x%02x\n", t.FCS)
+	}
 }
 
 func dumpDeliver(d *dumper, t *tpdu.TPDU) {
-	d.printf("TP-MTI: 0x%02x %s\n", int(t.SmsType().MTI()), t.SmsType().MTI())
-	d.printf("TP-MMS: %t\n", t.FirstOctet.MMS())
+	dumpMMS(d, t)
 	d.printf("TP-LP: %t\n", t.FirstOctet.LP())
 	d.printf("TP-RP: %t\n", t.FirstOctet.RP())
 	d.printf("TP-UDHI: %t\n", t.FirstOctet.UDHI())
@@ -138,13 +231,12 @@ func dumpDeliver(d *dumper, t *tpdu.TPDU) {
 	if t.UDH != nil {
 		dumpUDH(d, t.UDH)
 	}
-	dumpUD(d, t.UD)
+	dumpHex(d, "TP-UD", t.UD)
 }
 
 func dumpDeliverReport(d *dumper, t *tpdu.TPDU) {
-	d.printf("TP-MTI: 0x%02x %s\n", int(t.SmsType().MTI()), t.SmsType().MTI())
 	d.printf("TP-UDHI: %t\n", t.FirstOctet.UDHI())
-	d.printf("TP-FCS: 0x%02x\n", t.FCS)
+	dumpFCS(d, t)
 	d.printf("TP-PI: %s\n", t.PI)
 	if t.PI.PID() {
 		d.printf("TP-PID: 0x%02x\n", t.PID)
@@ -155,13 +247,12 @@ func dumpDeliverReport(d *dumper, t *tpdu.TPDU) {
 	if t.UDH != nil {
 		dumpUDH(d, t.UDH)
 	}
-	dumpUD(d, t.UD)
+	dumpHex(d, "TP-UD", t.UD)
 }
 
 func dumpStatusReport(d *dumper, t *tpdu.TPDU) {
-	d.printf("TP-MTI: 0x%02x %s\n", int(t.SmsType().MTI()), t.SmsType().MTI())
 	d.printf("TP-UDHI: %t\n", t.FirstOctet.UDHI())
-	d.printf("TP-MMS: %t\n", t.FirstOctet.MMS())
+	dumpMMS(d, t)
 	d.printf("TP-LP: %t\n", t.FirstOctet.LP())
 	d.printf("TP-SRQ: %t\n", t.FirstOctet.SRQ())
 	d.printf("TP-MR: %d\n", t.MR)
@@ -179,11 +270,10 @@ func dumpStatusReport(d *dumper, t *tpdu.TPDU) {
 	if t.UDH != nil {
 		dumpUDH(d, t.UDH)
 	}
-	dumpUD(d, t.UD)
+	dumpHex(d, "TP-UD", t.UD)
 }
 
 func dumpSubmit(d *dumper, t *tpdu.TPDU) {
-	d.printf("TP-MTI: 0x%02x %s\n", int(t.SmsType().MTI()), t.SmsType().MTI())
 	d.printf("TP-RD: %t\n", t.FirstOctet.RD())
 	d.printf("TP-VPF: 0x%02x %s\n", int(t.FirstOctet.VPF()), t.FirstOctet.VPF())
 	d.printf("TP-RP: %t\n", t.FirstOctet.RP())
@@ -197,13 +287,12 @@ func dumpSubmit(d *dumper, t *tpdu.TPDU) {
 	if t.UDH != nil {
 		dumpUDH(d, t.UDH)
 	}
-	dumpUD(d, t.UD)
+	dumpHex(d, "TP-UD", t.UD)
 }
 
 func dumpSubmitReport(d *dumper, t *tpdu.TPDU) {
-	d.printf("TP-MTI: 0x%02x %s\n", int(t.SmsType().MTI()), t.SmsType().MTI())
 	d.printf("TP-UDHI: %t\n", t.FirstOctet.UDHI())
-	d.printf("TP-FCS: 0x%02x\n", t.FCS)
+	dumpFCS(d, t)
 	d.printf("TP-PI: %s\n", t.PI)
 	d.printf("TP-SCTS: %s\n", t.SCTS)
 	if t.PI.PID() {
@@ -215,15 +304,7 @@ func dumpSubmitReport(d *dumper, t *tpdu.TPDU) {
 	if t.UDH != nil {
 		dumpUDH(d, t.UDH)
 	}
-	dumpUD(d, t.UD)
-}
-
-func dumpCD(d *dumper, ud []byte) {
-	lines := strings.Split(hex.Dump(ud), "\n")
-	d.printf("TP-CD: %s\n", lines[0])
-	for _, l := range lines[1:] {
-		d.printf("       %s\n", l)
-	}
+	dumpHex(d, "TP-UD", t.UD)
 }
 
 func dumpVP(d *dumper, vp tpdu.ValidityPeriod) {
@@ -240,23 +321,33 @@ func dumpVP(d *dumper, vp tpdu.ValidityPeriod) {
 	}
 }
 
+// dumpUDH writes the IEs of the UDH, which may have none, when its UDHL is 0
+// or it was ignored as malformed.
 func dumpUDH(d *dumper, udh tpdu.UserDataHeader) {
-	ie := udh[0]
-	d.printf("TP-UDH: ID: %d  Data: %v\n", ie.ID, ie.Data)
-	for _, ie = range udh[1:] {
-		d.printf("       ID: %d  Data: %v\n", ie.ID, ie.Data)
+	if len(udh) == 0 {
+		d.printf("TP-UDH: no IE\n")
+		return
+	}
+	for i, ie := range udh {
+		label := "TP-UDH:"
+		if i > 0 {
+			label = "       "
+		}
+		d.printf("%s ID: %d  Data: %v\n", label, ie.ID, ie.Data)
 	}
 }
 
-func dumpUD(d *dumper, ud []byte) {
-	lines := strings.Split(strings.TrimSpace(hex.Dump(ud)), "\n")
-	d.printf("TP-UD: %s\n", lines[0])
+// dumpHex writes the octets as a hex dump, labelled on its first line.
+func dumpHex(d *dumper, label string, b []byte) {
+	lines := strings.Split(strings.TrimSuffix(hex.Dump(b), "\n"), "\n")
+	d.printf("%s: %s\n", label, lines[0])
+	indent := strings.Repeat(" ", len(label)+2)
 	for _, l := range lines[1:] {
-		d.printf("       %s\n", l)
+		d.printf("%s%s\n", indent, l)
 	}
 }
 
-func usage() {
-	_, _ = fmt.Fprintf(os.Stderr, "Usage: smsdecode [-p] [-o] <sms>\n")
-	flag.PrintDefaults()
+func usage(fs *flag.FlagSet) {
+	_, _ = fmt.Fprintf(fs.Output(), "Usage: smsdecode [-p] [-o] [-e] <sms>\n")
+	fs.PrintDefaults()
 }
