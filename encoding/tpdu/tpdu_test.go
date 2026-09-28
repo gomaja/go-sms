@@ -3297,16 +3297,25 @@ func TestUDMaximaOnMarshal(t *testing.T) {
 	assert.Equal(t, tpdu.NewEncodeError("SmsCommand.ud", tpdu.ErrOverlength), err)
 }
 
-// TestLongPIExtension checks a TP-PI with more extension octets than the
-// TP-UD has room for still carries an empty TP-UD, both ways.
+// TestLongPIExtension checks the TP-PI extension octets of a report are
+// bounded by the TPDU: "The Short Message is of variable length, 6-164
+// octets" (3GPP TS 27.005 Section 2.5.2.6), so those of an RP-ERROR
+// SMS-DELIVER-REPORT can take at most its 158 octets of TP-UD room.
 func TestLongPIExtension(t *testing.T) {
-	// found by FuzzUnmarshalBinary: an RP-ERROR report whose TP-PI chain,
-	// 0xff then 0x80 octets, takes more than its 158 octets of TP-UD.
-	in := append(unhex(t, "20 00 ff"), bytes.Repeat([]byte{0xff}, 160)...)
-	in = append(in, 0x00, 0x7f, 0x04, 0x00)
+	// first octet, TP-FCS, a TP-PI with every bit set, n extension octets
+	// of which the last has no extension bit, then TP-PID, TP-DCS and a
+	// TP-UDL of 0.
+	report := func(n int) []byte {
+		b := []byte{0x00, 0x80, 0xff}
+		b = append(b, bytes.Repeat([]byte{0xff}, n-1)...)
+		b = append(b, 0x7f)
+		return append(b, 0x00, 0x04, 0x00)
+	}
+	in := report(158)
+	require.Len(t, in, 164)
 	d := tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}
 	require.NoError(t, d.UnmarshalBinary(in))
-	assert.Len(t, d.PIExt, 161)
+	assert.Len(t, d.PIExt, 158)
 	b, err := d.MarshalBinary()
 	require.NoError(t, err)
 	assert.Equal(t, in, b)
@@ -3317,6 +3326,19 @@ func TestLongPIExtension(t *testing.T) {
 	assert.ErrorIs(t, err, tpdu.ErrOverlength)
 	err = d.UnmarshalBinary(append(in[:len(in)-1], 0x01, 0x41))
 	assert.ErrorIs(t, err, tpdu.ErrOverlength)
+
+	// nor one more extension octet, even with no TP-UD
+	in = report(159)
+	err = d.UnmarshalBinary(in)
+	assert.ErrorIs(t, err, tpdu.ErrOverlength)
+	d = tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0x80, PIExt: bytes.Repeat([]byte{0x80}, 159)}
+	d.PIExt[len(d.PIExt)-1] = 0
+	_ = d.SetSmsType(tpdu.SmsDeliverReport)
+	_, err = d.MarshalBinary()
+	assert.ErrorIs(t, err, tpdu.ErrOverlength)
+	d.PIExt = d.PIExt[1:]
+	_, err = d.MarshalBinary()
+	assert.NoError(t, err)
 }
 
 // udOctets returns the number of octets of the TP-UD, or TP-CD, of the TPDU,

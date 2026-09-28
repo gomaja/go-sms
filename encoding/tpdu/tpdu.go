@@ -576,11 +576,9 @@ func (t *TPDU) maxUDOctets() int {
 	case SmsCommand:
 		room = 156 - (addressOctets(&t.DA) - 2)
 	}
-	// An empty TP-UD always fits, even after a TP-PI whose extension octets
-	// take all the room.
-	if room < 0 {
-		room = 0
-	}
+	// The room is negative if the TP-PI extension octets alone make the
+	// TPDU longer than the 164 octets a TPDU may be (3GPP TS 27.005 Section
+	// 2.5.2.6, "The Short Message is of variable length, 6-164 octets").
 	return room
 }
 
@@ -783,6 +781,9 @@ func (t *TPDU) piOctets() []byte {
 // report, those that follow the TP-PI and its TP-SCTS, that are announced by
 // the pi.
 func (t *TPDU) marshalOptionals(pi PI) ([]byte, error) {
+	if t.maxUDOctets() < 0 {
+		return nil, NewEncodeError("pi", ErrOverlength)
+	}
 	var b []byte
 	if pi.PID() {
 		b = append(b, t.PID)
@@ -1005,6 +1006,9 @@ func (t *TPDU) unmarshalPI(src []byte, ri int) (int, error) {
 		}
 		t.PIExt = append(t.PIExt, src[ri])
 		ext = src[ri]&PiExt != 0
+	}
+	if t.maxUDOctets() < 0 {
+		return ri, NewDecodeError("pi", ri, ErrOverlength)
 	}
 	return ri, nil
 }
