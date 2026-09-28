@@ -459,6 +459,59 @@ func TestIsCompleteMessage(t *testing.T) {
 			},
 			false,
 		},
+		// Only the address of the TPDU type is compared, as an SMS-SUBMIT
+		// has no TP-OA and an SMS-DELIVER no TP-DA (3GPP TS 23.040 Sections
+		// 9.2.2.1 and 9.2.2.2).
+		{
+			"submit ignores oa",
+			[]*tpdu.TPDU{
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					DA:         tpdu.NewAddress(tpdu.FromNumber("+111")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					Direction:  tpdu.MO,
+					FirstOctet: tpdu.FirstOctet(tpdu.MtSubmit),
+					OA:         tpdu.NewAddress(tpdu.FromNumber("+999")),
+					DA:         tpdu.NewAddress(tpdu.FromNumber("+111")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			true,
+		},
+		{
+			"deliver ignores da",
+			[]*tpdu.TPDU{
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("+111")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					OA:  tpdu.NewAddress(tpdu.FromNumber("+111")),
+					DA:  tpdu.NewAddress(tpdu.FromNumber("+999")),
+					UDH: tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			true,
+		},
+		{
+			"status report recipient mismatch",
+			[]*tpdu.TPDU{
+				{
+					FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
+					RA:         tpdu.NewAddress(tpdu.FromNumber("+111")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 1}}},
+				},
+				{
+					FirstOctet: tpdu.FirstOctet(tpdu.MtCommand),
+					RA:         tpdu.NewAddress(tpdu.FromNumber("+222")),
+					UDH:        tpdu.UserDataHeader{{ID: 0, Data: []byte{7, 2, 2}}},
+				},
+			},
+			false,
+		},
 		{
 			"same originator",
 			[]*tpdu.TPDU{

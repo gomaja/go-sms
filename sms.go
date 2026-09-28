@@ -83,9 +83,10 @@ func Decode(segments []*tpdu.TPDU, options ...DecodeOption) ([]byte, error) {
 // It returns false if any segment is nil, or if the segments differ in type
 // or address, as the reference number only identifies a message "together
 // with the originating address and Service Centre address" (3GPP TS 23.040
-// Section 9.2.3.24.1). For an SMS-SUBMIT the originator is not in the TPDU,
-// so the caller must ensure the segments come from one originator, as the
-// Collector does with WithOriginator.
+// Section 9.2.3.24.1). The address compared is the one the TPDU type has: the
+// TP-OA of an SMS-DELIVER and the TP-DA of an SMS-SUBMIT. For an SMS-SUBMIT
+// the originator is not in the TPDU, so the caller must ensure the segments
+// come from one originator, as the Collector does with WithOriginator.
 func IsCompleteMessage(segments []*tpdu.TPDU) bool {
 	if len(segments) == 0 || slices.Contains(segments, nil) {
 		return false
@@ -99,7 +100,7 @@ func IsCompleteMessage(segments []*tpdu.TPDU) bool {
 	}
 	first := segments[0]
 	for i, s := range segments {
-		if s.SmsType() != first.SmsType() || s.OA != first.OA || s.DA != first.DA {
+		if s.SmsType() != first.SmsType() || peer(s) != peer(first) {
 			return false
 		}
 		ci, ok := s.ConcatInfo()
@@ -158,4 +159,21 @@ func Unmarshal(src []byte, options ...UnmarshalOption) (*tpdu.TPDU, error) {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// peer returns the address that identifies the other party of a TPDU of the
+// type it has: the TP-OA of an SMS-DELIVER, the TP-RA of an
+// SMS-STATUS-REPORT, the TP-DA of an SMS-SUBMIT or SMS-COMMAND, and none for
+// the reports, which have no address (3GPP TS 23.040 Section 9.2.2).
+func peer(t *tpdu.TPDU) tpdu.Address {
+	switch t.SmsType() {
+	case tpdu.SmsDeliver:
+		return t.OA
+	case tpdu.SmsStatusReport:
+		return t.RA
+	case tpdu.SmsSubmit, tpdu.SmsCommand:
+		return t.DA
+	default:
+		return tpdu.Address{}
+	}
 }
