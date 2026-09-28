@@ -524,3 +524,122 @@ func FuzzUnpack7BitUSSD(f *testing.F) {
 		}
 	})
 }
+
+// packBits packs septets one bit at a time, as the examples of 3GPP TS
+// 23.038 Section 6.1.2.1.1 lay them out: after fill zero bits, bit b of
+// septet i is bit fill+7*i+b of the stream, and bit k of the stream is bit
+// k%8 of octet k/8. It is an independent reference for Pack7Bit.
+func packBits(u []byte, fill int) []byte {
+	if len(u) == 0 {
+		return nil
+	}
+	p := make([]byte, (fill+7*len(u)+7)/8)
+	for i, s := range u {
+		for b := 0; b < 7; b++ {
+			if s&(1<<b) != 0 {
+				k := fill + 7*i + b
+				p[k/8] |= 1 << (k % 8)
+			}
+		}
+	}
+	return p
+}
+
+// unpackBits unpacks a septet from every 7 bits after the fill bits, one bit
+// at a time. It is an independent reference for Unpack7Bit.
+func unpackBits(p []byte, fill int) []byte {
+	n := (len(p)*8 - fill) / 7
+	if n <= 0 {
+		return nil
+	}
+	u := make([]byte, n)
+	for i := range u {
+		for b := 0; b < 7; b++ {
+			k := fill + 7*i + b
+			if p[k/8]&(1<<(k%8)) != 0 {
+				u[i] |= 1 << b
+			}
+		}
+	}
+	return u
+}
+
+// FuzzPack7Bit checks Pack7Bit against the reference packer at every number
+// of fill bits, that it rejects the first byte above 0x7F, and that
+// Unpack7Bit returns the septets, followed by at most one 0x00 septet from
+// the spare bits.
+func FuzzPack7Bit(f *testing.F) {
+	for _, p := range testPatterns {
+		f.Add(p.u)
+	}
+	f.Add([]byte{0xc1, 0x42})
+	f.Add([]byte{0x80, 0x00, 0x41})
+	f.Fuzz(func(t *testing.T, u []byte) {
+		bad := -1
+		for i, s := range u {
+			if s > 0x7f {
+				bad = i
+				break
+			}
+		}
+		for fill := 0; fill <= 6; fill++ {
+			p, err := gsm7.Pack7Bit(u, fill)
+			if bad >= 0 {
+				want := gsm7.ErrInvalidSeptet{Offset: bad, Septet: u[bad]}
+				if err != want || p != nil {
+					t.Fatalf("fill %d pack % x: got % x, %v, want %v", fill, u, p, err, want)
+				}
+				continue
+			}
+			if err != nil {
+				t.Fatalf("fill %d pack % x: %v", fill, u, err)
+			}
+			if want := packBits(u, fill); !bytes.Equal(p, want) {
+				t.Fatalf("fill %d pack % x: got % x, want % x", fill, u, p, want)
+			}
+			got := gsm7.Unpack7Bit(p, fill)
+			if len(got) < len(u) || len(got) > len(u)+1 || !bytes.Equal(got[:len(u)], u) {
+				t.Fatalf("fill %d pack % x -> % x -> unpack % x", fill, u, p, got)
+			}
+			if len(got) > len(u) && got[len(u)] != 0 {
+				t.Fatalf("fill %d pack % x -> % x -> unpack % x: spare septet not zero", fill, u, p, got)
+			}
+		}
+	})
+}
+
+// FuzzUnpack7Bit checks Unpack7Bit against the reference unpacker at every
+// number of fill bits for arbitrary octets, and that packing the septets
+// again gives the same octets less the fill bits and any bits left over.
+func FuzzUnpack7Bit(f *testing.F) {
+	for _, p := range testPatterns {
+		f.Add(p.p)
+	}
+	f.Fuzz(func(t *testing.T, p []byte) {
+		for fill := 0; fill <= 6; fill++ {
+			u := gsm7.Unpack7Bit(p, fill)
+			if want := unpackBits(p, fill); !bytes.Equal(u, want) {
+				t.Fatalf("fill %d unpack % x: got % x, want % x", fill, p, u, want)
+			}
+			if n := max(len(p)*8-fill, 0) / 7; len(u) != n {
+				t.Fatalf("fill %d unpack % x: got %d septets, want %d", fill, p, len(u), n)
+			}
+			q, err := gsm7.Pack7Bit(u, fill)
+			if err != nil {
+				t.Fatalf("fill %d unpack % x -> % x: repack: %v", fill, p, u, err)
+			}
+			if len(u) == 0 {
+				continue
+			}
+			// clear the fill bits and the bits after the last septet
+			want := bytes.Clone(p)
+			want[0] &^= byte(1<<fill - 1)
+			if used := (fill + 7*len(u)) % 8; used != 0 {
+				want[len(want)-1] &= byte(1<<used - 1)
+			}
+			if !bytes.Equal(q, want) {
+				t.Fatalf("fill %d unpack % x -> % x -> repack % x, want % x", fill, p, u, q, want)
+			}
+		}
+	})
+}

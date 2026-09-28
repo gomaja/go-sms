@@ -3,9 +3,12 @@
 package gsm7_test
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
@@ -399,8 +402,8 @@ func TestHindi(t *testing.T) {
 		})
 	}
 	// the Bengali signs at the same code points are not in the Hindi table
-	_, err := gsm7.Encode([]byte("ঁ"), gsm7.WithCharset(charset.Hindi))
-	assert.Equal(t, gsm7.ErrInvalidUTF8('ঁ'), err)
+	_, err := gsm7.Encode([]byte("\u0981"), gsm7.WithCharset(charset.Hindi))
+	assert.Equal(t, gsm7.ErrInvalidUTF8('\u0981'), err)
 }
 
 func TestWithoutExtCharset(t *testing.T) {
@@ -410,4 +413,169 @@ func TestWithoutExtCharset(t *testing.T) {
 	out, err = gsm7.Decode([]byte{0x1b, 0x69, 0x1b, 0x47}, gsm7.WithoutExtCharset, gsm7.Strict)
 	assert.Equal(t, gsm7.ErrInvalidSeptet{Offset: 1, Septet: 0x69, Escaped: true}, err)
 	assert.Nil(t, out)
+}
+
+// The tables of every national language identifier, for the fuzz oracles.
+var (
+	lockingDecoders [charset.End]charset.Decoder
+	shiftDecoders   [charset.End]charset.Decoder
+	lockingEncoders [charset.End]charset.Encoder
+	shiftEncoders   [charset.End]charset.Encoder
+)
+
+func init() {
+	for nli := charset.Default; nli < charset.End; nli++ {
+		lockingDecoders[nli] = charset.NewDecoder(nli)
+		shiftDecoders[nli] = charset.NewExtDecoder(nli)
+		lockingEncoders[nli] = charset.NewEncoder(nli)
+		shiftEncoders[nli] = charset.NewExtEncoder(nli)
+	}
+}
+
+// tableText returns every character of the locking and single shift tables
+// of nli, in septet order.
+func tableText(nli int) string {
+	var b strings.Builder
+	for _, d := range []charset.Decoder{lockingDecoders[nli], shiftDecoders[nli]} {
+		for g := 0; g < 0x80; g++ {
+			if r, ok := d[byte(g)]; ok {
+				b.WriteRune(r)
+			}
+		}
+	}
+	return b.String()
+}
+
+// FuzzEncode encodes text with every combination of locking and single
+// shift tables. Encoding must fail on the first character neither table
+// has, and otherwise produce septets that a Strict Decoder turns back into
+// the text.
+func FuzzEncode(f *testing.F) {
+	for nli := charset.Default; nli < charset.End; nli++ {
+		f.Add(tableText(nli), uint8(nli), uint8(nli))
+		f.Add(tableText(nli), uint8(charset.Default), uint8(nli))
+	}
+	f.Add("hello {€} \x1be \r\n", uint8(0), uint8(0))
+	f.Add("\xff\xfe", uint8(0), uint8(0))
+	f.Fuzz(func(t *testing.T, s string, set, ext uint8) {
+		ls, ss := int(set)%charset.End, int(ext)%charset.End
+		out, err := gsm7.Encode([]byte(s), gsm7.WithCharset(ls), gsm7.WithExtCharset(ss))
+		for _, r := range s {
+			_, inSet := lockingEncoders[ls][r]
+			_, inExt := shiftEncoders[ss][r]
+			if !inSet && !inExt {
+				if err != gsm7.ErrInvalidUTF8(r) || out != nil {
+					t.Fatalf("set %d ext %d encode %q: got % x, %v, want %v", ls, ss, s, out, err, gsm7.ErrInvalidUTF8(r))
+				}
+				return
+			}
+		}
+		if err != nil {
+			t.Fatalf("set %d ext %d encode %q: %v", ls, ss, s, err)
+		}
+		for i, g := range out {
+			if g > 0x7f || (g == 0x1b && (i+1 == len(out) || out[i+1] == 0x1b)) {
+				t.Fatalf("set %d ext %d encode %q: invalid septets % x", ls, ss, s, out)
+			}
+		}
+		got, err := gsm7.Decode(out, gsm7.WithCharset(ls), gsm7.WithExtCharset(ss), gsm7.Strict)
+		if err != nil || string(got) != s {
+			t.Fatalf("set %d ext %d encode %q -> % x -> decode %q, %v", ls, ss, s, out, got, err)
+		}
+	})
+}
+
+// FuzzDecode decodes arbitrary bytes with every combination of locking and
+// single shift tables. It checks the result against a walk of the receiver
+// rules of 3GPP TS 23.038 Sections 6.2.1 and 6.2.1.1, and that a Strict
+// Decoder fails exactly where that walk finds no character, and otherwise
+// agrees with the lenient one.
+func FuzzDecode(f *testing.F) {
+	all := make([]byte, 0x100)
+	escaped := make([]byte, 0, 0x200)
+	for g := range all {
+		all[g] = byte(g)
+		escaped = append(escaped, 0x1b, byte(g))
+	}
+	for nli := charset.Default; nli < charset.End; nli++ {
+		f.Add(all[:0x80], uint8(nli), uint8(nli))
+		f.Add(escaped[:0x100], uint8(nli), uint8(nli))
+	}
+	f.Add(all, uint8(0), uint8(0))
+	f.Add(escaped, uint8(0), uint8(0))
+	f.Add([]byte("mes\x1b\x1b\x40sage\x1b"), uint8(0), uint8(0))
+	f.Add([]byte("message\x1b"), uint8(0), uint8(0))
+	f.Add([]byte{0x1b}, uint8(0), uint8(0))
+	f.Fuzz(func(t *testing.T, src []byte, set, ext uint8) {
+		ls, ss := int(set)%charset.End, int(ext)%charset.End
+		lock, shift := lockingDecoders[ls], shiftDecoders[ss]
+		char := func(d charset.Decoder, g byte) (rune, bool) {
+			r, ok := d[g]
+			return r, ok && g < 0x80 && g != 0x1b
+		}
+		var want []rune
+		var wantErr error
+		for i := 0; i < len(src); i++ {
+			if src[i] != 0x1b {
+				r, ok := char(lock, src[i])
+				if !ok {
+					r = ' '
+					if wantErr == nil {
+						wantErr = gsm7.ErrInvalidSeptet{Offset: i, Septet: src[i]}
+					}
+				}
+				want = append(want, r)
+				continue
+			}
+			if i+1 == len(src) {
+				want = append(want, ' ')
+				if wantErr == nil {
+					wantErr = gsm7.ErrInvalidSeptet{Offset: i, Septet: 0x1b}
+				}
+				break
+			}
+			i++
+			if r, ok := char(shift, src[i]); ok {
+				want = append(want, r)
+				continue
+			}
+			if wantErr == nil {
+				wantErr = gsm7.ErrInvalidSeptet{Offset: i, Septet: src[i], Escaped: true}
+			}
+			r, ok := char(lock, src[i])
+			if !ok {
+				r = ' '
+			}
+			want = append(want, r)
+		}
+
+		opts := []gsm7.DecoderOption{gsm7.WithCharset(ls), gsm7.WithExtCharset(ss)}
+		got, err := gsm7.Decode(src, opts...)
+		if err != nil || string(got) != string(want) || !utf8.Valid(got) {
+			t.Fatalf("set %d ext %d decode % x: got %q, %v, want %q", ls, ss, src, got, err, string(want))
+		}
+		strict, err := gsm7.Decode(src, append(opts, gsm7.Strict)...)
+		if err != wantErr {
+			t.Fatalf("set %d ext %d strict decode % x: got %v, want %v", ls, ss, src, err, wantErr)
+		}
+		if err != nil {
+			if strict != nil {
+				t.Fatalf("set %d ext %d strict decode % x: got %q with %v", ls, ss, src, strict, err)
+			}
+			return
+		}
+		if !bytes.Equal(strict, got) {
+			t.Fatalf("set %d ext %d decode % x: strict %q, lenient %q", ls, ss, src, strict, got)
+		}
+		// what a Strict Decoder accepts encodes again, to septets that
+		// decode to the same text
+		enc, err := gsm7.Encode(strict, gsm7.WithCharset(ls), gsm7.WithExtCharset(ss))
+		if err != nil {
+			t.Fatalf("set %d ext %d decode % x -> %q -> encode: %v", ls, ss, src, strict, err)
+		}
+		again, err := gsm7.Decode(enc, append(opts, gsm7.Strict)...)
+		if err != nil || !bytes.Equal(again, strict) {
+			t.Fatalf("set %d ext %d decode % x -> %q -> % x -> %q, %v", ls, ss, src, strict, enc, again, err)
+		}
+	})
 }
