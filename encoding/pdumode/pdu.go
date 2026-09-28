@@ -8,7 +8,7 @@ import (
 
 // PDU represents the PDU exchanged with the GSM modem.
 type PDU struct {
-	// SMCS Address
+	// SMSC address
 	SMSC SMSCAddress
 
 	// TPDU in binary form

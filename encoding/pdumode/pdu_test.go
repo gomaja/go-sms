@@ -294,3 +294,80 @@ func TestMarshalHexString(t *testing.T) {
 		t.Run(p.name, f)
 	}
 }
+
+// FuzzUnmarshalBinary checks that a PDU decodes as its SMSC field followed
+// by the TPDU, and that a decoded PDU marshals to a PDU that decodes to the
+// same value, with only bit 7 of the SMSC TOA set.
+func FuzzUnmarshalBinary(f *testing.F) {
+	for _, s := range smscSeeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, src []byte) {
+		var a pdumode.SMSCAddress
+		n, aerr := a.UnmarshalBinary(src)
+
+		p := pdumode.PDU{SMSC: a, TPDU: []byte{0xde, 0xad}}
+		err := p.UnmarshalBinary(src)
+		require.Equal(t, aerr, err)
+		if err != nil {
+			require.Equal(t, pdumode.PDU{}, p)
+			q, qerr := pdumode.UnmarshalBinary(src)
+			require.Equal(t, err, qerr)
+			require.Nil(t, q)
+			return
+		}
+		require.Equal(t, a, p.SMSC)
+		require.Equal(t, hex.EncodeToString(src[n:]), hex.EncodeToString(p.TPDU))
+
+		b, err := p.MarshalBinary()
+		require.NoError(t, err)
+		q, err := pdumode.UnmarshalBinary(b)
+		require.NoError(t, err)
+		want := p
+		if want.SMSC.Present {
+			want.SMSC.TOA |= 0x80
+		}
+		assert.Equal(t, want, *q)
+		b2, err := q.MarshalBinary()
+		require.NoError(t, err)
+		assert.Equal(t, b, b2)
+	})
+}
+
+// FuzzUnmarshalHexString checks that decoding a hex string gives the same
+// result as decoding its binary form, and that MarshalHexString gives a
+// string that decodes to the same PDU, with only bit 7 of the SMSC TOA set.
+func FuzzUnmarshalHexString(f *testing.F) {
+	for _, s := range smscSeeds {
+		f.Add(hex.EncodeToString(s))
+	}
+	f.Add("nothex")
+	f.Add("0")
+	f.Add("07911604895626F90102")
+	f.Fuzz(func(t *testing.T, s string) {
+		p := pdumode.PDU{TPDU: []byte{0xde, 0xad}}
+		err := p.UnmarshalHexString(s)
+		b, herr := hex.DecodeString(s)
+		if herr != nil {
+			require.Equal(t, herr, err)
+			require.Equal(t, pdumode.PDU{}, p)
+			return
+		}
+		var want pdumode.PDU
+		werr := want.UnmarshalBinary(b)
+		require.Equal(t, werr, err)
+		require.Equal(t, want, p)
+		if err != nil {
+			return
+		}
+
+		h, err := p.MarshalHexString()
+		require.NoError(t, err)
+		var q pdumode.PDU
+		require.NoError(t, q.UnmarshalHexString(h))
+		if want.SMSC.Present {
+			want.SMSC.TOA |= 0x80
+		}
+		assert.Equal(t, want, q)
+	})
+}

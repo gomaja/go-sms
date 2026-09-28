@@ -9,7 +9,7 @@ import (
 
 // SMSCAddress is the address of the SMSC.
 //
-// The SMCSAddress is similar to a TPDU Address, but the binary form is
+// The SMSCAddress is similar to a TPDU Address, but the binary form is
 // marshalled differently, hence the subtype.
 //
 // The Type-of-number should typically be TonNational or TonInternational, but
@@ -73,7 +73,8 @@ func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 	return dst, nil
 }
 
-// UnmarshalBinary unmarshals an SMSC Address from a TPDU field.
+// UnmarshalBinary unmarshals an SMSC Address from the start of a PDU, where
+// it precedes the TPDU.
 //
 // It returns the number of bytes read from the source, and any error detected
 // while decoding.

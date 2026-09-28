@@ -365,3 +365,83 @@ func TestSMSCAddressRoundTrip(t *testing.T) {
 		t.Run(p.name, f)
 	}
 }
+
+// smscSeeds are SMSC fields, and PDUs, used to seed the fuzz tests.
+var smscSeeds = [][]byte{
+	{},
+	{0},
+	{1},
+	{1, 0},
+	{1, 0x91},
+	{2, 0x91, 0xff},
+	{7, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
+	{7, 0x11, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
+	{9, 0x91, 0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe},
+	{8, 0xd1, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0xE7},
+	{11, 0x91, 0x16, 0x04, 0x89, 0x56},
+	{11, 0x91, 0x21, 0x43, 0x65, 0x87, 0x09, 0x21, 0x43, 0x65, 0x87, 0x09},
+	{12, 0x91, 0x21, 0x43, 0x65, 0x87, 0x09, 0x21, 0x43, 0x65, 0x87, 0x09, 0xf1},
+	{0x07, 0x91, 0x36, 0x19, 0x07, 0x00, 0x20, 0x39, 0x01, 0x02, 0x03},
+}
+
+// FuzzSMSCAddressUnmarshalBinary checks which fields UnmarshalBinary accepts,
+// that a failed decode leaves the address empty, and that every decoded
+// address marshals to a field that decodes to the same address, with only
+// bit 7 of the TOA set.
+func FuzzSMSCAddressUnmarshalBinary(f *testing.F) {
+	for _, s := range smscSeeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, src []byte) {
+		a := pdumode.SMSCAddress{
+			Address: tpdu.Address{Addr: "639170000293", TOA: 0x91},
+			Present: true,
+		}
+		n, err := a.UnmarshalBinary(src)
+
+		switch {
+		case len(src) == 0:
+			require.Equal(t, tpdu.NewDecodeError("length", 0, tpdu.ErrUnderflow), err)
+			require.Equal(t, 0, n)
+		case src[0] > 11:
+			require.Equal(t, tpdu.NewDecodeError("length", 0, tpdu.ErrOverlength), err)
+			require.Equal(t, 1, n)
+		case src[0] == 0:
+			require.NoError(t, err)
+			require.Equal(t, 1, n)
+		case len(src) < 2:
+			require.Equal(t, tpdu.NewDecodeError("toa", 1, tpdu.ErrUnderflow), err)
+			require.Equal(t, 1, n)
+		case len(src) < 1+int(src[0]):
+			require.Equal(t, tpdu.NewDecodeError("addr", 2, tpdu.ErrUnderflow), err)
+			require.Equal(t, len(src), n)
+		default:
+			require.NoError(t, err)
+			require.Equal(t, 1+int(src[0]), n)
+			require.True(t, a.Present)
+			require.Equal(t, src[1], a.TOA)
+			require.LessOrEqual(t, len(a.Addr), 2*(int(src[0])-1))
+		}
+		if err != nil || src[0] == 0 {
+			require.Equal(t, pdumode.SMSCAddress{}, a)
+			if err != nil {
+				return
+			}
+		}
+
+		b, err := a.MarshalBinary()
+		require.NoError(t, err)
+		var c pdumode.SMSCAddress
+		cn, err := c.UnmarshalBinary(b)
+		require.NoError(t, err)
+		require.Equal(t, len(b), cn)
+		want := a
+		if want.Present {
+			want.TOA |= 0x80
+		}
+		assert.Equal(t, want, c)
+		b2, err := c.MarshalBinary()
+		require.NoError(t, err)
+		assert.Equal(t, b, b2)
+	})
+}
