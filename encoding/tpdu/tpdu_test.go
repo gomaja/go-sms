@@ -4686,3 +4686,37 @@ func TestSegmentMinimalRoom(t *testing.T) {
 		t.Run(p.name, f)
 	}
 }
+
+// TestReportRPErrorUnusedBitsLength checks the octets kept for a report whose
+// fields are not examined are still bounded by the TPDU: "The Short Message
+// is of variable length, 6-164 octets" (3GPP TS 27.005 Section 2.5.2.6).
+func TestReportRPErrorUnusedBitsLength(t *testing.T) {
+	for _, dirn := range []tpdu.Direction{tpdu.MO, tpdu.MT} {
+		// an SMS-DELIVER-REPORT from the MS, or an SMS-SUBMIT-REPORT to it,
+		// each with bit 2 of the first octet set.
+		fo := byte(0x04)
+		if dirn == tpdu.MT {
+			fo = 0x05
+		}
+		for _, n := range []int{164, 165} {
+			in := make([]byte, n)
+			in[0], in[1] = fo, 0xd0
+			d := tpdu.TPDU{Direction: dirn, RPMessage: tpdu.RPError}
+			err := d.UnmarshalBinary(in)
+			if n > 164 {
+				assert.ErrorIs(t, err, tpdu.ErrOverlength, "dirn %d n %d", dirn, n)
+				// the octets past the limit are in the unexamined fields
+				// from the TP-PI, at octet 2, not in the TP-FCS.
+				var de tpdu.DecodeError
+				require.ErrorAs(t, err, &de)
+				assert.Contains(t, err.Error(), ".pi at octet 2", "dirn %d", dirn)
+				continue
+			}
+			require.NoError(t, err, "dirn %d n %d", dirn, n)
+			assert.Equal(t, byte(0xff), d.FailureCause())
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, in, b)
+		}
+	}
+}

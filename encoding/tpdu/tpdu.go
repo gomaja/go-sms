@@ -1276,14 +1276,26 @@ func (t *TPDU) unmarshalFCS(src []byte) (int, error) {
 	}
 }
 
+// maxTPDULen is the length of the longest TPDU: "The Short Message is of
+// variable length, 6-164 octets" (3GPP TS 27.005 Section 2.5.2.6).
+const maxTPDULen = 164
+
 // unmarshalUnexamined keeps the octets that follow the TP-FCS, at src[ri:],
 // of a report whose fields are not examined, and reports whether it is one.
-func (t *TPDU) unmarshalUnexamined(src []byte, ri int) bool {
+//
+// src follows the first octet, so the report, which is not examined, must
+// still be no longer than a TPDU can be.
+func (t *TPDU) unmarshalUnexamined(src []byte, ri int) (bool, error) {
 	if !t.unusedReportBits() {
-		return false
+		return false, nil
+	}
+	if 1+len(src) > maxTPDULen {
+		// the octets past the limit are in the fields that start with the
+		// TP-PI, which are not examined.
+		return true, NewDecodeError("pi", ri, ErrOverlength)
 	}
 	t.unexamined = append([]byte{}, src[ri:]...)
-	return true
+	return true, nil
 }
 
 func (t *TPDU) unmarshalDeliverReport(src []byte) error {
@@ -1291,8 +1303,8 @@ func (t *TPDU) unmarshalDeliverReport(src []byte) error {
 	if err != nil {
 		return err
 	}
-	if t.unmarshalUnexamined(src, ri) {
-		return nil
+	if unexamined, err := t.unmarshalUnexamined(src, ri); unexamined {
+		return err
 	}
 	ri, err = t.unmarshalPI(src, ri)
 	if err != nil {
@@ -1386,8 +1398,8 @@ func (t *TPDU) unmarshalSubmitReport(src []byte) error {
 	if err != nil {
 		return err
 	}
-	if t.unmarshalUnexamined(src, ri) {
-		return nil
+	if unexamined, err := t.unmarshalUnexamined(src, ri); unexamined {
+		return err
 	}
 	ri, err = t.unmarshalPI(src, ri)
 	if err != nil {
