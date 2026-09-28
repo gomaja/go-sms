@@ -9,6 +9,7 @@ import (
 	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type decoderPattern struct {
@@ -179,6 +180,41 @@ func TestWithExtCharset(t *testing.T) {
 	out, err = gsm7.Decode(out, gsm7.WithExtCharset(charset.Turkish))
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("ıĞ"), out)
+}
+
+// TestHindi round trips Hindi text through the Hindi locking and single shift
+// tables. The septets are taken from 3GPP TS 23.038 V20.0.0 Annex A.3.6,
+// where 0x00-0x02 hold the Devanagari signs candrabindu, anusvara and visarga
+// (U+0901-U+0903), and A.2.6, where 0x19 holds the danda.
+func TestHindi(t *testing.T) {
+	patterns := []struct {
+		name    string
+		text    string
+		septets []byte
+	}{
+		{"anusvara", "हिंदी", []byte{0x4d, 0x51, 0x01, 0x2b, 0x52}},
+		{"candrabindu", "चाँद", []byte{0x1a, 0x50, 0x00, 0x2b}},
+		{"visarga", "दुःख", []byte{0x2b, 0x53, 0x02, 0x16}},
+		{"sentence", "मैं हिंदी बोलता हूँ।", []byte{
+			0x42, 0x5a, 0x01, 0x20, 0x4d, 0x51, 0x01, 0x2b, 0x52, 0x20, 0x40,
+			0x5d, 0x46, 0x27, 0x50, 0x20, 0x4d, 0x54, 0x00, 0x1b, 0x19,
+		}},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			out, err := gsm7.Encode([]byte(p.text),
+				gsm7.WithCharset(charset.Hindi), gsm7.WithExtCharset(charset.Hindi))
+			require.NoError(t, err)
+			assert.Equal(t, p.septets, out)
+			out, err = gsm7.Decode(p.septets,
+				gsm7.WithCharset(charset.Hindi), gsm7.WithExtCharset(charset.Hindi))
+			require.NoError(t, err)
+			assert.Equal(t, p.text, string(out))
+		})
+	}
+	// the Bengali signs at the same code points are not in the Hindi table
+	_, err := gsm7.Encode([]byte("ঁ"), gsm7.WithCharset(charset.Hindi))
+	assert.Equal(t, gsm7.ErrInvalidUTF8('ঁ'), err)
 }
 
 func TestWithoutExtCharset(t *testing.T) {

@@ -334,7 +334,9 @@ var (
 		},
 		{charset.Hindi, 128, 90, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
 			[]testPattern{
-				{0x00, '\u0981'},
+				{0x00, '\u0901'},
+				{0x01, '\u0902'},
+				{0x02, '\u0903'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x0e, 'ऎ'},

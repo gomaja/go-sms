@@ -4,9 +4,9 @@ package charset
 
 var (
 	hindiDecoder = Decoder{
-		0x00: '\u0981',
-		0x01: '\u0982',
-		0x02: '\u0983',
+		0x00: '\u0901',
+		0x01: '\u0902',
+		0x02: '\u0903',
 		0x03: 'अ',
 		0x04: 'आ',
 		0x05: 'इ',
