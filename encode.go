@@ -3,6 +3,7 @@
 package sms
 
 import (
+	"slices"
 	"sync/atomic"
 
 	"github.com/gomaja/go-sms/encoding/tpdu"
@@ -34,6 +35,10 @@ func Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, error) {
 
 // Encoder builds SMS TPDUs from simple inputs such as the destination number
 // and the message in a UTF8 form.
+//
+// An Encoder is safe for concurrent use by multiple goroutines, provided its
+// fields are not changed once it is in use and its counters are themselves
+// safe for concurrent use, as Counter is.
 type Encoder struct {
 	// options for encoding UD
 	eopts []tpdu.UDEncodeOption
@@ -59,6 +64,8 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 	for _, option := range options {
 		option.ApplyEncoderOption(&e)
 	}
+	// The options may hold slices the caller goes on to change.
+	e.pdu = cloneTPDU(&e.pdu)
 	if e.MsgCount == nil {
 		e.MsgCount = &Counter{}
 	}
@@ -92,13 +99,35 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 // IE in the template UDH by those of the tables it chose, as defined in 3GPP
 // TS 23.040 Sections 9.2.3.24.15 and 9.2.3.24.16. The other IEs of the
 // template UDH, such as application port addressing, are kept in every TPDU.
+//
+// The TPDUs returned share no memory with the Encoder, its template or the
+// message, so the caller may change them, and reuse the message.
 func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, error) {
+	// e is a copy, but its slices share their backing arrays with the
+	// Encoder, which may be in use by other goroutines, so appending to them
+	// must allocate.
+	e.eopts = slices.Clip(e.eopts)
+	e.sopts = slices.Clip(e.sopts)
 	for _, option := range options {
 		option.ApplyEncoderOption(&e)
 	}
 	if e.err != nil {
 		return nil, e.err
 	}
+	pdus, err := e.segment(msg)
+	if err != nil {
+		return nil, err
+	}
+	// The segments share the template UDH and the message, or its GSM7
+	// coding, whose segments share one backing array.
+	for i := range pdus {
+		pdus[i] = cloneTPDU(&pdus[i])
+	}
+	return pdus, nil
+}
+
+// segment codes the message, if required, and segments it into TPDUs.
+func (e *Encoder) segment(msg []byte) ([]tpdu.TPDU, error) {
 	sopts := append(e.sopts, tpdu.WithMR(e.MsgCount), tpdu.WithConcatRef(e.ConcatRef))
 	// take the DCS in the template TPDU as a hint...
 	alpha := e.pdu.DCS.Alphabet()

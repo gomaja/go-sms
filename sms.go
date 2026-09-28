@@ -110,6 +110,24 @@ func IsCompleteMessage(segments []*tpdu.TPDU) bool {
 	return true
 }
 
+// cloneTPDU returns a copy of the TPDU that shares no memory with it.
+//
+// Its slices keep their nil or empty state, as that matters when marshalling:
+// an empty UDH is marshalled as a TP-UDHL of 0, while a nil one is not
+// marshalled.
+func cloneTPDU(t *tpdu.TPDU) tpdu.TPDU {
+	c := *t
+	c.PIExt = slices.Clone(t.PIExt)
+	c.UD = slices.Clone(t.UD)
+	if t.UDH != nil {
+		c.UDH = make(tpdu.UserDataHeader, len(t.UDH))
+		for i, ie := range t.UDH {
+			c.UDH[i] = tpdu.InformationElement{ID: ie.ID, Data: slices.Clone(ie.Data)}
+		}
+	}
+	return c
+}
+
 // UnmarshalConfig contains configuration options for Unmarshal.
 type UnmarshalConfig struct {
 	dirn tpdu.Direction
