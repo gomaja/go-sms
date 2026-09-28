@@ -4,6 +4,8 @@ package gsm7_test
 
 import (
 	"bytes"
+	"fmt"
+	"math"
 	"testing"
 
 	"github.com/gomaja/go-sms/encoding/gsm7"
@@ -14,10 +16,10 @@ import (
 const cr byte = 0x0d
 
 type testPattern struct {
-	name    string
-	padBits int
-	p       []byte
-	u       []byte
+	name     string
+	fillBits int
+	p        []byte
+	u        []byte
 }
 
 type ussdPattern struct {
@@ -306,7 +308,7 @@ var (
 func TestUnpack7Bit(t *testing.T) {
 	for _, p := range testPatterns {
 		f := func(t *testing.T) {
-			u := gsm7.Unpack7Bit(p.p, p.padBits)
+			u := gsm7.Unpack7Bit(p.p, p.fillBits)
 			assert.Equal(t, p.u, u)
 		}
 		t.Run(p.name, f)
@@ -316,10 +318,85 @@ func TestUnpack7Bit(t *testing.T) {
 func TestPack7Bit(t *testing.T) {
 	for _, p := range testPatterns {
 		f := func(t *testing.T) {
-			d := gsm7.Pack7Bit(p.u, p.padBits)
+			d, err := gsm7.Pack7Bit(p.u, p.fillBits)
+			require.NoError(t, err)
 			assert.Equal(t, p.p, d)
 		}
 		t.Run(p.name, f)
+	}
+}
+
+// TestPack7BitInvalidSeptet checks that a byte above 0x7F is rejected rather
+// than packed. A septet has 7 bits (3GPP TS 23.038 Section 6.1.2.1.1), and
+// the 8th bit of a byte would otherwise land in the next septet.
+func TestPack7BitInvalidSeptet(t *testing.T) {
+	patterns := []struct {
+		name string
+		u    []byte
+		err  gsm7.ErrInvalidSeptet
+	}{
+		// packed as c1 21 this would unpack as "AC"
+		{"first", []byte{0xc1, 0x42}, gsm7.ErrInvalidSeptet{Offset: 0, Septet: 0xc1}},
+		{"zero septet", []byte{0x80, 0x00, 0x41}, gsm7.ErrInvalidSeptet{Offset: 0, Septet: 0x80}},
+		{"last", []byte{0x41, 0x42, 0xff}, gsm7.ErrInvalidSeptet{Offset: 2, Septet: 0xff}},
+		{"eighth", []byte("pattern\x8d"), gsm7.ErrInvalidSeptet{Offset: 7, Septet: 0x8d}},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			for fill := 0; fill <= 6; fill++ {
+				out, err := gsm7.Pack7Bit(p.u, fill)
+				assert.Equal(t, p.err, err, "fill %d", fill)
+				assert.Nil(t, out, "fill %d", fill)
+			}
+			out, err := gsm7.Pack7BitUSSD(p.u)
+			assert.Equal(t, p.err, err, "ussd")
+			assert.Nil(t, out, "ussd")
+		})
+	}
+}
+
+// TestFillBitsOutOfRange checks that Pack7Bit and Unpack7Bit panic on a
+// number of fill bits other than 0 to 6. Fill bits pad a User Data Header to
+// the next septet boundary (3GPP TS 23.040 Section 9.2.3.24), so there are
+// at most 6, and any other value is a programming error.
+func TestFillBitsOutOfRange(t *testing.T) {
+	for _, fill := range []int{math.MinInt, -100, -1, 7, 8, 9, math.MaxInt} {
+		msg := fmt.Sprintf("gsm7: fillBits %d not in range 0..6", fill)
+		for _, u := range [][]byte{nil, {}, []byte("ABC")} {
+			assert.PanicsWithValue(t, msg, func() { _, _ = gsm7.Pack7Bit(u, fill) },
+				"pack fill %d % x", fill, u)
+			assert.PanicsWithValue(t, msg, func() { _ = gsm7.Unpack7Bit(u, fill) },
+				"unpack fill %d % x", fill, u)
+		}
+	}
+	for fill := 0; fill <= 6; fill++ {
+		assert.NotPanics(t, func() { _, _ = gsm7.Pack7Bit([]byte("ABC"), fill) })
+		assert.NotPanics(t, func() { _ = gsm7.Unpack7Bit([]byte("ABC"), fill) })
+	}
+}
+
+// TestUnpack7BitCount checks the number of septets Unpack7Bit returns, as
+// documented: one for every 7 bits after the fill bits. Where packing leaves
+// 7 spare bits in the final octet, they come back as an extra 0x00 septet.
+func TestUnpack7BitCount(t *testing.T) {
+	for fill := 0; fill <= 6; fill++ {
+		for n := 0; n <= 40; n++ {
+			u := bytes.Repeat([]byte{0x7f}, n)
+			p, err := gsm7.Pack7Bit(u, fill)
+			require.NoError(t, err)
+			spare := len(p)*8 - fill - n*7
+			if n == 0 {
+				spare = 0
+			}
+			require.True(t, spare >= 0 && spare <= 7, "fill %d n %d spare %d", fill, n, spare)
+			got := gsm7.Unpack7Bit(p, fill)
+			want := u
+			if spare == 7 {
+				want = append(want, 0x00)
+			}
+			assert.Equal(t, want, got, "fill %d n %d", fill, n)
+			assert.Len(t, got, max(len(p)*8-fill, 0)/7, "fill %d n %d", fill, n)
+		}
 	}
 }
 
@@ -343,14 +420,16 @@ func TestUnpack7BitUSSD(t *testing.T) {
 func TestPack7BitUSSD(t *testing.T) {
 	for _, p := range ussdTestPatterns {
 		f := func(t *testing.T) {
-			d := gsm7.Pack7BitUSSD(p.u)
+			d, err := gsm7.Pack7BitUSSD(p.u)
+			require.NoError(t, err)
 			assert.Equal(t, p.p, d)
 		}
 		t.Run(p.name, f)
 	}
 	for _, p := range ussdCRPatterns {
 		f := func(t *testing.T) {
-			d := gsm7.Pack7BitUSSD(p.u)
+			d, err := gsm7.Pack7BitUSSD(p.u)
+			require.NoError(t, err)
 			assert.Equal(t, p.p, d)
 		}
 		t.Run(p.name, f)
@@ -364,7 +443,8 @@ func TestUSSDLength(t *testing.T) {
 		for n := 1; n <= 33; n++ {
 			u := bytes.Repeat([]byte{0x00}, n)
 			u[n-1] = last
-			p := gsm7.Pack7BitUSSD(u)
+			p, err := gsm7.Pack7BitUSSD(u)
+			require.NoError(t, err)
 			octets := (n*7 + 7) / 8
 			doubled := n%8 == 0 && last == cr
 			if doubled {
@@ -402,7 +482,10 @@ func FuzzUSSDRoundTrip(f *testing.F) {
 		if len(s)%8 == 0 && len(s) > 0 && s[len(s)-1] == cr {
 			want = append(s[:len(s):len(s)], cr)
 		}
-		p := gsm7.Pack7BitUSSD(s)
+		p, err := gsm7.Pack7BitUSSD(s)
+		if err != nil {
+			t.Fatalf("pack % x: %v", s, err)
+		}
 		if len(p) != (len(want)*7+7)/8 {
 			t.Fatalf("pack % x: got %d octets % x", s, len(p), p)
 		}

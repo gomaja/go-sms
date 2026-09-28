@@ -945,7 +945,10 @@ func (t *TPDU) encodeUserData() (b []byte, err error) {
 		if dangling := len(udh) % 7; dangling != 0 {
 			fillBits = 7 - dangling
 		}
-		ud = gsm7.Pack7Bit(t.UD, fillBits)
+		ud, err = gsm7.Pack7Bit(t.UD, fillBits)
+		if err != nil {
+			return nil, EncodeError("sm", err)
+		}
 		// udl is in septets so convert
 		if udl > 0 {
 			udl = udl + (len(udh)*8+fillBits)/7

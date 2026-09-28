@@ -54,7 +54,10 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 			return nil, EncodeError("addr", err)
 		}
 		l = (len(addr)*7 + 3) / 4
-		addr = gsm7.Pack7Bit(addr, 0)
+		addr, err = gsm7.Pack7Bit(addr, 0)
+		if err != nil {
+			return nil, EncodeError("addr", err)
+		}
 	default:
 		addr, err = semioctet.Encode([]byte(a.Addr))
 		if err != nil {

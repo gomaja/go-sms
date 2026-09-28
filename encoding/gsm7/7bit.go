@@ -2,21 +2,33 @@
 
 package gsm7
 
+import "fmt"
+
 const cr byte = 0x0d
 
 // Pack7Bit packs an array of septets into an 8bit array as per the packing
-// rules defined in 3GPP TS 23.038 Section 6.1.2.1
+// rules defined in 3GPP TS 23.038 Section 6.1.2.1.1.
 //
-// The padBits is the number of bits of pad to place at the beginning of the
+// The fillBits is the number of zero bits to place at the beginning of the
 // packed array, as the packed septets may not start on an octet boundary.
+// These are the fill bits that pad a User Data Header to a septet boundary
+// (3GPP TS 23.040 Section 9.2.3.24), so fillBits must be 0 to 6. Pack7Bit
+// panics on any other value, which is a programming error.
 //
-// Packed arrays containing 8n or 8n-1 digits both return 8n septets. The
-// caller must be aware of the number of expected digits in order to
-// distinguish between a 0 septet ending the sequence in the 8n case, and 0
-// padding in the 8n-1 case.
-func Pack7Bit(u []byte, fillBits int) []byte {
+// A septet has 7 bits, so Pack7Bit returns an ErrInvalidSeptet for the first
+// byte of u above 0x7F rather than let its 8th bit corrupt the next septet.
+//
+// The last octet is completed with zeros, so 8n-1 septets pack to the same
+// octets as the same septets followed by a 0x00 septet. See Unpack7Bit.
+func Pack7Bit(u []byte, fillBits int) ([]byte, error) {
+	checkFillBits(fillBits)
+	for i, s := range u {
+		if s > 0x7f {
+			return nil, ErrInvalidSeptet{Offset: i, Septet: s}
+		}
+	}
 	if len(u) == 0 {
-		return append(u[:0:0], u...)
+		return append(u[:0:0], u...), nil
 	}
 	p := make([]byte, 0, (len(u)*7+7+fillBits)/8)
 	var r, s byte
@@ -36,15 +48,25 @@ func Pack7Bit(u []byte, fillBits int) []byte {
 	if rbits != 0 {
 		p = append(p, r)
 	}
-	return p
+	return p, nil
 }
 
 // Unpack7Bit unpacks septets, packed into an 8bit array as per the packing
-// rules defined in 3GPP TS 23.038 Section 6.1.2.1, into an array of septets.
+// rules defined in 3GPP TS 23.038 Section 6.1.2.1.1, into an array of septets.
 //
-// The fillBits is the number of bits of pad at the beginning of the src, as
-// the packed septets may not start on an octet boundary.
+// The fillBits is the number of bits of pad at the beginning of p, as the
+// packed septets may not start on an octet boundary. As for Pack7Bit, it must
+// be 0 to 6, and Unpack7Bit panics on any other value.
+//
+// Unpack7Bit returns a septet for every 7 bits of p after the fill bits,
+// which is (len(p)*8-fillBits)/7 septets. The octets do not say how many
+// septets were packed into them: where the packed septets leave 7 bits spare
+// in the last octet, as 8n-1 septets with no fill bits do, those bits are
+// returned as a final 0x00 septet, which is '@', and the caller must drop it.
+// The number of septets is carried separately, as in the TP-User-Data-Length
+// of 3GPP TS 23.040 Section 9.2.3.16.
 func Unpack7Bit(p []byte, fillBits int) []byte {
+	checkFillBits(fillBits)
 	if len(p) == 0 {
 		return append(p[:0:0], p...)
 	}
@@ -74,6 +96,14 @@ func Unpack7Bit(p []byte, fillBits int) []byte {
 	return u
 }
 
+// checkFillBits panics if fillBits is not a number of fill bits that can pad
+// a User Data Header to a septet boundary.
+func checkFillBits(fillBits int) {
+	if fillBits < 0 || fillBits > 6 {
+		panic(fmt.Sprintf("gsm7: fillBits %d not in range 0..6", fillBits))
+	}
+}
+
 // Pack7BitUSSD packs an array of septets into an 8bit array as per the USSD
 // packing rules defined in 3GPP TS 23.038 Section 6.1.2.3.1.
 //
@@ -82,15 +112,20 @@ func Unpack7Bit(p []byte, fillBits int) []byte {
 // CR rather than zeroes so the receiver does not decode them as '@'. A message
 // of 8n septets that ends with CR ends on an octet boundary, where the
 // receiver would discard that CR as filler, so a second CR is appended.
-func Pack7BitUSSD(u []byte) []byte {
-	p := Pack7Bit(u, 0)
+//
+// As for Pack7Bit, it returns an ErrInvalidSeptet for a byte above 0x7F.
+func Pack7BitUSSD(u []byte) ([]byte, error) {
+	p, err := Pack7Bit(u, 0)
+	if err != nil {
+		return nil, err
+	}
 	switch {
 	case len(u)%8 == 7:
 		p[len(p)-1] |= cr << 1
 	case len(u)%8 == 0 && len(u) > 0 && u[len(u)-1] == cr:
 		p = append(p, cr)
 	}
-	return p
+	return p, nil
 }
 
 // Unpack7BitUSSD unpacks septets, packed into an 8bit array as per the USSD

@@ -5,7 +5,6 @@ package tpdu
 import (
 	"testing"
 
-	"github.com/gomaja/go-sms/encoding/gsm7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -174,7 +173,7 @@ func TestDecode7BitHandlesSurplusSeptets(t *testing.T) {
 		err   error
 	}{
 		{"drops single trailing zero septet", 0, []byte{0x00}, []byte{}, nil},
-		{"drops trailing zero after message septets", 2, gsm7.Pack7Bit([]byte("OK\x00"), 0), []byte("OK"), nil},
+		{"drops trailing zero after message septets", 2, []byte{0xcf, 0x25, 0x00}, []byte("OK"), nil}, // "OK\x00" packed
 		{"rejects single non-zero surplus septet", 0, []byte{0x01}, nil, ErrOverlength},
 		{"rejects multiple surplus septets", 0, []byte{0x00, 0x00}, nil, ErrOverlength},
 	}
