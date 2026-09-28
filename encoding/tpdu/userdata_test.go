@@ -4,6 +4,7 @@
 package tpdu_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
@@ -113,17 +114,47 @@ func TestUserDataHeaderUnmarshalBinary(t *testing.T) {
 			3,
 			nil,
 		},
+		// 3GPP TS 23.040 Section 9.2.3.24: "If the length of the User Data
+		// Header is such that there are too few or too many octets in the
+		// final Information Element then the whole User Data Header shall be
+		// ignored."
 		{"short ie",
 			[]byte{1, 1},
 			tpdu.UserDataHeader{},
-			1,
-			tpdu.NewDecodeError("ie", 1, tpdu.ErrUnderflow),
+			2,
+			nil,
 		},
 		{"short ied",
 			[]byte{3, 1, 3, 1, 2},
 			tpdu.UserDataHeader{},
+			4,
+			nil,
+		},
+		{"ied overruns udhl",
+			[]byte{3, 0, 5, 1, 2, 3, 4, 5},
+			tpdu.UserDataHeader{},
+			4,
+			nil,
+		},
+		{"ied overruns udhl into sm",
+			[]byte{2, 0, 3, 7, 2, 1, 0x41},
+			tpdu.UserDataHeader{},
 			3,
-			tpdu.NewDecodeError("ied", 3, tpdu.ErrUnderflow),
+			nil,
+		},
+		{"dangling octet",
+			[]byte{5, 0, 2, 1, 2, 0x41},
+			tpdu.UserDataHeader{},
+			6,
+			nil,
+		},
+		{"dangling octet after ies",
+			[]byte{
+				9, 0, 3, 1, 2, 1, 0x24, 1, 1, 0x61, 0x62,
+			},
+			tpdu.UserDataHeader{},
+			10,
+			nil,
 		},
 	}
 	for _, p := range patterns {
@@ -139,6 +170,48 @@ func TestUserDataHeaderUnmarshalBinary(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+func TestUserDataHeaderIgnored(t *testing.T) {
+	// An SMS-DELIVER with 8-bit data whose UDH (UDHL 2) contains a
+	// concatenation IE claiming 3 octets, so running into the SM. The whole
+	// UDH must be ignored, the SM starts after the UDHL octets, and the TPDU
+	// decodes.
+	b := []byte{
+		0x44,                                           // first octet, UDHI set
+		0x0b, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9, // OA
+		0x00,                                     // PID
+		0x04,                                     // DCS 8-bit
+		0x71, 0x80, 0x13, 0x11, 0x12, 0x45, 0x23, // SCTS
+		0x07,                   // UDL
+		0x02, 0x00, 0x03, 0x07, // UDH
+		0x02, 0x01, 0x41, // SM
+	}
+	var pdu tpdu.TPDU
+	err := pdu.UnmarshalBinary(b)
+	require.Nil(t, err)
+	assert.Equal(t, tpdu.UserDataHeader{}, pdu.UDH)
+	assert.Equal(t, tpdu.UserData{0x07, 0x02, 0x01, 0x41}, pdu.UD)
+	assert.True(t, pdu.IsSingleSegment())
+
+	// The same with 7-bit data, where the data of the final IE is cut short
+	// by the UDHL, and the UDH (5 octets) is followed by 2 fill bits and
+	// "hello".
+	b = []byte{
+		0x44,                                           // first octet, UDHI set
+		0x0b, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9, // OA
+		0x00,                                     // PID
+		0x00,                                     // DCS 7-bit
+		0x71, 0x80, 0x13, 0x11, 0x12, 0x45, 0x23, // SCTS
+		0x0b,                         // UDL (septets)
+		0x04, 0x00, 0x03, 0x01, 0x02, // UDH
+		0xa0, 0xcb, 0x6c, 0xf6, 0x1b, // fill bits and SM
+	}
+	pdu = tpdu.TPDU{}
+	err = pdu.UnmarshalBinary(b)
+	require.Nil(t, err)
+	assert.Equal(t, tpdu.UserDataHeader{}, pdu.UDH)
+	assert.Equal(t, tpdu.UserData("hello"), pdu.UD)
 }
 
 func TestUserDataHeaderEmptyRoundTrip(t *testing.T) {
@@ -186,6 +259,75 @@ func TestUserDataHeaderEmptyRoundTrip(t *testing.T) {
 		}
 		t.Run(p.name, f)
 	}
+}
+
+// ieTiles reports whether the IEs in the UDH body, i.e. the octets following
+// the UDHL, exactly fill it.
+func ieTiles(body []byte) bool {
+	for len(body) > 0 {
+		if len(body) < 2 || len(body) < 2+int(body[1]) {
+			return false
+		}
+		body = body[2+int(body[1]):]
+	}
+	return true
+}
+
+// FuzzUserDataHeaderUnmarshalBinary checks that any UDH either fails to
+// unmarshal because the UDHL runs past the data, or consumes exactly the UDHL
+// octets and re-marshals to them. The exception is a header whose IEs do not
+// exactly fill the UDHL, which must be ignored as a whole (3GPP TS 23.040
+// Section 9.2.3.24), and so re-marshals as an empty header.
+func FuzzUserDataHeaderUnmarshalBinary(f *testing.F) {
+	for _, seed := range [][]byte{
+		{},
+		{0},
+		{0, 0x41},
+		{5, 1, 3, 1, 2, 3},
+		{15, 1, 3, 1, 2, 3, 1, 3, 5, 6, 7, 2, 3, 1, 2, 3},
+		{5, 1, 3, 1, 2},
+		{1, 1},
+		{3, 1, 3, 1, 2},
+		{2, 0, 3, 7, 2, 1, 0x41},
+		{5, 0, 2, 1, 2, 0x41},
+		{6, 0x25, 1, 1, 0x24, 1, 13, 0x41},
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, src []byte) {
+		orig := append([]byte(nil), src...)
+		var udh tpdu.UserDataHeader
+		n, err := udh.UnmarshalBinary(src)
+		if err != nil {
+			if len(src) > 0 && int(src[0]) < len(src) {
+				t.Fatalf("% x: unexpected error %v", orig, err)
+			}
+			return
+		}
+		if n != int(orig[0])+1 {
+			t.Fatalf("% x: read %d octets", orig, n)
+		}
+		if udh == nil {
+			t.Fatalf("% x: nil header", orig)
+		}
+		// the IEs must not alias src
+		for i := range src {
+			src[i] ^= 0xff
+		}
+		b, err := udh.MarshalBinary()
+		if err != nil {
+			t.Fatalf("% x: marshal error %v", orig, err)
+		}
+		if !ieTiles(orig[1:n]) {
+			if len(udh) != 0 {
+				t.Fatalf("% x: malformed header not ignored: %v", orig, udh)
+			}
+			return
+		}
+		if !bytes.Equal(orig[:n], b) {
+			t.Fatalf("% x: remarshalled to % x", orig[:n], b)
+		}
+	})
 }
 
 func TestUserDataHeaderIE(t *testing.T) {

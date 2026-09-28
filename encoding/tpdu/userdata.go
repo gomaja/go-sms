@@ -66,10 +66,19 @@ func (udh UserDataHeader) MarshalBinary() ([]byte, error) {
 //
 // The src contains the complete UDH, including the UDHL and all IEs, and may
 // be followed by the short message.
-// The function returns the number of bytes read from src, and any error
-// detected while unmarshalling.
+// The function returns the number of bytes read from src, which is the UDHL
+// plus one unless an error is returned, and any error detected while
+// unmarshalling.
 //
 // A UDHL of 0 results in an empty, but not nil, UDH.
+//
+// If the IEs do not exactly fill the UDHL then the whole UDH is ignored, as
+// required by 3GPP TS 23.040 Section 9.2.3.24: "If the length of the User Data
+// Header is such that there are too few or too many octets in the final
+// Information Element then the whole User Data Header shall be ignored."
+// The UDH is then left empty, although the UDHL octets are still read, so an
+// empty UDH with a returned length greater than one indicates an ignored
+// header.
 func (udh *UserDataHeader) UnmarshalBinary(src []byte) (int, error) {
 	if len(src) < 1 {
 		return 0, NewDecodeError("udhl", 0, ErrUnderflow)
@@ -82,17 +91,16 @@ func (udh *UserDataHeader) UnmarshalBinary(src []byte) (int, error) {
 	}
 	ies := UserDataHeader{}
 	for ri < udhl {
-		if udhl < ri+2 {
-			return ri, NewDecodeError("ie", ri, ErrUnderflow)
+		if udhl < ri+2 || udhl < ri+2+int(src[ri+1]) {
+			// too few or too many octets in the final IE
+			*udh = UserDataHeader{}
+			return udhl, nil
 		}
 		var ie InformationElement
 		ie.ID = src[ri]
 		ri++
 		iedl := int(src[ri])
 		ri++
-		if len(src) < ri+iedl {
-			return ri, NewDecodeError("ied", ri, ErrUnderflow)
-		}
 		ie.Data = append([]byte(nil), src[ri:ri+iedl]...)
 		ri += iedl
 		ies = append(ies, ie)

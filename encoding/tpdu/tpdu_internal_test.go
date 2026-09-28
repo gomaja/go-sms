@@ -121,12 +121,12 @@ func TestDecodeUserData(t *testing.T) {
 			nil,
 			NewDecodeError("udh.ie", 2, ErrUnderflow),
 		},
-		{"bad udh",
+		{"ignored udh",
 			TPDU{FirstOctet: 0x40},
 			[]byte{0x05, 0x04, 0x01, 0x03, 0x01, 0x02},
 			nil,
+			UserDataHeader{},
 			nil,
-			NewDecodeError("udh.ied", 4, ErrUnderflow),
 		},
 	}
 	for _, p := range patterns {
