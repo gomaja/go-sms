@@ -125,10 +125,17 @@ func generateEncoder(d Decoder) Encoder {
 	return e
 }
 
+// esc is the escape to the extension table. It has a place in the rune
+// tables, but it is not a character, so it has no entry in any Encoder or
+// Decoder (3GPP TS 23.038 Section 6.2.1, Note 1).
+const esc = 0x1b
+
 func generateEncoderFromRunes(runes []rune) Encoder {
 	e := make(Encoder, len(runes))
 	for i, r := range runes {
-		e[r] = byte(i)
+		if i != esc {
+			e[r] = byte(i)
+		}
 	}
 	return e
 }
@@ -136,7 +143,9 @@ func generateEncoderFromRunes(runes []rune) Encoder {
 func generateDecoderFromRunes(runes []rune) Decoder {
 	dset := make(Decoder, len(runes))
 	for i, r := range runes {
-		dset[byte(i)] = r
+		if i != esc {
+			dset[byte(i)] = r
+		}
 	}
 	return dset
 }

@@ -119,6 +119,39 @@ func assertCopies[M ~map[K]V, K comparable, V any](t *testing.T, get func() M, k
 	assert.Equal(t, want, get())
 }
 
+// TestNoEscapeCharacter checks that no table has a character for septet 0x1B
+// and that no encoder produces it. In the locking shift tables 0x1B is the
+// escape to the extension table (3GPP TS 23.038 V20.0.0 Section 6.2.1, Note
+// 1), and in the extension tables it is reserved for another extension table
+// (Section 6.2.1.1 and Annex A.2, Note 1).
+func TestNoEscapeCharacter(t *testing.T) {
+	decoders := map[string]charset.Decoder{
+		"default":     charset.DefaultDecoder(),
+		"default ext": charset.DefaultExtDecoder(),
+	}
+	encoders := map[string]charset.Encoder{
+		"default":     charset.DefaultEncoder(),
+		"default ext": charset.DefaultExtEncoder(),
+	}
+	for nli := charset.Default; nli < charset.End; nli++ {
+		decoders[charsetName[nli]] = charset.NewDecoder(nli)
+		decoders[charsetName[nli]+" ext"] = charset.NewExtDecoder(nli)
+		encoders[charsetName[nli]] = charset.NewEncoder(nli)
+		encoders[charsetName[nli]+" ext"] = charset.NewExtEncoder(nli)
+	}
+	for name, d := range decoders {
+		r, ok := d[0x1b]
+		assert.False(t, ok, "%s decodes 0x1b as %U", name, r)
+	}
+	for name, e := range encoders {
+		g, ok := e[0x1b]
+		assert.False(t, ok, "%s encodes U+001B as %#x", name, g)
+		for r, g := range e {
+			assert.NotEqual(t, byte(0x1b), g, "%s encodes %U as 0x1b", name, r)
+		}
+	}
+}
+
 func TestDecoder(t *testing.T) {
 	for _, l := range languageTests {
 		d := charset.NewDecoder(l.nli)
@@ -237,13 +270,12 @@ func TestDefaultExtEncoder(t *testing.T) {
 
 var (
 	languageTests = []language{
-		{charset.Default, 128, 11, 0,
+		{charset.Default, 127, 11, 0,
 			[]testPattern{
 				{0x00, '@'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x10, 'Δ'},
-				{0x1b, '\x1b'},
 				{0x20, ' '},
 				{0x30, '0'},
 				{0x41, 'A'},
@@ -258,14 +290,13 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Turkish, 128, 18, 0,
+		{charset.Turkish, 127, 18, 0,
 			[]testPattern{
 				{0x00, '@'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x0f, 'å'},
 				{0x10, 'Δ'},
-				{0x1b, '\x1b'},
 				{0x1c, 'Ş'},
 				{0x1f, 'É'},
 				{0x20, ' '},
@@ -288,13 +319,12 @@ var (
 				{0x73, 'ş'},
 			},
 		},
-		{charset.Spanish, 128, 20, 0,
+		{charset.Spanish, 127, 20, 0,
 			[]testPattern{
 				{0x00, '@'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x10, 'Δ'},
-				{0x1b, '\x1b'},
 				{0x20, ' '},
 				{0x30, '0'},
 				{0x41, 'A'},
@@ -312,13 +342,12 @@ var (
 				{0x75, 'ú'},
 			},
 		},
-		{charset.Portuguese, 128, 38, 0,
+		{charset.Portuguese, 127, 38, 0,
 			[]testPattern{
 				{0x00, '@'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x10, 'Δ'},
-				{0x1b, '\x1b'},
 				{0x20, ' '},
 				{0x30, '0'},
 				{0x41, 'A'},
@@ -342,14 +371,13 @@ var (
 				{0x7f, 'â'},
 			},
 		},
-		{charset.Bengali, 115, 84, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
+		{charset.Bengali, 114, 83, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
 			[]testPattern{
 				{0x00, '\u0981'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x0f, '\u098f'},
 				{0x10, '\u0990'},
-				{0x1b, 0x1b},
 				{0x1f, '\u099e'},
 				{0x20, ' '},
 				{0x30, '0'},
@@ -376,14 +404,13 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Gujaranti, 121, 72, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
+		{charset.Gujaranti, 120, 71, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
 			[]testPattern{
 				{0x00, '\u0a81'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x0f, '\u0a8f'},
 				{0x10, '\u0a90'},
-				{0x1b, 0x1b},
 				{0x1f, '\u0a9e'},
 				{0x20, ' '},
 				{0x30, '0'},
@@ -410,7 +437,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Hindi, 128, 90, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
+		{charset.Hindi, 127, 89, 2, // 2 duplicate values - '*' and '¡', which are mapped to lowest key
 			[]testPattern{
 				{0x00, '\u0901'},
 				{0x01, '\u0902'},
@@ -420,7 +447,6 @@ var (
 				{0x0e, 'ऎ'},
 				{0x0f, 'ए'},
 				{0x10, 'ऐ'},
-				{0x1b, 0x1b},
 				{0x1c, 'छ'},
 				{0x1f, 'ञ'},
 				{0x20, ' '},
@@ -449,14 +475,13 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Kannada, 121, 75, 2,
+		{charset.Kannada, 120, 74, 2,
 			[]testPattern{
 				{0x01, '\u0c82'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x0f, '\u0c8f'},
 				{0x10, '\u0c90'},
-				{0x1b, 0x1b},
 				{0x1f, '\u0c9e'},
 				{0x20, ' '},
 				{0x30, '0'},
@@ -485,14 +510,13 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Malayalam, 121, 84, 2,
+		{charset.Malayalam, 120, 83, 2,
 			[]testPattern{
 				{0x01, '\u0d02'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x0f, '\u0d0f'},
 				{0x10, '\u0d10'},
-				{0x1b, 0x1b},
 				{0x1f, '\u0d1e'},
 				{0x20, ' '},
 				{0x30, '0'},
@@ -520,7 +544,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Oriya, 117, 77, 2,
+		{charset.Oriya, 116, 76, 2,
 			[]testPattern{
 				{0x00, '\u0b01'},
 				{0x0a, '\n'},
@@ -528,7 +552,6 @@ var (
 				{0x0d, '\r'},
 				{0x0f, '\u0b0f'},
 				{0x10, '\u0b10'},
-				{0x1b, 0x1b},
 				{0x1c, '\u0b1b'},
 				{0x1f, '\u0b1e'},
 				{0x20, ' '},
@@ -558,7 +581,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Punjabi, 111, 78, 2,
+		{charset.Punjabi, 110, 77, 2,
 			[]testPattern{
 				{0x00, '\u0a01'},
 				{0x0a, '\n'},
@@ -566,7 +589,6 @@ var (
 				{0x0d, '\r'},
 				{0x0f, '\u0a0f'},
 				{0x10, '\u0a10'},
-				{0x1b, 0x1b},
 				{0x1c, '\u0a1b'},
 				{0x1f, '\u0a1e'},
 				{0x20, ' '},
@@ -596,14 +618,13 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Tamil, 103, 79, 2,
+		{charset.Tamil, 102, 78, 2,
 			[]testPattern{
 				{0x01, '\u0b82'},
 				{0x0a, '\n'},
 				{0x0d, '\r'},
 				{0x0f, '\u0b8f'},
 				{0x10, '\u0b90'},
-				{0x1b, 0x1b},
 				{0x1f, '\u0b9e'},
 				{0x20, ' '},
 				{0x30, '0'},
@@ -633,7 +654,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Telugu, 121, 80, 2,
+		{charset.Telugu, 120, 79, 2,
 			[]testPattern{
 				{0x00, '\u0c01'},
 				{0x0a, '\n'},
@@ -641,7 +662,6 @@ var (
 				{0x0d, '\r'},
 				{0x0f, '\u0c0f'},
 				{0x10, '\u0c10'},
-				{0x1b, 0x1b},
 				{0x1f, '\u0c1e'},
 				{0x20, ' '},
 				{0x30, '0'},
@@ -669,7 +689,7 @@ var (
 				{0x65, '€'},
 			},
 		},
-		{charset.Urdu, 128, 92, 2,
+		{charset.Urdu, 127, 91, 2,
 			[]testPattern{
 				{0x00, 'ا'},
 				{0x0a, '\n'},
@@ -677,7 +697,6 @@ var (
 				{0x0e, 'ٺ'},
 				{0x0f, 'ټ'},
 				{0x10, 'ث'},
-				{0x1b, 0x1b},
 				{0x1c, 'ڌ'},
 				{0x1f, 'ڊ'},
 				{0x20, ' '},

@@ -241,6 +241,10 @@ func (d Decoder) Strict() Decoder {
 //
 // The return value includes the encoded GSM7 bytes, and any error that
 // occurred during encoding.
+//
+// A table entry that maps a rune to the escape septet 0x1B, or to a value
+// above 0x7F, is treated as absent, as neither is a character (3GPP TS 23.038
+// Section 6.2.1).
 func (e *Encoder) Encode(src []byte) ([]byte, error) {
 	if len(src) == 0 {
 		return nil, nil
@@ -248,18 +252,24 @@ func (e *Encoder) Encode(src []byte) ([]byte, error) {
 	dst := make([]byte, 0, len(src))
 	for _, u := range string(src) {
 		g, ok := e.set[u]
-		if ok {
+		if ok && isCharacter(g) {
 			dst = append(dst, g)
 			continue
 		}
 		g, ok = e.ext[u]
-		if ok {
+		if ok && isCharacter(g) {
 			dst = append(dst, esc, g)
 			continue
 		}
 		return nil, ErrInvalidUTF8(u)
 	}
 	return dst, nil
+}
+
+// isCharacter reports whether g is a septet that encodes a character, which
+// is any septet but the escape.
+func isCharacter(g byte) bool {
+	return g <= 0x7f && g != esc
 }
 
 // WithCharset replaces the character set map used by the Encoder.
@@ -285,5 +295,5 @@ func (e ErrInvalidSeptet) Error() string {
 type ErrInvalidUTF8 rune
 
 func (e ErrInvalidUTF8) Error() string {
-	return fmt.Sprintf("gsm7: invalid utf8 '%c' (%U)", rune(e), int(e))
+	return fmt.Sprintf("gsm7: invalid utf8 %q (%U)", rune(e), rune(e))
 }
