@@ -134,8 +134,9 @@ func Pack7BitUSSD(u []byte) ([]byte, error) {
 //
 // When the septets end on an octet boundary, which is when the number of
 // octets is a multiple of 7, a final CR is filler and is removed. A message
-// that the sender ended with a doubled CR keeps both, as CR CR is defined to
-// be identical to CR (3GPP TS 23.038 Section 6.1.1).
+// that the sender ended with a doubled CR keeps both, as "the definition of
+// <CR> in clause 6.1.1 is identical to the definition of <CR><CR>" (3GPP TS
+// 23.038 Section 6.1.2.3.1, which also has the sender double the CR).
 func Unpack7BitUSSD(p []byte) []byte {
 	u := Unpack7Bit(p, 0)
 	if len(p)%7 == 0 && len(u) > 0 && u[len(u)-1] == cr {
