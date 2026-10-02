@@ -93,6 +93,90 @@ func Encode(src []rune) []byte {
 	return dst
 }
 
+// EncodeUTF16 converts an array of runes into big-endian UTF-16, as RFC 2781
+// defines it, two bytes per code unit.
+//
+// A rune up to U+FFFF is one code unit and a rune above it is a surrogate
+// pair, so it takes four bytes (RFC 2781 Section 2.1). The code units are
+// serialized big-endian, with no byte order mark, as for the UTF-16BE label
+// (RFC 2781 Section 3.3). This is an extension beyond the UCS2 alphabet of
+// 3GPP TS 23.038 Section 6.2.3, which has 16 bits per character, but it is
+// how handsets send characters above U+FFFF, such as emoji, in user data
+// coded in UCS2, and how they expect to receive them. Decode reads it back.
+//
+// If a rune is not a Unicode scalar value, so is not a character, no bytes
+// are returned, and the error is an ErrInvalidRune holding the first such
+// rune and its index. It is not replaced by U+FFFD.
+//
+// An empty or nil array is encoded as nil.
+func EncodeUTF16(src []rune) ([]byte, error) {
+	// Check every rune, and size the result, before writing any of it.
+	n := 0
+	for i, r := range src {
+		switch {
+		case !isScalarValue(r):
+			return nil, ErrInvalidRune{Index: i, Rune: r}
+		case r > maxBMP:
+			n += 4
+		default:
+			n += 2
+		}
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	dst := make([]byte, 0, n)
+	for _, r := range src {
+		if r <= maxBMP {
+			dst = binary.BigEndian.AppendUint16(dst, uint16(r))
+			continue
+		}
+		// RFC 2781 Section 2.1, steps 2 to 4: the 20 bits of r - 0x10000,
+		// the 10 high-order bits in the high surrogate and the 10 low-order
+		// bits in the low surrogate.
+		u := r - 0x10000
+		dst = binary.BigEndian.AppendUint16(dst, uint16(0xd800|u>>10))
+		dst = binary.BigEndian.AppendUint16(dst, uint16(0xdc00|u&0x3ff))
+	}
+	return dst, nil
+}
+
+// maxBMP is the last code point of the Basic Multilingual Plane, the last
+// that one 16-bit code unit holds.
+const maxBMP = 0xffff
+
+// isScalarValue reports whether r is a Unicode scalar value, the number of a
+// character, as RFC 2781 Section 2 calls it: a code point from U+0000 to
+// U+10FFFF other than a surrogate, U+D800 to U+DFFF, which RFC 2781 Section 2
+// says are "specifically reserved for use with UTF-16, and don't have any
+// characters assigned to them".
+func isScalarValue(r rune) bool {
+	return r >= 0 && r < 0xd800 || r > 0xdfff && r <= unicode.MaxRune
+}
+
+// ErrInvalidRune indicates a rune that is not a Unicode scalar value, so is
+// not a character to encode: a surrogate code point, U+D800 to U+DFFF, a
+// negative value, or a value above U+10FFFF, the last code point.
+type ErrInvalidRune struct {
+	// Index is the index of Rune in the runes being encoded.
+	Index int
+	// Rune is the value that is not a Unicode scalar value.
+	Rune rune
+}
+
+func (e ErrInvalidRune) Error() string {
+	return fmt.Sprintf("ucs2: rune %s at index %d is not a Unicode scalar value", runeName(e.Rune), e.Index)
+}
+
+// runeName names r as a code point, U+ and its hex digits, or, if r is
+// negative, which no code point is, as its value.
+func runeName(r rune) string {
+	if r < 0 {
+		return fmt.Sprintf("%d", r)
+	}
+	return fmt.Sprintf("%U", r)
+}
+
 // ErrDanglingSurrogate indicates the byte array being decoded ends with a high
 // surrogate, the first half of a surrogate pair.
 //

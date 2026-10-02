@@ -77,7 +77,11 @@ func FuzzEncodeCollectDecode(f *testing.F) {
 		case 2: // UCS2
 			s := strings.ToValidUTF8(string(msg), "�")
 			want = []byte(s)
-			msg = ucs2.Encode([]rune(s))
+			// UTF-16, as s may hold characters above U+FFFF
+			var err error
+			if msg, err = ucs2.EncodeUTF16([]rune(s)); err != nil {
+				t.Fatalf("ucs2: %v", err)
+			}
 			options = append(options, sms.AsUCS2)
 		case 3: // 8 bit
 			want = msg
