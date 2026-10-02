@@ -110,7 +110,7 @@ func NewCount(msg string, nli int) (Count, error) {
 	c.Remaining = c.Pdulen - c.Llen
 	c.Messages = len(pdus)
 	// A segment may be a unit short of the block size, as an escape sequence
-	// or a UCS-2 surrogate pair is not split between segments (3GPP TS
+	// or a UTF-16 surrogate pair is not split between segments (3GPP TS
 	// 23.040 Section 9.2.3.24.1), so the total is counted segment by segment.
 	for _, p := range pdus {
 		c.Tlen += len(p.UD) / unit

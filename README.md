@@ -308,7 +308,7 @@ Option | Category | Description
 *AsSubmit*|Encode|Encode the TPDU as a SMS-SUBMIT (default for *sms.Encode*)
 *AsDeliver*|Encode|Encode the TPDU as a SMS-DELIVER (default for *sms.NewEncoder*)
 *As8Bit*|Encode|Force the encoding of user data as 8-bit
-*AsUCS2*|Encode|Force the encoding of user data as UCS-2, from UTF-16
+*AsUCS2*|Encode|Force the encoding of user data as UCS-2, taking the message as octets already coded: from *ucs2.Encode* for strict UCS-2, or from *ucs2.EncodeUTF16* for UTF-16, which also codes characters above U+FFFF
 *WithMR(counter)*|Encode|Draw the TP-MR of each SMS-SUBMIT and SMS-COMMAND from the counter
 *WithConcatRef(counter)*|Encode|Draw the reference of each concatenated message from the counter
 *With16BitConcatRef*|Encode|Use 16-bit rather than 8-bit concatenation references
@@ -505,4 +505,4 @@ The [charset](encoding/gsm7/charset) package [![go.dev reference](https://img.sh
 
 The [semioctet](encoding/semioctet) package [![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white&style=flat-square)](https://pkg.go.dev/github.com/gomaja/go-sms/encoding/semioctet) provides conversions to and from semioctet format.
 
-The [ucs2](encoding/ucs2) package [![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white&style=flat-square)](https://pkg.go.dev/github.com/gomaja/go-sms/encoding/ucs2) provides conversions between runes and the UTF-16 octets of UCS2 user data.
+The [ucs2](encoding/ucs2) package [![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white&style=flat-square)](https://pkg.go.dev/github.com/gomaja/go-sms/encoding/ucs2) provides conversions between runes and the octets of UCS2 user data: strict UCS2, 16 bits per character as specified in 3GPP TS 23.038, and the UTF-16 that handsets use for characters above U+FFFF, such as emoji.

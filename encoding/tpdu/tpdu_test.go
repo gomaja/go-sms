@@ -1011,7 +1011,7 @@ func TestSegment(t *testing.T) {
 
 func TestSegmentUCS2DoesNotSplitSurrogatePair(t *testing.T) {
 	// Concatenated SMS TP-UD is limited by 3GPP TS 23.040 Section 9.2.3.24.
-	msg := ucs2.Encode([]rune(strings.Repeat("a", 66) + "😁bbb"))
+	msg := utf16BE(t, strings.Repeat("a", 66)+"😁bbb")
 	in := tpdu.TPDU{DCS: tpdu.DcsUCS2Data}
 
 	segments, err := in.Segment(msg)
@@ -2498,6 +2498,15 @@ func unhex(t testing.TB, s string) []byte {
 	return b
 }
 
+// utf16BE codes s as user data coded in UCS2 that holds characters above
+// U+FFFF: big-endian UTF-16, with each such character a surrogate pair.
+func utf16BE(t testing.TB, s string) []byte {
+	t.Helper()
+	b, err := ucs2.EncodeUTF16([]rune(s))
+	require.NoError(t, err)
+	return b
+}
+
 // TestUnmarshalBinaryResetsReceiver checks that decoding into a TPDU that
 // already holds a decoded TPDU gives the same result as decoding into a new
 // TPDU with the same Direction, so no field of the earlier TPDU survives.
@@ -3792,7 +3801,7 @@ func TestSegmentLargeTemplateUDH(t *testing.T) {
 	msgs := map[string][]byte{
 		"7bit": append([]byte{0x1b, 0x65}, bytes.Repeat([]byte("a"), 300)...),
 		"8bit": bytes.Repeat([]byte{0xa5}, 300),
-		"ucs2": ucs2.Encode([]rune(strings.Repeat("😁a", 100))),
+		"ucs2": utf16BE(t, strings.Repeat("😁a", 100)),
 	}
 	dcs := map[string]tpdu.DCS{"7bit": 0x00, "8bit": 0x04, "ucs2": 0x08}
 	for name, msg := range msgs {
@@ -3833,9 +3842,9 @@ func TestSegmentLargeTemplateUDH(t *testing.T) {
 		{"7bit 1 septet blocks", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01,
 			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 131)}}}, []byte("\x1beabcdefghij"), false},
 		{"ucs2 4 octet blocks", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x08,
-			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 128)}}}, ucs2.Encode([]rune("😁😁😁")), true},
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 128)}}}, utf16BE(t, "😁😁😁"), true},
 		{"ucs2 2 octet blocks", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x08,
-			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 130)}}}, ucs2.Encode([]rune("😁😁😁")), false},
+			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 130)}}}, utf16BE(t, "😁😁😁"), false},
 		{"udh alone too long", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x04,
 			UDH: tpdu.UserDataHeader{{ID: 1, Data: make([]byte, 138)}}}, nil, false},
 		{"udh alone fits", tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x01, DCS: 0x04,
@@ -4435,7 +4444,7 @@ func segmentTemplate(typ, coding, udhLen, mr byte) tpdu.TPDU {
 func FuzzSegment(f *testing.F) {
 	long := bytes.Repeat([]byte("abcdefghij"), 50)
 	escapes := bytes.Repeat([]byte{'a', 0x1b, 0x65, 0x1b, 0x1b, 0x1b, 0x3c}, 60)
-	emoji := ucs2.Encode([]rune(strings.Repeat("a😁", 90)))
+	emoji := utf16BE(f, strings.Repeat("a😁", 90))
 	for _, seed := range []struct {
 		typ, coding, udhLen byte
 		ref16               bool

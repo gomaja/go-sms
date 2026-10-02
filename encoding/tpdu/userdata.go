@@ -451,7 +451,10 @@ const (
 // benefit of per-segment language encoding is minimal. In most cases there is
 // no benefit at all.
 //
-// Failing GSM7 conversion it falls back to UCS2/UTF16.
+// Failing GSM7 conversion it falls back to UCS2, coded as UTF-16 by
+// ucs2.EncodeUTF16, so a character above U+FFFF, such as an emoji, is sent as
+// a surrogate pair, as handsets send it. That is an extension beyond the UCS2
+// alphabet of 3GPP TS 23.038 Section 6.2.3, which has 16 bits per character.
 //
 // ErrInvalidUTF8 is returned if the message is not valid UTF8, rather than
 // replacing the invalid octets with U+FFFD.
@@ -505,8 +508,14 @@ func EncodeUserData(msg []byte, options ...UDEncodeOption) (UserData, UserDataHe
 	}
 	// could also try other combos of locking AND shift, but unlikely to help??...
 
-	// fallback to ucs-2
-	enc = ucs2.Encode([]rune(string(msg)))
+	// fallback to UCS2, as UTF-16, so a character above U+FFFF is coded as
+	// a surrogate pair. As msg is valid UTF-8 its runes are all Unicode
+	// scalar values, which EncodeUTF16 always codes, but should it fail its
+	// error is returned rather than dropped.
+	enc, err = ucs2.EncodeUTF16([]rune(string(msg)))
+	if err != nil {
+		return nil, nil, Alpha7Bit, err
+	}
 	return enc, nil, AlphaUCS2, nil
 }
 
