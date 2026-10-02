@@ -9,7 +9,9 @@ import (
 	"github.com/gomaja/go-sms"
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
 	"github.com/gomaja/go-sms/encoding/tpdu"
+	"github.com/gomaja/go-sms/encoding/ucs2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var twoSegmentMsg = []byte("this is a very long message that does not fit in a single SMS message, at least it will if I keep adding more to it as 160 characters is more than you might think")
@@ -504,6 +506,33 @@ func TestEncodeInvalidUTF8(t *testing.T) {
 	assert.Nil(t, err)
 	if assert.Len(t, out, 1) {
 		assert.Equal(t, tpdu.UserData{0x00, 'h', 0xff, 0xfd, 0x00, 'i'}, out[0].UD)
+	}
+}
+
+// TestEncodeAsUCS2Octets checks that AsUCS2 takes the octets of ucs2.Encode,
+// strict UCS2, and of ucs2.EncodeUTF16, which codes a character above U+FFFF
+// as a surrogate pair, as they are, and that Decode gives the message back.
+func TestEncodeAsUCS2Octets(t *testing.T) {
+	strict, err := ucs2.Encode([]rune("Привет €"))
+	require.NoError(t, err)
+	wide, err := ucs2.EncodeUTF16([]rune("hi 😁"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0x00, 'h', 0x00, 'i', 0x00, ' ', 0xd8, 0x3d, 0xde, 0x01}, wide)
+	for _, p := range []struct {
+		msg  []byte
+		want string
+	}{
+		{strict, "Привет €"},
+		{wide, "hi 😁"},
+	} {
+		pdus, err := sms.Encode(p.msg, sms.AsUCS2)
+		require.NoError(t, err)
+		require.Len(t, pdus, 1)
+		assert.Equal(t, tpdu.DcsUCS2Data, pdus[0].DCS)
+		assert.Equal(t, p.msg, []byte(pdus[0].UD))
+		out, err := sms.Decode([]*tpdu.TPDU{&pdus[0]})
+		require.NoError(t, err)
+		assert.Equal(t, p.want, string(out))
 	}
 }
 

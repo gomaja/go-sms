@@ -65,7 +65,10 @@ var (
 	// As8Bit indicates that generated PDUs encode user data as 8bit.
 	As8Bit = templateOption{tpdu.Dcs8BitData}
 
-	// AsUCS2 indicates that generated PDUs encode user data as UCS2.
+	// AsUCS2 indicates that generated PDUs encode user data as UCS2. The
+	// message is then taken as octets already coded: those ucs2.Encode
+	// returns for strict UCS2, or those ucs2.EncodeUTF16 returns for UTF-16,
+	// which also codes characters above U+FFFF.
 	AsUCS2 = templateOption{tpdu.DcsUCS2Data}
 
 	// AsMO indicates that the TPDU originated from the mobile station.

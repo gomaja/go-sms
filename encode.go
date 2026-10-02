@@ -123,15 +123,20 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 //
 //   - 8 bit, which the TP-CD of an SMS-COMMAND always is, whatever the DCS:
 //     the message is octets, and is used as it is.
-//   - UCS2: the message is UTF-16, big endian, so two octets for each code
-//     point up to U+FFFF and four, a surrogate pair, for each above it, as
-//     ucs2.Encode returns for a slice of code points. It is used as it is.
+//   - UCS2: the message is octets already coded, which are used as they
+//     are: those ucs2.Encode returns for strict UCS2, two octets for each
+//     character, as 3GPP TS 23.038 Section 6.2.3 defines it, which cannot
+//     code a character above U+FFFF, or those ucs2.EncodeUTF16 returns for
+//     big-endian UTF-16, which codes each character above U+FFFF as a
+//     surrogate pair of four octets, as handsets do.
 //   - GSM 7 bit, which includes the reserved codings: the message is UTF-8,
 //     which the Encoder codes in the GSM 7 bit default alphabet, or in the
 //     national language tables that the charset options make available, or,
-//     failing those, in UCS2, and sets the alphabet of the DCS to match.
-//     tpdu.ErrInvalidUTF8 is returned if the message is not valid UTF-8, and
-//     ErrDcsConflict if the DCS cannot indicate the alphabet.
+//     failing those, in UCS2, as ucs2.EncodeUTF16 codes it, so a character
+//     above U+FFFF, such as an emoji, is a surrogate pair, and sets the
+//     alphabet of the DCS to match. tpdu.ErrInvalidUTF8 is returned if the
+//     message is not valid UTF-8, and ErrDcsConflict if the DCS cannot
+//     indicate the alphabet.
 //
 // The Encoder does not compress, so ErrCompressedUserData is returned if the
 // DCS of the template, or the DCS the Encoder would send, indicates compressed

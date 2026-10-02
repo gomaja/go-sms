@@ -3,13 +3,24 @@
 // Package ucs2 converts between runes and the octets of SMS user data coded
 // in the UCS2 alphabet.
 //
-// 3GPP TS 23.038 Section 6.2.3 defines the UCS2 alphabet as 16 bits per
-// character, with ISO/IEC 10646 as the character table. As is common practice,
-// this package codes the characters as UTF-16: a code point up to U+FFFF is
-// one big-endian 16-bit code unit, and a code point above U+FFFF is a
-// surrogate pair of two code units, four octets in all. So a message that
-// contains such code points holds fewer characters than the octet count
-// suggests. Neither function reads or writes UTF-8.
+// 3GPP TS 23.038 Section 6.2.3 defines the UCS2 alphabet with "Bits per
+// character: 16" and "Character table: ISO/IEC 10646", which 3GPP TS 23.040
+// cites as "UCS2, 16 bit coding" (its reference [24]). So UCS2 codes each
+// character up to U+FFFF in one 16-bit unit, and has no coding for a
+// character above U+FFFF. Neither specification states the order of the two
+// octets of a unit: this package serializes the units big-endian, the order
+// that ISO/IEC 10646 prefers (RFC 2781 Section 3.1). Encode codes strictly
+// UCS2: it returns an error for a rune it cannot code, rather than altering
+// the text.
+//
+// Handsets send a character above U+FFFF, such as an emoji, in user data
+// coded in UCS2 as UTF-16 (RFC 2781): a surrogate pair of two 16-bit units,
+// four octets in all, so such a message holds fewer characters than its octet
+// count suggests. That is an extension beyond TS 23.038 Section 6.2.3, which
+// EncodeUTF16 codes and Decode accepts. UTF-16 codes each character up to
+// U+FFFF as UCS2 does, so Decode reads strict UCS2 too.
+//
+// No function reads or writes UTF-8.
 package ucs2
 
 import (
@@ -20,16 +31,25 @@ import (
 	"unicode/utf16"
 )
 
-// Decode converts an array of big-endian UTF-16 code units into an array of
+// Decode converts big-endian UTF-16, as RFC 2781 defines it, into an array of
 // runes.
 //
-// As each code unit is two bytes, the length of the byte array provided must
-// be even.
+// That reads UCS2, of 3GPP TS 23.038 Section 6.2.3, in which each character
+// is one 16-bit unit, and, as an extension beyond that section, the UTF-16
+// surrogate pairs that handsets send for characters above U+FFFF: a high
+// surrogate followed by a low surrogate is decoded as one rune, as RFC 2781
+// Section 2.2 decodes it.
 //
-// A high surrogate followed by a low surrogate is decoded as one rune. Any
-// other surrogate is decoded as U+FFFD and consumes only its own two bytes. If
-// the array ends with a high surrogate then the runes before it are returned
-// with an ErrDanglingSurrogate holding that code unit.
+// As each unit is two bytes, the length of the byte array provided must be
+// even, or ErrInvalidLength is returned.
+//
+// Any other surrogate is unpaired, an error from which RFC 2781 Section 2.2
+// leaves the recovery to the decoder ("Error recovery is not specified by
+// this document"). Decode does not fail: an unpaired surrogate is decoded as
+// U+FFFD and consumes only its own two bytes. If the array ends with a high
+// surrogate then the runes before it are returned with an
+// ErrDanglingSurrogate holding that unit, which the next segment of a
+// concatenated message may complete.
 func Decode(src []byte) ([]rune, error) {
 	if len(src) == 0 {
 		return nil, nil
@@ -73,24 +93,36 @@ func isLowSurrogate(r rune) bool {
 	return r >= 0xdc00 && r < 0xe000
 }
 
-// Encode converts an array of runes into an array of big-endian UTF-16 code
-// units, two bytes per code unit.
+// Encode converts an array of runes into UCS2, the alphabet of 3GPP TS 23.038
+// Section 6.2.3 with 16 bits per character: each rune is one 16-bit unit
+// holding its value, serialized big-endian, so two bytes.
 //
-// A rune above U+FFFF is encoded as a surrogate pair, so it takes four bytes.
-// A rune that UTF-16 cannot represent, i.e. a surrogate code point or a value
-// outside 0..U+10FFFF, is encoded as U+FFFD.
-func Encode(src []rune) []byte {
+// UCS2 has 16 bits per character, so it cannot code a character above
+// U+FFFF, for which the error is an ErrUnencodable. For a rune that is not a
+// Unicode scalar value, so is not a character, the error is an
+// ErrInvalidRune. Either error holds the first such rune and its index, and
+// no bytes are returned with it. No rune is replaced by U+FFFD, nor coded as
+// a surrogate pair: EncodeUTF16 codes characters above U+FFFF as handsets do.
+//
+// An empty or nil array is encoded as nil.
+func Encode(src []rune) ([]byte, error) {
+	// Check every rune before writing any of the result.
+	for i, r := range src {
+		switch {
+		case !isScalarValue(r):
+			return nil, ErrInvalidRune{Index: i, Rune: r}
+		case r > maxBMP:
+			return nil, ErrUnencodable{Index: i, Rune: r}
+		}
+	}
 	if len(src) == 0 {
-		return nil
+		return nil, nil
 	}
-	u := utf16.Encode(src)
-	dst := make([]byte, len(u)*2)
-	wi := 0
-	for _, r := range u {
-		binary.BigEndian.PutUint16(dst[wi:], uint16(r))
-		wi += 2
+	dst := make([]byte, 2*len(src))
+	for i, r := range src {
+		binary.BigEndian.PutUint16(dst[2*i:], uint16(r))
 	}
-	return dst
+	return dst, nil
 }
 
 // EncodeUTF16 converts an array of runes into big-endian UTF-16, as RFC 2781
@@ -103,6 +135,8 @@ func Encode(src []rune) []byte {
 // 3GPP TS 23.038 Section 6.2.3, which has 16 bits per character, but it is
 // how handsets send characters above U+FFFF, such as emoji, in user data
 // coded in UCS2, and how they expect to receive them. Decode reads it back.
+// For a message of characters up to U+FFFF only, it returns what Encode
+// returns.
 //
 // If a rune is not a Unicode scalar value, so is not a character, no bytes
 // are returned, and the error is an ErrInvalidRune holding the first such
@@ -142,7 +176,7 @@ func EncodeUTF16(src []rune) ([]byte, error) {
 }
 
 // maxBMP is the last code point of the Basic Multilingual Plane, the last
-// that one 16-bit code unit holds.
+// that one 16-bit unit holds.
 const maxBMP = 0xffff
 
 // isScalarValue reports whether r is a Unicode scalar value, the number of a
@@ -175,6 +209,20 @@ func runeName(r rune) string {
 		return fmt.Sprintf("%d", r)
 	}
 	return fmt.Sprintf("%U", r)
+}
+
+// ErrUnencodable indicates a character that UCS2 cannot code: a Unicode
+// scalar value above U+FFFF, while UCS2 has 16 bits per character (3GPP TS
+// 23.038 Section 6.2.3). EncodeUTF16 codes it as a surrogate pair.
+type ErrUnencodable struct {
+	// Index is the index of Rune in the runes being encoded.
+	Index int
+	// Rune is the character that cannot be encoded.
+	Rune rune
+}
+
+func (e ErrUnencodable) Error() string {
+	return fmt.Sprintf("ucs2: %q (%U) at index %d has no UCS2 encoding, as it is above U+FFFF", e.Rune, e.Rune, e.Index)
 }
 
 // ErrDanglingSurrogate indicates the byte array being decoded ends with a high
