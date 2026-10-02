@@ -5,13 +5,14 @@
 //
 // 3GPP TS 23.038 Section 6.2.3 defines the UCS2 alphabet with "Bits per
 // character: 16" and "Character table: ISO/IEC 10646", which 3GPP TS 23.040
-// cites as "UCS2, 16 bit coding" (its reference [24]). So UCS2 codes each
+// cites as "UCS2, 16 bit coding" (its reference [24]), and TS 23.038 Section 4
+// counts "up to 140 octets, i.e. up to 70 UCS2 characters". So UCS2 codes each
 // character up to U+FFFF in one 16-bit unit, and has no coding for a
-// character above U+FFFF. Neither specification states the order of the two
-// octets of a unit: this package serializes the units big-endian, the order
-// that ISO/IEC 10646 prefers (RFC 2781 Section 3.1). Encode codes strictly
-// UCS2: it returns an error for a rune it cannot code, rather than altering
-// the text.
+// character above U+FFFF. Each unit is serialized big-endian, its most
+// significant octet first, as 3GPP TS 23.040 Section 9.1.2.1 orders the
+// octets of an integer, and as ISO/IEC 10646 prefers (RFC 2781 Section 3.1).
+// Encode codes strictly UCS2: it returns an error for a rune it cannot code,
+// rather than altering the text.
 //
 // Handsets send a character above U+FFFF, such as an emoji, in user data
 // coded in UCS2 as UTF-16 (RFC 2781): a surrogate pair of two 16-bit units,
@@ -31,7 +32,7 @@ import (
 	"unicode/utf16"
 )
 
-// Decode converts big-endian UTF-16, as RFC 2781 defines it, into an array of
+// Decode converts big-endian UTF-16, as RFC 2781 describes it, into an array of
 // runes.
 //
 // That reads UCS2, of 3GPP TS 23.038 Section 6.2.3, in which each character
@@ -126,7 +127,7 @@ func Encode(src []rune) ([]byte, error) {
 }
 
 // EncodeUTF16 converts an array of runes into big-endian UTF-16, as RFC 2781
-// defines it, two bytes per code unit.
+// describes it, two bytes per code unit.
 //
 // A rune up to U+FFFF is one code unit and a rune above it is a surrogate
 // pair, so it takes four bytes (RFC 2781 Section 2.1). The code units are
@@ -222,7 +223,10 @@ type ErrUnencodable struct {
 }
 
 func (e ErrUnencodable) Error() string {
-	return fmt.Sprintf("ucs2: %q (%U) at index %d has no UCS2 encoding, as it is above U+FFFF", e.Rune, e.Rune, e.Index)
+	if e.Rune > maxBMP && e.Rune <= unicode.MaxRune {
+		return fmt.Sprintf("ucs2: %q (%U) at index %d has no UCS2 encoding, as it is above U+FFFF", e.Rune, e.Rune, e.Index)
+	}
+	return fmt.Sprintf("ucs2: rune %s at index %d has no UCS2 encoding", runeName(e.Rune), e.Index)
 }
 
 // ErrDanglingSurrogate indicates the byte array being decoded ends with a high

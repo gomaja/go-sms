@@ -150,7 +150,7 @@ type TPDU struct {
 	// For AlphaUCS2, UD is an array of UCS2 characters packed into a byte
 	// array in Big Endian.
 	//  These have NOT been converted to the corresponding UTF8.
-	//  Use the ucs2 package to convert to UTF8.
+	//  Use the ucs2 package to convert to runes.
 	// For Alpha8Bit, UD contains the raw octets.
 	// For compressed data, as indicated by the DCS, UD contains the compressed
 	// octets, as defined in 3GPP TS 23.042, whatever the Alphabet.

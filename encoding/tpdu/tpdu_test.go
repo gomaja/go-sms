@@ -2498,8 +2498,8 @@ func unhex(t testing.TB, s string) []byte {
 	return b
 }
 
-// utf16BE codes s as UCS2 user data that holds characters above U+FFFF is
-// coded: big-endian UTF-16, with each such character a surrogate pair.
+// utf16BE codes s as user data coded in UCS2 that holds characters above
+// U+FFFF: big-endian UTF-16, with each such character a surrogate pair.
 func utf16BE(t testing.TB, s string) []byte {
 	t.Helper()
 	b, err := ucs2.EncodeUTF16([]rune(s))

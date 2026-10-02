@@ -238,6 +238,16 @@ func TestErrUnencodable(t *testing.T) {
 		ucs2.ErrUnencodable{Index: 2, Rune: 0x1f600}.Error())
 	assert.Equal(t, "ucs2: '\\U0010ffff' (U+10FFFF) at index 0 has no UCS2 encoding, as it is above U+FFFF",
 		ucs2.ErrUnencodable{Index: 0, Rune: 0x10ffff}.Error())
+	// Encode only reports a character above U+FFFF, but an error built by
+	// hand may hold any value, which the message must not misdescribe.
+	assert.Equal(t, "ucs2: rune U+0000 at index 0 has no UCS2 encoding",
+		ucs2.ErrUnencodable{}.Error())
+	assert.Equal(t, "ucs2: rune U+FFFF at index 1 has no UCS2 encoding",
+		ucs2.ErrUnencodable{Index: 1, Rune: 0xffff}.Error())
+	assert.Equal(t, "ucs2: rune -1 at index 2 has no UCS2 encoding",
+		ucs2.ErrUnencodable{Index: 2, Rune: -1}.Error())
+	assert.Equal(t, "ucs2: rune U+110000 at index 3 has no UCS2 encoding",
+		ucs2.ErrUnencodable{Index: 3, Rune: 0x110000}.Error())
 }
 
 func TestErrDanglingSurrogate(t *testing.T) {
