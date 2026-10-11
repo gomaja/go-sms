@@ -202,6 +202,12 @@ func TestUnmarshalReuse(t *testing.T) {
 func TestMarshalBinary(t *testing.T) {
 	patterns := []testPattern{
 		{
+			"present smsc without digits", "",
+			&pdumode.SMSCAddress{Address: tpdu.Address{TOA: 0x91}, Present: true},
+			[]byte{0x01, 0x02},
+			tpdu.NewEncodeError("addr", tpdu.ErrInvalid),
+		},
+		{
 			"empty",
 			"00",
 			&pdumode.SMSCAddress{},
@@ -259,6 +265,12 @@ func TestMarshalBinary(t *testing.T) {
 func TestMarshalHexString(t *testing.T) {
 	patterns := []testPattern{
 		{
+			"present smsc without digits", "",
+			&pdumode.SMSCAddress{Address: tpdu.Address{TOA: 0x91}, Present: true},
+			[]byte{0x01, 0x02},
+			tpdu.NewEncodeError("addr", tpdu.ErrInvalid),
+		},
+		{
 			"empty",
 			"00",
 			&pdumode.SMSCAddress{},
@@ -297,7 +309,8 @@ func TestMarshalHexString(t *testing.T) {
 
 // FuzzUnmarshalBinary checks that a PDU decodes as its SMSC field followed
 // by the TPDU, and that a decoded PDU marshals to a PDU that decodes to the
-// same value, with only bit 7 of the SMSC TOA set.
+// same value, with only bit 7 of the SMSC TOA set, unless its present SMSC
+// address has no digits (TS 24.011 Sections 8.2.5.1 and 8.2.5.2).
 func FuzzUnmarshalBinary(f *testing.F) {
 	for _, s := range smscSeeds {
 		f.Add(s)
@@ -320,6 +333,11 @@ func FuzzUnmarshalBinary(f *testing.F) {
 		require.Equal(t, hex.EncodeToString(src[n:]), hex.EncodeToString(p.TPDU))
 
 		b, err := p.MarshalBinary()
+		if p.SMSC.Present && p.SMSC.Addr == "" {
+			require.Equal(t, tpdu.NewEncodeError("addr", tpdu.ErrInvalid), err)
+			require.Nil(t, b)
+			return
+		}
 		require.NoError(t, err)
 		q, err := pdumode.UnmarshalBinary(b)
 		require.NoError(t, err)
@@ -336,7 +354,8 @@ func FuzzUnmarshalBinary(f *testing.F) {
 
 // FuzzUnmarshalHexString checks that decoding a hex string gives the same
 // result as decoding its binary form, and that MarshalHexString gives a
-// string that decodes to the same PDU, with only bit 7 of the SMSC TOA set.
+// string that decodes to the same PDU, with only bit 7 of the SMSC TOA set,
+// unless its present SMSC address has no digits (TS 24.011 8.2.5.1 and 8.2.5.2).
 func FuzzUnmarshalHexString(f *testing.F) {
 	for _, s := range smscSeeds {
 		f.Add(hex.EncodeToString(s))
@@ -362,6 +381,11 @@ func FuzzUnmarshalHexString(f *testing.F) {
 		}
 
 		h, err := p.MarshalHexString()
+		if p.SMSC.Present && p.SMSC.Addr == "" {
+			require.Equal(t, tpdu.NewEncodeError("addr", tpdu.ErrInvalid), err)
+			require.Empty(t, h)
+			return
+		}
 		require.NoError(t, err)
 		var q pdumode.PDU
 		require.NoError(t, q.UnmarshalHexString(h))

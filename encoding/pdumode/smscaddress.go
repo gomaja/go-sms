@@ -25,32 +25,36 @@ import (
 // place, in which case the SMSC set with +CSCA is used and no TOA is present
 // (3GPP TS 27.005 Section 3.3.1 and Section 4.3). The zero value is that
 // absent address. An address with digits is always present, and Present
-// marks an address without digits as present, so that a field holding only a
-// TOA is kept distinct from the absent address.
+// records a received address without digits for inspection. Such an address
+// cannot be marshalled: TS 24.011 Sections 8.2.5.1 and 8.2.5.2 give a
+// non-zero length octet a minimum value of 2, counting the TOA and digits.
 type SMSCAddress struct {
 	tpdu.Address
 
 	// Present indicates the address is present even if Addr is empty.
 	//
-	// UnmarshalBinary sets it for any non-zero length octet.
+	// UnmarshalBinary sets it for any non-zero length octet, including a
+	// TOA-only or fill-only field. MarshalBinary rejects it without digits.
 	Present bool
 }
 
 // maxSMSCAddressLen is the largest value of the SMSC address length octet.
 //
-// The SMSC address is an LV element of 1-12 octets, counting the length
-// octet itself (3GPP TS 27.005 Section 2.4.1.8, RP-Destination-Address, and
-// Sections 2.5.2.5 and 2.5.2.6, "The address is of variable length, 1-12
-// octets"). So the length octet counts at most 11 octets, the TOA and 10
-// octets of digits, which hold 20 digits.
+// 3GPP TS 24.011 Sections 8.2.5.1 and 8.2.5.2 give "the maximum value is 11"
+// for the RP-Originator and RP-Destination Address, so the length octet
+// counts at most the TOA and 10 octets of digits, which hold 20 digits.
 const maxSMSCAddressLen = 11
 
 // MarshalBinary marshals the SMSC Address into binary.
 //
 // An absent address, one with no digits and Present not set, is marshalled as
-// a single zero length octet, with no TOA. Any other address is marshalled as
-// the length octet, the TOA and the digits, so an address with a TOA but no
-// digits has a length of 1. The TOA is always marshalled with bit 7 set.
+// a single zero length octet, with no TOA. A present address without digits
+// returns ErrInvalid. 3GPP TS 27.005 Section 3.1 defines <pdu> as "3GPP TS
+// 24.011 [6] SC address followed by 3GPP TS 23.040 [3] TPDU". TS 24.011
+// Sections 8.2.5.1 and 8.2.5.2 say "the minimum value of the length octet is
+// 2 and the maximum value is 11" in the direction that carries an address.
+// Otherwise the address is marshalled as the length octet, the TOA and the
+// digits. The TOA is always marshalled with bit 7 set.
 //
 // An address longer than 20 digits returns an error, as its length would not
 // fit the field.
@@ -59,7 +63,10 @@ func (a *SMSCAddress) MarshalBinary() (dst []byte, err error) {
 	if err != nil {
 		return nil, tpdu.NewEncodeError("addr", err)
 	}
-	if len(addr) == 0 && !a.Present {
+	if len(addr) == 0 {
+		if a.Present {
+			return nil, tpdu.NewEncodeError("addr", tpdu.ErrInvalid)
+		}
 		return []byte{0}, nil
 	}
 	l := len(addr) + 1 // in octets and includes the toa

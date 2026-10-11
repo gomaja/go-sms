@@ -52,12 +52,12 @@ func TestAddressMarshalBinary(t *testing.T) {
 		},
 		{"alpha",
 			tpdu.Address{Addr: "messages", TOA: 0xd1},
-			[]byte{14, 0xd1, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0xE7},
+			[]byte{14, 0xd0, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0xE7},
 			nil,
 		},
 		{"alpha odd",
 			tpdu.Address{Addr: "message", TOA: 0xd1},
-			[]byte{13, 0xd1, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
+			[]byte{13, 0xd0, 0xED, 0xF2, 0x7C, 0x1E, 0x3E, 0x97, 0x01},
 			nil,
 		},
 		{"alpha Vodafone",
@@ -110,12 +110,12 @@ func TestAddressMarshalBinary(t *testing.T) {
 		// 9.1.2.5, TS 23.038 6.2.1.1).
 		{"alpha euro",
 			tpdu.Address{Addr: "a euro €32", TOA: 0xd1},
-			[]byte{20, 0xd1, 0x61, 0x50, 0xb9, 0x2e, 0x7f, 0x83, 0x36, 0xe5, 0x99, 0x0c},
+			[]byte{20, 0xd0, 0x61, 0x50, 0xb9, 0x2e, 0x7f, 0x83, 0x36, 0xe5, 0x99, 0x0c},
 			nil,
 		},
 		{"alpha bar",
 			tpdu.Address{Addr: "a bar | ", TOA: 0xd1},
-			[]byte{16, 0xd1, 0x61, 0x90, 0x38, 0x2c, 0x07, 0x6d, 0x80, 0x20},
+			[]byte{16, 0xd0, 0x61, 0x90, 0x38, 0x2c, 0x07, 0x6d, 0x80, 0x20},
 			nil,
 		},
 		{"max alpha escape",
@@ -479,7 +479,9 @@ func oddFill(src []byte) bool {
 // number of septets, or non-zero fill bits, carry no information, and an
 // escape that has no character is read as a substitute (3GPP TS 23.038
 // Sections 6.2.1 and 6.2.1.1). None is retained, so such an address must
-// re-marshal to one that decodes to the same Address, and is no longer.
+// re-marshal to one that decodes to the same Address, and is no longer,
+// except that an alphanumeric TOA has its numbering plan cleared (TS 23.040
+// 9.1.2.5: "bits 3,2,1,0 are reserved and shall be transmitted as 0000").
 func FuzzAddressUnmarshalBinary(f *testing.F) {
 	for _, seed := range [][]byte{
 		{0, 0},
@@ -526,8 +528,38 @@ func FuzzAddressUnmarshalBinary(f *testing.F) {
 		}
 		var ra tpdu.Address
 		rn, err := ra.UnmarshalBinary(b)
-		if err != nil || rn != len(b) || ra != a {
+		if err != nil || rn != len(b) || ra != normalisedAddress(a) {
 			t.Fatalf("% x: %+v remarshalled to % x, decoded as %+v, %v", src[:n], a, b, ra, err)
 		}
 	})
+}
+
+// normalisedAddress is the address expected after marshaling, as 3GPP
+// TS 23.040 Section 9.1.2.5 says "For Type-of-number = 101 bits 3,2,1,0 are
+// reserved and shall be transmitted as 0000."
+func normalisedAddress(a tpdu.Address) tpdu.Address {
+	if a.TypeOfNumber() == tpdu.TonAlphanumeric {
+		a.TOA &^= 0x0f
+	}
+	return a
+}
+
+func TestAlphanumericNumberingPlan(t *testing.T) {
+	for toa := 0; toa <= 255; toa++ {
+		for _, text := range []string{"", "1"} {
+			a := tpdu.Address{TOA: byte(toa), Addr: text}
+			before := a
+			b, err := a.MarshalBinary()
+			require.NoError(t, err)
+			want := normalisedAddress(a)
+			assert.Equal(t, want.TOA, b[1], "toa %02x", toa)
+			assert.Equal(t, before, a)
+			// Decoding preserves every TOA bit as received.
+			b[1] = byte(toa)
+			var decoded tpdu.Address
+			_, err = decoded.UnmarshalBinary(b)
+			require.NoError(t, err)
+			assert.Equal(t, before, decoded)
+		}
+	}
 }
