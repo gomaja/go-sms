@@ -36,14 +36,22 @@ type Collector struct {
 	handler func([]*tpdu.TPDU, error)
 
 	// settling counts the reassembly timers that may yet call the handler,
-	// which Close waits for.
-	settling sync.WaitGroup
+	// which Close waits for. It is a *sync.WaitGroup, held as a waitGroup so
+	// that tests can check the deltas given to Add.
+	settling waitGroup
 
 	// done is closed once Close has settled every reassembly.
 	done chan struct{}
 
 	// lastID is the id of the last pipe created.
 	lastID uint64
+}
+
+// waitGroup is the part of sync.WaitGroup that a Collector uses.
+type waitGroup interface {
+	Add(delta int)
+	Done()
+	Wait()
 }
 
 // CollectorOption alters the behaviour of a Collector.
@@ -178,6 +186,7 @@ func (c *Collector) init() {
 	}
 	c.pipes = make(map[pipeKey]*pipe)
 	c.done = make(chan struct{})
+	c.settling = new(sync.WaitGroup)
 	if c.timeout == 0 {
 		c.timeout = DefaultReassemblyTimeout
 	}

@@ -340,8 +340,9 @@ All tools report errors on stderr and exit with status 0 on success.
 smssubmit, smsdeliver, smsdecode and smscounter exit with status 1 if they
 cannot process their input or write their output, and 2 if their arguments
 are not valid. charsets takes no input or arguments and exits with status 1
-if it cannot write its output. As is usual for command line tools, writing to
-a pipe whose reader has gone ends any of them with SIGPIPE instead.
+if it cannot write its output. On Unix-like systems, as is usual for command
+line tools, writing to a pipe whose reader has gone ends them with SIGPIPE
+instead.
 
 ### Submit Encoding
 

@@ -675,7 +675,8 @@ func TestConcatInfo(t *testing.T) {
 }
 
 func TestDecodeUserData(t *testing.T) {
-	// Also tests NewUDDecoder, AddLockingCharset and AddShiftCharset
+	// Also tests the WithCharset, WithLockingCharset and WithShiftCharset
+	// decode options.
 	patterns := []struct {
 		name    string
 		ud      tpdu.UserData

@@ -402,8 +402,8 @@ func (o AllCharsetsOption) applyEncodeOption(e udEncodeConfig) udEncodeConfig {
 // decode.
 //
 // This is equivalent to calling WithCharset with all possible
-// NationalLanguageIdentifiers, in increasing order, so the tables of earlier
-// options are tried first when encoding.
+// NationalLanguageIdentifiers, in increasing order, so in each pass of
+// EncodeUserData the tables of earlier options are tried first.
 var WithAllCharsets = AllCharsetsOption{}
 
 // WithDefaultCharset makes only the default character set available to
@@ -485,8 +485,11 @@ const (
 // and so may need to be segmented into several concatenated messages. Encode
 // attempts to pick the most compact alphabet for the given message. It assumes
 // GSM7 is the most compact, and, if the default character set is insufficient,
-// tries combinations of supported language character sets, in the order they
-// were added to the UDEncoder.
+// tries the national language tables the options make available, in three
+// passes: each locking shift table, with the default extension table, then
+// each single shift table, with the default alphabet, then each table as both.
+// Each pass takes the tables in the order the options added them, and the
+// first that codes the whole message is used.
 //
 // This is not optimal as it performs language selection on the whole message,
 // rather than determining the best for each segment in turn. (which is totally

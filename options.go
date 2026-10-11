@@ -88,8 +88,7 @@ var (
 	AsRPError = rpMessageOption{tpdu.RPError}
 
 	// WithAllCharsets specifies that all character sets are available for
-	// encoding or decoding, after any added by earlier options, which are
-	// tried first when encoding.
+	// encoding or decoding, after any added by earlier options.
 	//
 	// This is the default policy for decoding, when no charset option is
 	// given.
