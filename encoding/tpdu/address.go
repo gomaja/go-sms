@@ -67,8 +67,11 @@ const maxAddressLength = 20
 //
 // An address longer than 20 digits, or 11 septets, cannot be encoded and
 // results in an ErrOverlength error.
-// The TOA is encoded as is, so an empty Address encodes to a zero length
-// address with a zero TOA.
+// The TOA is encoded as held, except for an alphanumeric address:
+// 3GPP TS 23.040 Section 9.1.2.5 says "For Type-of-number = 101 bits 3,2,1,0
+// are reserved and shall be transmitted as 0000." Its numbering plan is
+// cleared on marshal; decoding keeps the TOA as received. An empty Address
+// encodes to a zero length address with a zero TOA.
 func (a *Address) MarshalBinary() (dst []byte, err error) {
 	ton := a.TypeOfNumber()
 	var addr []byte
@@ -102,7 +105,11 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 		l = len(a.Addr)
 	}
 	dst = make([]byte, 0, l+2)
-	dst = append(dst, byte(l), a.TOA)
+	toa := a.TOA
+	if ton == TonAlphanumeric {
+		toa &^= 0x0f
+	}
+	dst = append(dst, byte(l), toa)
 	dst = append(dst, addr...)
 	return dst, nil
 }
@@ -265,7 +272,7 @@ const (
 	TonExtension
 )
 
-// NumberingPlan corresponds to bits 4,3,2,1 of the Address TOA field.
+// NumberingPlan corresponds to bits 3,2,1,0 of the Address TOA field.
 // i.e. 1yyyxxxx
 // as defined in 3GPP TS 23.040 Section 9.1.2.5
 type NumberingPlan int

@@ -106,14 +106,29 @@ type TPDU struct {
 
 	// SCTS contains the TP-SCTS Service Center Time Stamp field.
 	//
-	// The SCTS timestamp indicates the time the SMS was sent.
-	// The time is the originator's local time, the timezone of which may
-	// differ from the receiver's.
+	// In SMS-DELIVER it is the arrival time at the SC's SM-TL entity
+	// (3GPP TS 23.040 Section 3.2.2); Section 9.2.2.1 calls it "Parameter
+	// identifying time when the SC received the message."
+	// In SMS-SUBMIT-REPORT, Section 9.2.2.2a calls it "Parameter identifying
+	// the time when the SC received the SMS-SUBMIT"; in SMS-STATUS-REPORT,
+	// Section 9.2.2.3 calls it "Parameter identifying time when the SC
+	// received the previously sent SMS-SUBMIT".
+	//
+	// It is the SC's local time, kept as received. Section 9.2.3.11 says
+	// these timestamps "represent the time local to the sending entity"
+	// and "Messages shall be stored as received without change to any time
+	// contained therein."
 	//
 	// Only applies to SMS-DELIVER, SMS-SUBMIT-REPORT and SMS-STATUS-REPORT
 	SCTS Timestamp
 
 	// DT contains the TP-DT Discharge Time field.
+	//
+	// It gives the time of delivery, the last delivery attempt or disposal
+	// by the SC, according to TP-ST (3GPP TS 23.040 Section 9.2.3.13):
+	// "In the case of "transaction completed" the time shall be the time
+	// of the completion of the transaction." Like SCTS it is the SC's local
+	// time, kept as received (Section 9.2.3.11).
 	//
 	// Only applies to SMS-STATUS-REPORT
 	DT Timestamp
@@ -554,7 +569,9 @@ func (t *TPDU) SetSmsType(st SmsType) error {
 // data and the TP-CD of an SMS-COMMAND, it is the number of octets, and for
 // UCS2 it is even.
 //
-// The size is negative if the UDH alone does not fit in the TPDU.
+// The size is negative if the TPDU cannot be marshalled even without UD, as
+// when the UDH does not fit, or the other fields of a report take more than
+// the TPDU can hold. It is 0 for a report they fill exactly.
 func (t *TPDU) UDBlockSize() int {
 	if t.keepsIgnoredUDH() {
 		return t.blockSize(len(t.ignoredUDH))
@@ -591,6 +608,14 @@ func udhOctets(udh UserDataHeader) int {
 // udho octets.
 func (t *TPDU) blockSize(udho int) int {
 	room := t.maxUDOctets()
+	// With no header or short message, a report can omit its TP-UDL:
+	// 3GPP TS 23.040 Section 9.2.3.27: "If the TP-UDL bit is set to zero
+	// then by definition neither the TP-UDL field or the TP-UD field can be
+	// present." Empty UD still fits when only that octet would exceed
+	// the defined-field budget.
+	if room == -1 && udho == 0 && !t.PI.UDL() {
+		return 0
+	}
 	switch t.udCoding() {
 	case Alpha7Bit:
 		// 3GPP TS 23.040 Section 9.2.3.16: the TP-UDL counts the septets
@@ -613,50 +638,55 @@ func (t *TPDU) blockSize(udho int) int {
 // messages to be transferred by means of the SM MT or SM MO contain up to 140
 // octets", as does 3GPP TS 23.038 Section 4.
 //
-// For the others it is the TP-UD, or TP-CD, of the layout in 3GPP TS 23.040
-// Section 9.2.2: "0 to 159" for an SMS-DELIVER-REPORT for RP-ACK and "0 to
-// 158" for RP-ERROR (9.2.2.1a), and "0 to 152" and "0 to 151" for an
-// SMS-SUBMIT-REPORT (9.2.2.2a). The layouts show a TP-PI of one octet, and
-// any extension octets are taken from the TP-UD.
+// For reports it is the lesser of the layout's TP-UD maximum and the room
+// left in maxDefinedTPDULen by the fields present, including the TP-UDL.
+// 3GPP TS 23.040 Section 9.2.2.1a gives "0 to 159" for an SMS-DELIVER-REPORT
+// for RP-ACK and "0 to 158" for RP-ERROR; Section 9.2.2.2a gives "0 to 152"
+// and "0 to 151" for an SMS-SUBMIT-REPORT. A TP-PI extension uses room left
+// by an absent TP-PID or TP-DCS before reducing the TP-UD maximum.
 //
 // For an SMS-STATUS-REPORT, Section 9.2.2.3 gives "0 to 143" and says "In
 // order to achieve the maximum stated above (143 octets), the TP-RA field
 // must have a length of 2 octets and TP-PID and TP-DCS must not be present".
 // For an SMS-COMMAND, Section 9.2.2.4 gives "0 to 156" and says "In order to
 // achieve the maximum stated above (156 octets), the TP-DA field must have a
-// length of 2 octets". So each octet of those fields is taken from the TP-UD
-// or TP-CD. Section 9.2.3.21 gives a TP-CD maximum of 157 octets, which no
-// TP-DA, of at least 2 octets, leaves room for.
+// length of 2 octets". Section 9.2.3.21 gives a TP-CD maximum of 157 octets,
+// which no TP-DA, of at least 2 octets, leaves room for.
+//
+// A negative result means the fields before the TP-UD exceed the budget.
+// A report without a TP-UDL needs one fewer octet, so it still fits at -1.
 func (t *TPDU) maxUDOctets() int {
-	var room int
+	var limit, prefix int
 	switch t.SmsType() {
 	case SmsSubmit, SmsDeliver:
-		room = MaxUDL
-	case SmsDeliverReport:
-		room = 159 - len(t.PIExt)
-		if t.RPMessage == RPError {
-			room = 158 - len(t.PIExt)
+		return MaxUDL
+	case SmsDeliverReport, SmsSubmitReport:
+		limit = 159
+		prefix = 3 + len(t.PIExt) // first octet, TP-PI and TP-UDL
+		if t.SmsType() == SmsSubmitReport {
+			limit = 152
+			prefix += 7 // TP-SCTS
 		}
-	case SmsSubmitReport:
-		room = 152 - len(t.PIExt)
 		if t.RPMessage == RPError {
-			room = 151 - len(t.PIExt)
+			limit--
+			prefix++ // TP-FCS
 		}
 	case SmsStatusReport:
-		room = 143 - (addressOctets(&t.RA) - 2) - len(t.PIExt)
-		if t.PI.PID() || t.PID != 0 {
-			room--
-		}
-		if t.PI.DCS() || t.DCS != 0 {
-			room--
-		}
+		limit = 143
+		// First octet, TP-MR, TP-RA, TP-SCTS, TP-DT, TP-ST, TP-PI, TP-UDL.
+		prefix = 19 + addressOctets(&t.RA) + len(t.PIExt)
 	case SmsCommand:
-		room = 156 - (addressOctets(&t.DA) - 2)
+		return maxDefinedTPDULen - 6 - addressOctets(&t.DA)
+	default:
+		return 0
 	}
-	// The room is negative if the TP-PI extension octets alone make the
-	// TPDU longer than the 164 octets a TPDU may be (3GPP TS 27.005 Section
-	// 2.5.2.6, "The Short Message is of variable length, 6-164 octets").
-	return room
+	if t.PI.PID() || t.PID != 0 {
+		prefix++
+	}
+	if t.PI.DCS() || t.DCS != 0 {
+		prefix++
+	}
+	return min(limit, maxDefinedTPDULen-prefix)
 }
 
 // addressOctets returns the number of octets the address takes in a TPDU,
@@ -787,7 +817,8 @@ func (t *TPDU) UDHL() int {
 //     marshalled as zero (Sections 9.2.2.1 and 9.2.3.24).
 //   - The TP-UDL of GSM 7 bit user data that holds only a UDH, if it counts
 //     fewer septets than the UDH and its fill bits, which is marshalled as
-//     the count Section 9.2.3.16 gives.
+//     the count Section 9.2.3.16 gives. UnmarshalBinary refuses such data
+//     if the header and its fill bits would exceed the TP-UD room.
 //   - An address in another form than the one it marshals to: one with a
 //     fill semi-octet, 1111, before its last, or with a last fill semi-octet
 //     other than 1111 (Section 9.1.2.3), or an alphanumeric one whose
@@ -795,6 +826,9 @@ func (t *TPDU) UDHL() int {
 //     unused bits are not zero (Section 9.1.2.5), or that has an escape with
 //     no character, which is decoded as a substitute (3GPP TS 23.038
 //     Sections 6.2.1 and 6.2.1.1), as Address.UnmarshalBinary describes.
+//   - The numbering plan of an alphanumeric address, which is marshalled as
+//     0000 (Section 9.1.2.5: "bits 3,2,1,0 are reserved and shall be
+//     transmitted as 0000"), as Address.MarshalBinary describes.
 //
 // MarshalBinary does not change the TPDU.
 func (t *TPDU) MarshalBinary() (dst []byte, err error) {
@@ -943,7 +977,11 @@ func (t *TPDU) piOctets() []byte {
 // report, those that follow the TP-PI and its TP-SCTS, that are announced by
 // the pi.
 func (t *TPDU) marshalOptionals(pi PI) ([]byte, error) {
-	if t.maxUDOctets() < 0 {
+	room := t.maxUDOctets()
+	if !pi.UDL() {
+		room++ // the TP-UDL is absent
+	}
+	if room < 0 {
 		return nil, NewEncodeError("pi", ErrOverlength)
 	}
 	var b []byte
@@ -1063,7 +1101,15 @@ func (t *TPDU) marshalSubmitReport() ([]byte, error) {
 // (3GPP TS 23.040 Sections 9.2.2.1a and 9.2.2.2a), so whatever follows the
 // TP-FCS is accepted, and FailureCause returns 0xFF. Those octets are kept,
 // and MarshalBinary writes them back while the fields they would have
-// decoded to are left empty.
+// decoded to are left empty. The whole report is limited to 232 octets by
+// 3GPP TS 24.011 Section 8.2.5.3, Figure 8.7: "TPDU Maximum length 232
+// octets". This also bounds a report with octets discarded after its TP-UD
+// under TS 23.040 Section 9.2.3.27; its defined fields must still fit the
+// 164-octet budget of the layouts in Section 9.2.2.
+//
+// Header-only GSM 7 bit user data is refused with ErrOverlength if the
+// header and its fill bits, counted by 3GPP TS 23.040 Section 9.2.3.16,
+// would exceed the TP-UD room when MarshalBinary writes them back.
 //
 // In the case of error the TPDU will be partially unmarshalled, up to the
 // point that the decoding error was detected.
@@ -1152,9 +1198,17 @@ func (t *TPDU) unmarshalDeliver(src []byte) error {
 }
 
 // checkTrailing returns an error if src holds octets beyond the end of the
-// TPDU at ri, unless they are to be discarded.
+// TPDU at ri, unless they are to be discarded. src excludes the first
+// octet. Defined fields must fit maxDefinedTPDULen even when discarded
+// octets follow, and the whole TPDU must fit maxRPTPDULen.
 func checkTrailing(src []byte, ri int, discard bool) error {
-	if ri < len(src) && !discard {
+	switch {
+	case 1+ri > maxDefinedTPDULen:
+		// The room for the TP-UD, or TP-CD, assumes an address of the length
+		// it marshals to, which one received can be longer than, so the
+		// octets past the budget are those that follow it.
+		return NewDecodeError("ud", maxDefinedTPDULen-1, ErrOverlength)
+	case 1+len(src) > maxRPTPDULen, ri < len(src) && !discard:
 		return NewDecodeError("ud", ri, ErrOverlength)
 	}
 	return nil
@@ -1177,10 +1231,19 @@ func (t *TPDU) unmarshalPI(src []byte, ri int) (int, error) {
 		if len(src) <= ri {
 			return ri, NewDecodeError("pi", ri, ErrUnderflow)
 		}
+		// The TP-PI is one of the fields that must fit the budget, so a
+		// chain of extension octets that runs past it is refused there.
+		if 1+ri >= maxDefinedTPDULen {
+			return ri, NewDecodeError("pi", ri, ErrOverlength)
+		}
 		t.PIExt = append(t.PIExt, src[ri])
 		ext = src[ri]&PiExt != 0
 	}
-	if t.maxUDOctets() < 0 {
+	room := t.maxUDOctets()
+	if !t.PI.UDL() {
+		room++ // the TP-UDL is absent
+	}
+	if room < 0 {
 		return ri, NewDecodeError("pi", ri, ErrOverlength)
 	}
 	return ri, nil
@@ -1276,9 +1339,18 @@ func (t *TPDU) unmarshalFCS(src []byte) (int, error) {
 	}
 }
 
-// maxTPDULen is the length of the longest TPDU: "The Short Message is of
-// variable length, 6-164 octets" (3GPP TS 27.005 Section 2.5.2.6).
-const maxTPDULen = 164
+// maxDefinedTPDULen is the budget for the fields defined by the layouts in
+// 3GPP TS 23.040 Section 9.2.2: SMS-SUBMIT takes 1+1+12+1+1+7+1+140 octets;
+// the reports take 5+159, 6+158, 12+152 or 13+151. Section 9.2.2.3 says
+// "The maximum guaranteed length of TP-UD is 131 octets" (33+131), and
+// Section 9.2.2.4 says "The maximum guaranteed length of TP-CD is 146
+// octets" (18+146). Each totals 164 octets.
+const maxDefinedTPDULen = 164
+
+// maxRPTPDULen is the RP transport bound, including unexamined or discarded
+// octets: 3GPP TS 24.011 Section 8.2.5.3, Figure 8.7, "TPDU Maximum length
+// 232 octets".
+const maxRPTPDULen = 232
 
 // unmarshalUnexamined keeps the octets that follow the TP-FCS, at src[ri:],
 // of a report whose fields are not examined, and reports whether it is one.
@@ -1289,7 +1361,7 @@ func (t *TPDU) unmarshalUnexamined(src []byte, ri int) (bool, error) {
 	if !t.unusedReportBits() {
 		return false, nil
 	}
-	if 1+len(src) > maxTPDULen {
+	if 1+len(src) > maxRPTPDULen {
 		// the octets past the limit are in the fields that start with the
 		// TP-PI, which are not examined.
 		return true, NewDecodeError("pi", ri, ErrOverlength)
@@ -1461,6 +1533,13 @@ func (t *TPDU) decodeUserData(src []byte) (int, error) {
 		ri += udhl
 	}
 	if ri == len(src) {
+		// 3GPP TS 23.040 Section 9.2.3.16 counts "the number of septets
+		// in the TP-User-Data-Header field (including any padding)". A
+		// header off the septet boundary needs another octet for its
+		// fill bits when marshalled, even with no short message.
+		if alphabet == Alpha7Bit && udhl%7 != 0 && udhl+1 > t.maxUDOctets() {
+			return 0, NewDecodeError("udhl", 1, ErrOverlength)
+		}
 		t.UDH = udh
 		return len(src), nil
 	}

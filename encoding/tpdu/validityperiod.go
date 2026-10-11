@@ -292,7 +292,9 @@ const (
 	EvpfRelative
 
 	// EvpfRelativeSeconds indicates the VP is stored in relative format as an
-	// integer number of seconds, from 0 to 255.
+	// integer number of seconds, from 1 to 255. 3GPP TS 23.040 Section
+	// 9.2.3.12.3: "A TP-VP value of zero is undefined and reserved for future
+	// use."
 	EvpfRelativeSeconds
 
 	// EvpfRelativeHHMMSS indicates the VP is stored in relative format as a

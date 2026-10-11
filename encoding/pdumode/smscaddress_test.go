@@ -58,8 +58,8 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 				Address: tpdu.Address{TOA: 0x91},
 				Present: true,
 			},
-			[]byte{1, 0x91},
 			nil,
+			tpdu.NewEncodeError("addr", tpdu.ErrInvalid),
 		},
 		{
 			"absent with toa",
@@ -95,8 +95,8 @@ func TestSMSCAddressMarshalBinary(t *testing.T) {
 		{
 			"only zero toa",
 			pdumode.SMSCAddress{Present: true},
-			[]byte{1, 0x80},
 			nil,
+			tpdu.NewEncodeError("addr", tpdu.ErrInvalid),
 		},
 		{
 			"number alphabet",
@@ -332,7 +332,9 @@ func TestSMSCAddressUnmarshalBinary(t *testing.T) {
 
 // TestSMSCAddressRoundTrip checks that a decoded address marshals back to
 // the same field, and in particular that an address with a TOA but no digits
-// is not turned into a zero length, which selects the default SMSC.
+// is kept for inspection but cannot marshal to length 1 or silently select
+// the default SMSC with length 0 (TS 24.011 8.2.5.1 and 8.2.5.2; TS 27.005
+// 4.3: "the SMSC address set with command Service Centre Address +CSCA is used").
 func TestSMSCAddressRoundTrip(t *testing.T) {
 	patterns := []struct {
 		name string
@@ -340,15 +342,15 @@ func TestSMSCAddressRoundTrip(t *testing.T) {
 		out  []byte
 	}{
 		{"default", []byte{0}, []byte{0}},
-		{"only toa", []byte{1, 0x91}, []byte{1, 0x91}},
-		{"only unknown toa", []byte{1, 0x81}, []byte{1, 0x81}},
-		{"only zero toa", []byte{1, 0x00}, []byte{1, 0x80}},
+		{"only toa", []byte{1, 0x91}, nil},
+		{"only unknown toa", []byte{1, 0x81}, nil},
+		{"only zero toa", []byte{1, 0x00}, nil},
 		{
 			"toa without bit 7",
 			[]byte{7, 0x11, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
 			[]byte{7, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
 		},
-		{"only fill", []byte{2, 0x91, 0xff}, []byte{1, 0x91}},
+		{"only fill", []byte{2, 0x91, 0xff}, nil},
 		{
 			"number",
 			[]byte{7, 0x91, 0x16, 0x04, 0x89, 0x56, 0x26, 0xf9},
@@ -362,12 +364,27 @@ func TestSMSCAddressRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, len(p.in), n)
 			b, err := a.MarshalBinary()
-			require.NoError(t, err)
+			if p.out == nil {
+				assert.Equal(t, tpdu.NewEncodeError("addr", tpdu.ErrInvalid), err)
+				assert.True(t, a.Present)
+				assert.Empty(t, a.Addr)
+				assert.Equal(t, p.in[1], a.TOA)
+			} else {
+				require.NoError(t, err)
+			}
 			assert.Equal(t, p.out, b)
 
 			pdu, err := pdumode.UnmarshalBinary(append(p.in, 0x01, 0x00))
 			require.NoError(t, err)
 			b, err = pdu.MarshalBinary()
+			if p.out == nil {
+				assert.Equal(t, tpdu.NewEncodeError("addr", tpdu.ErrInvalid), err)
+				assert.Nil(t, b)
+				h, err := pdu.MarshalHexString()
+				assert.Equal(t, tpdu.NewEncodeError("addr", tpdu.ErrInvalid), err)
+				assert.Empty(t, h)
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, append(p.out, 0x01, 0x00), b)
 		}
@@ -395,8 +412,9 @@ var smscSeeds = [][]byte{
 
 // FuzzSMSCAddressUnmarshalBinary checks which fields UnmarshalBinary accepts,
 // that a failed decode leaves the address empty, and that every decoded
-// address marshals to a field that decodes to the same address, with only
-// bit 7 of the TOA set.
+// address with digits marshals to a field that decodes to the same address,
+// with only bit 7 of the TOA set. A present address without digits cannot
+// marshal: TS 24.011 Sections 8.2.5.1 and 8.2.5.2 give a minimum length of 2.
 func FuzzSMSCAddressUnmarshalBinary(f *testing.F) {
 	for _, s := range smscSeeds {
 		f.Add(s)
@@ -439,6 +457,11 @@ func FuzzSMSCAddressUnmarshalBinary(f *testing.F) {
 		}
 
 		b, err := a.MarshalBinary()
+		if a.Present && a.Addr == "" {
+			require.Equal(t, tpdu.NewEncodeError("addr", tpdu.ErrInvalid), err)
+			require.Nil(t, b)
+			return
+		}
 		require.NoError(t, err)
 		var c pdumode.SMSCAddress
 		cn, err := c.UnmarshalBinary(b)

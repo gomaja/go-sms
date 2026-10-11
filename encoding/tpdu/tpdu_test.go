@@ -3542,7 +3542,7 @@ func udMaxPatterns() []udMaxPattern {
 		{"deliver report rp-ack", tpdu.TPDU{Direction: tpdu.MO}, 159},
 		{"deliver report rp-error", tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}, 158},
 		{"deliver report pid", tpdu.TPDU{Direction: tpdu.MO, PID: 0x7f}, 159},
-		{"deliver report ext pi", tpdu.TPDU{Direction: tpdu.MO, PIExt: []byte{0}}, 158},
+		{"deliver report ext pi", tpdu.TPDU{Direction: tpdu.MO, PIExt: []byte{0}}, 159},
 		{"submit report rp-ack", tpdu.TPDU{FirstOctet: 0x01}, 152},
 		{"submit report rp-error", tpdu.TPDU{FirstOctet: 0x01, RPMessage: tpdu.RPError}, 151},
 		{"status report", tpdu.TPDU{FirstOctet: 0x02}, 143},
@@ -3640,9 +3640,8 @@ func TestUDMaximaOnMarshal(t *testing.T) {
 }
 
 // TestLongPIExtension checks the TP-PI extension octets of a report are
-// bounded by the TPDU: "The Short Message is of variable length, 6-164
-// octets" (3GPP TS 27.005 Section 2.5.2.6), so those of an RP-ERROR
-// SMS-DELIVER-REPORT can take at most its 158 octets of TP-UD room.
+// bounded by the 164-octet budget of the layouts in 3GPP TS 23.040
+// Section 9.2.2, counting only the optional fields that are present.
 func TestLongPIExtension(t *testing.T) {
 	// first octet, TP-FCS, a TP-PI with every bit set, n extension octets
 	// of which the last has no extension bit, then TP-PID, TP-DCS and a
@@ -3673,7 +3672,7 @@ func TestLongPIExtension(t *testing.T) {
 	in = report(159)
 	err = d.UnmarshalBinary(in)
 	assert.ErrorIs(t, err, tpdu.ErrOverlength)
-	d = tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0x80, PIExt: bytes.Repeat([]byte{0x80}, 159)}
+	d = tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0x80, PIExt: bytes.Repeat([]byte{0x80}, 162)}
 	d.PIExt[len(d.PIExt)-1] = 0
 	_ = d.SetSmsType(tpdu.SmsDeliverReport)
 	_, err = d.MarshalBinary()
@@ -4215,9 +4214,9 @@ var unmarshalConfigs = []tpdu.TPDU{
 
 // FuzzUnmarshalBinary checks that UnmarshalBinary never panics, in either
 // direction and for either RP message, and that every TPDU it accepts
-// marshals, decodes back to an equal TPDU, and marshals to the octets it came
-// from, other than where 3GPP TS 23.040 lets them differ, as checked by
-// checkRemarshal.
+// marshals and decodes back with the same fields, except for the
+// alphanumeric numbering plan. Its octets are preserved other than where
+// 3GPP TS 23.040 lets them differ, as checked by checkRemarshal.
 func FuzzUnmarshalBinary(f *testing.F) {
 	for _, seed := range []string{
 		"",
@@ -4237,11 +4236,14 @@ func FuzzUnmarshalBinary(f *testing.F) {
 		srHead,
 		// reports for RP-ACK and RP-ERROR
 		"00 07 00 00 02 e834",
+		"40 04 b5 9e 70 9c" + strings.Repeat("aa", 156),
 		"00 d0 07 00 00 02 e834",
 		"01 04 51507132200523 02 e834",
 		"01 c0 04 51507132200523 02 e834",
 		// TP-PI extension and reserved bits
 		"00 81 80 00 7f",
+		"00 86 00 04 9f" + strings.Repeat("aa", 159),
+		"01 86 00 21 10 10 12 00 00 00 04 98" + strings.Repeat("aa", 152),
 		"00 14 01 41 de ad",
 		srHead + " 84 00 01 41",
 		srHead + " 0c 01 41 aa bb",
@@ -4255,10 +4257,13 @@ func FuzzUnmarshalBinary(f *testing.F) {
 		"07 04 91 3619 00 00 51507132200523 01 41",
 		// reports for RP-ERROR with unused bits set
 		"04 d0 07",
+		"04 d0" + strings.Repeat("aa", 230),
+		"04 d0" + strings.Repeat("aa", 231),
 		"05 c0 07 12",
 		// ignored UDH, alphanumeric address
 		"41 00 04 91 3619 00 04 06 05 04 01 03 01 02",
-		"04 07 d0 e1f1d8 00 00 51507132200523 00",
+		"04 06 d0 e1f1d8 00 00 51507132200523 00",
+		"04 06 d1 e1f1d8 00 00 51507132200523 00",
 	} {
 		f.Add(unhex(f, seed))
 	}
@@ -4272,15 +4277,40 @@ func FuzzUnmarshalBinary(f *testing.F) {
 			label := fmt.Sprintf("%s %s % x", d.SmsType(), d.RPMessage, src)
 			out, err := d.MarshalBinary()
 			require.NoError(t, err, label)
+			// The fields 3GPP TS 23.040 defines take at most 164 octets,
+			// and only a report whose fields are not examined may be
+			// longer, up to the 232 octets of 3GPP TS 24.011 Section
+			// 8.2.5.3.
+			limit := 164
+			if unexamined(d) {
+				limit = 232
+			}
+			require.LessOrEqual(t, len(out), limit, label)
 			d2 := cfg
 			require.NoError(t, d2.UnmarshalBinary(out), label)
-			require.Equal(t, d, d2, label)
+			want := d
+			want.OA = normalisedAddress(want.OA)
+			want.DA = normalisedAddress(want.DA)
+			want.RA = normalisedAddress(want.RA)
+			require.Equal(t, want, d2, label)
 			out2, err := d2.MarshalBinary()
 			require.NoError(t, err, label)
 			require.Equal(t, out, out2, label)
 			checkRemarshal(t, d, src, out, label)
 		}
 	})
+}
+
+// unexamined reports whether the fields of a report are not examined, which
+// they are not in a report for RP-ERROR with any of bits 7 and 5 to 2 of its
+// first octet set (3GPP TS 23.040 Sections 9.2.2.1a and 9.2.2.2a).
+func unexamined(d tpdu.TPDU) bool {
+	switch d.SmsType() {
+	case tpdu.SmsDeliverReport, tpdu.SmsSubmitReport:
+		return d.RPMessage == tpdu.RPError && d.FirstOctet&0xbc != 0
+	default:
+		return false
+	}
 }
 
 // piReserved reports whether a reserved bit of the TP-PI is set.
@@ -4303,7 +4333,9 @@ func piReserved(d tpdu.TPDU) bool {
 //   - a reserved TP-PI bit is set, as the octets that follow the TP-UD are
 //     then discarded (9.2.3.27).
 //   - an address is not in the form it marshals to, such as one with a fill
-//     semi-octet other than the last (9.1.2.3).
+//     semi-octet other than the last (9.1.2.3). An alphanumeric TOA
+//     transmits its reserved numbering-plan bits as 0000 (9.1.2.5); only
+//     those bits may differ when the rest of the address is unchanged.
 //   - a 7 bit UDH with no text has a TP-UDL of fewer septets than the UDH
 //     and its fill bits, which is marshalled with the count 9.2.3.16 gives.
 //   - 7 bit fill bits after the UDH, or spare bits after the last septet, are
@@ -4361,14 +4393,19 @@ func checkRemarshal(t *testing.T, d tpdu.TPDU, src, out []byte, label string) {
 			udl = st + 1 + opts()
 		}
 	}
+	mask := make([]byte, len(src))
 	for i, pos := range addrs {
 		b, err := addr[i].MarshalBinary()
 		require.NoError(t, err, label)
-		if !bytes.Equal(b, src[pos:pos+len(b)]) || len(b) != addrLen(pos) {
+		received := append([]byte(nil), src[pos:pos+addrLen(pos)]...)
+		if addr[i].TypeOfNumber() == tpdu.TonAlphanumeric {
+			mask[pos+1] = 0x0f // TS 23.040 9.1.2.5: transmitted as 0000
+			received[1] &^= 0x0f
+		}
+		if !bytes.Equal(b, received) {
 			return // an address in a form it does not marshal to
 		}
 	}
-	mask := make([]byte, len(src))
 	if udl >= 0 {
 		require.Less(t, udl, len(src), label)
 		n := int(src[udl])
@@ -4697,8 +4734,8 @@ func TestSegmentMinimalRoom(t *testing.T) {
 }
 
 // TestReportRPErrorUnusedBitsLength checks the octets kept for a report whose
-// fields are not examined are still bounded by the TPDU: "The Short Message
-// is of variable length, 6-164 octets" (3GPP TS 27.005 Section 2.5.2.6).
+// fields are not examined are bounded by 3GPP TS 24.011 Section 8.2.5.3,
+// Figure 8.7: "TPDU Maximum length 232 octets".
 func TestReportRPErrorUnusedBitsLength(t *testing.T) {
 	for _, dirn := range []tpdu.Direction{tpdu.MO, tpdu.MT} {
 		// an SMS-DELIVER-REPORT from the MS, or an SMS-SUBMIT-REPORT to it,
@@ -4707,12 +4744,12 @@ func TestReportRPErrorUnusedBitsLength(t *testing.T) {
 		if dirn == tpdu.MT {
 			fo = 0x05
 		}
-		for _, n := range []int{164, 165} {
+		for _, n := range []int{164, 232, 233} {
 			in := make([]byte, n)
 			in[0], in[1] = fo, 0xd0
 			d := tpdu.TPDU{Direction: dirn, RPMessage: tpdu.RPError}
 			err := d.UnmarshalBinary(in)
-			if n > 164 {
+			if n > 232 {
 				assert.ErrorIs(t, err, tpdu.ErrOverlength, "dirn %d n %d", dirn, n)
 				// the octets past the limit are in the unexamined fields
 				// from the TP-PI, at octet 2, not in the TP-FCS.
@@ -4727,5 +4764,318 @@ func TestReportRPErrorUnusedBitsLength(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, in, b)
 		}
+	}
+}
+
+// TestReportUDRoom checks the layout maxima and the 164-octet field budget
+// of 3GPP TS 23.040 Sections 9.2.2.1a and 9.2.2.2a. A missing TP-PID or
+// TP-DCS leaves an octet for a TP-PI extension, up to the layout maximum.
+func TestReportUDRoom(t *testing.T) {
+	for _, st := range []tpdu.SmsType{tpdu.SmsDeliverReport, tpdu.SmsSubmitReport} {
+		for _, rp := range []tpdu.RPMessage{tpdu.RPAck, tpdu.RPError} {
+			for fields := byte(0); fields < 4; fields++ {
+				for ext := 0; ext <= 3; ext++ {
+					name := fmt.Sprintf("%s/%s/fields%d/ext%d", st, rp, fields, ext)
+					t.Run(name, func(t *testing.T) {
+						d := tpdu.TPDU{RPMessage: rp, PI: tpdu.PI(fields) | tpdu.PiUDL}
+						require.NoError(t, d.SetSmsType(st))
+						in := []byte{byte(d.FirstOctet)}
+						limit := 159
+						if st == tpdu.SmsSubmitReport {
+							limit = 152
+						}
+						if rp == tpdu.RPError {
+							in = append(in, 0x80)
+							d.FCS = 0x80
+							limit--
+						}
+						pi := byte(d.PI)
+						if ext > 0 {
+							pi |= 0x80
+						}
+						in = append(in, pi)
+						for i := 0; i < ext; i++ {
+							o := byte(0x80)
+							if i == ext-1 {
+								o = 0
+							}
+							in = append(in, o)
+							d.PIExt = append(d.PIExt, o)
+						}
+						if st == tpdu.SmsSubmitReport {
+							in = append(in, make([]byte, 7)...)
+						}
+						if fields&1 != 0 {
+							in = append(in, 0x7f)
+							d.PID = 0x7f
+						}
+						if fields&2 != 0 {
+							in = append(in, 0x04)
+							d.DCS = 0x04
+						}
+						room := min(limit, 164-len(in)-1)
+						units := room
+						if fields&2 == 0 {
+							units = room * 8 / 7
+						}
+						assert.Equal(t, units, d.UDBlockSize())
+						d.UD = make([]byte, units)
+						want := append(append(append([]byte{}, in...), byte(units)), make([]byte, (units*7+7)/8)...)
+						if fields&2 != 0 {
+							want = append(append(append([]byte{}, in...), byte(units)), make([]byte, units)...)
+						}
+						b, err := d.MarshalBinary()
+						require.NoError(t, err)
+						assert.Equal(t, want, b)
+						decoded := tpdu.TPDU{Direction: d.Direction, RPMessage: rp}
+						require.NoError(t, decoded.UnmarshalBinary(want))
+						b, err = decoded.MarshalBinary()
+						require.NoError(t, err)
+						assert.Equal(t, want, b)
+						// Non-zero fields also imply presence without explicit PI bits.
+						d.PI = tpdu.PiUDL
+						assert.Equal(t, units, d.UDBlockSize())
+						b, err = d.MarshalBinary()
+						require.NoError(t, err)
+						assert.Equal(t, want, b)
+						d.UD = append(d.UD, 0)
+						_, err = d.MarshalBinary()
+						assert.ErrorIs(t, err, tpdu.ErrOverlength)
+						bad := append(append(append([]byte{}, in...), byte(units+1)), make([]byte, room+1)...)
+						assert.ErrorIs(t, decoded.UnmarshalBinary(bad), tpdu.ErrOverlength)
+					})
+				}
+			}
+		}
+	}
+}
+
+// TestReportPIWithoutUDL checks that an absent TP-UDL takes no room in the
+// layouts of 3GPP TS 23.040 Section 9.2.2.
+func TestReportPIWithoutUDL(t *testing.T) {
+	for _, st := range []tpdu.SmsType{tpdu.SmsDeliverReport, tpdu.SmsSubmitReport, tpdu.SmsStatusReport} {
+		for _, rp := range []tpdu.RPMessage{tpdu.RPAck, tpdu.RPError} {
+			for _, udl := range []bool{false, true} {
+				for _, size := range []int{162, 163, 164, 165} {
+					t.Run(fmt.Sprintf("%s/%s/udl%t/size%d", st, rp, udl, size), func(t *testing.T) {
+						d := tpdu.TPDU{RPMessage: rp}
+						require.NoError(t, d.SetSmsType(st))
+						prefix, suffix := []byte{byte(d.FirstOctet)}, []byte{}
+						if st == tpdu.SmsStatusReport {
+							prefix = append(prefix, make([]byte, 18)...)
+						} else {
+							if rp == tpdu.RPError {
+								prefix = append(prefix, 0x80)
+								d.FCS = 0x80
+							}
+							if st == tpdu.SmsSubmitReport {
+								suffix = append(suffix, make([]byte, 7)...)
+							}
+						}
+						if udl {
+							d.PI = tpdu.PiUDL
+							suffix = append(suffix, 0)
+						}
+						ext := size - len(prefix) - len(suffix) - 1
+						d.PIExt = make([]byte, ext)
+						in := append(prefix, byte(d.PI)|0x80)
+						in = append(in, bytes.Repeat([]byte{0x80}, ext-1)...)
+						in = append(in, 0)
+						in = append(in, suffix...)
+						require.Len(t, in, size)
+						decoded := tpdu.TPDU{Direction: d.Direction, RPMessage: rp}
+						b, err := d.MarshalBinary()
+						if size > 164 {
+							assert.ErrorIs(t, err, tpdu.ErrOverlength)
+							assert.ErrorIs(t, decoded.UnmarshalBinary(in), tpdu.ErrOverlength)
+							return
+						}
+						require.NoError(t, err)
+						assert.Equal(t, in, b)
+						require.NoError(t, decoded.UnmarshalBinary(in))
+						b, err = decoded.MarshalBinary()
+						require.NoError(t, err)
+						assert.Equal(t, in, b)
+						if size == 164 && !udl {
+							assert.Equal(t, 0, d.UDBlockSize())
+							d.UD = []byte{0}
+							assert.Equal(t, 0, d.UDBlockSize())
+							_, err = d.MarshalBinary()
+							assert.ErrorIs(t, err, tpdu.ErrOverlength)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// TestReportReservedPILength checks the RP bound even when 3GPP TS 23.040
+// Section 9.2.3.27 says "a receiving entity shall discard any octets
+// following the TP-User-Data". TS 24.011 Section 8.2.5.3, Figure 8.7 gives
+// "TPDU Maximum length 232 octets".
+func TestReportReservedPILength(t *testing.T) {
+	for _, st := range []tpdu.SmsType{tpdu.SmsDeliverReport, tpdu.SmsSubmitReport, tpdu.SmsStatusReport} {
+		for _, rp := range []tpdu.RPMessage{tpdu.RPAck, tpdu.RPError} {
+			for _, ext := range []bool{false, true} {
+				for _, size := range []int{232, 233, 1 << 20} {
+					t.Run(fmt.Sprintf("%s/%s/ext%t/size%d", st, rp, ext, size), func(t *testing.T) {
+						d := tpdu.TPDU{RPMessage: rp, PI: tpdu.PiPID | tpdu.PiUDL, DCS: 0x04}
+						require.NoError(t, d.SetSmsType(st))
+						if ext {
+							d.PIExt = []byte{1}
+						} else {
+							d.PI |= 0x08
+						}
+						d.UD = make([]byte, d.UDBlockSize())
+						in, err := d.MarshalBinary()
+						require.NoError(t, err)
+						require.Len(t, in, 164)
+						wire := append(append([]byte{}, in...), bytes.Repeat([]byte{0xaa}, size-len(in))...)
+						decoded := tpdu.TPDU{Direction: d.Direction, RPMessage: rp}
+						err = decoded.UnmarshalBinary(wire)
+						if size > 232 {
+							assert.ErrorIs(t, err, tpdu.ErrOverlength)
+							return
+						}
+						require.NoError(t, err)
+						b, err := decoded.MarshalBinary()
+						require.NoError(t, err)
+						assert.Equal(t, in, b)
+					})
+				}
+			}
+		}
+	}
+}
+
+// TestLongPIChain checks that a TP-PI whose extension octets run past the
+// 164-octet budget is refused where they do, rather than read to the end of
+// the input.
+func TestLongPIChain(t *testing.T) {
+	in := append([]byte{0x00, 0xff}, bytes.Repeat([]byte{0xff}, 1<<20)...)
+	d := tpdu.TPDU{Direction: tpdu.MO}
+	err := d.UnmarshalBinary(in)
+	assert.ErrorIs(t, err, tpdu.ErrOverlength)
+	assert.ErrorContains(t, err, ".pi at octet 164")
+	assert.Less(t, len(d.PIExt), 164)
+}
+
+// TestReceivedAddressLength checks the 164-octet budget against the octets
+// received, which an alphanumeric address can take more of than it marshals
+// to: an escape followed by another is read as a space (3GPP TS 23.038
+// Section 6.2.1.1, Note 1: "On receipt of this code, a receiving entity shall
+// display a space until another extension table is defined"), so a TP-RA or
+// TP-DA of ten escapes and an @, 11 septets in 12 octets, marshals as 6
+// septets in 8 octets.
+func TestReceivedAddressLength(t *testing.T) {
+	packed, err := gsm7.Pack7Bit(append(bytes.Repeat([]byte{0x1b}, 10), 0x00), 0)
+	require.NoError(t, err)
+	addr := append([]byte{20, 0xd0}, packed...)
+	require.Len(t, addr, 12)
+	report := func(n int) []byte {
+		b := append([]byte{0x02, 0x00}, addr...) // first octet, TP-MR, TP-RA
+		b = append(b, make([]byte, 15)...)       // TP-SCTS, TP-DT and TP-ST
+		b = append(b, 0x06, 0x04, byte(n))       // TP-PI, TP-DCS and TP-UDL
+		return append(b, make([]byte, n)...)
+	}
+	command := func(n int) []byte {
+		// first octet, TP-MR, TP-PID, TP-CT, TP-MN and TP-DA
+		b := append([]byte{0x02, 0x00, 0x00, 0x00, 0x00}, addr...)
+		b = append(b, byte(n)) // TP-CDL
+		return append(b, make([]byte, n)...)
+	}
+	for _, p := range []struct {
+		name string
+		dirn tpdu.Direction
+		tpdu func(int) []byte
+		max  int
+	}{
+		{"status report", tpdu.MT, report, 132},
+		{"command", tpdu.MO, command, 146},
+	} {
+		for _, n := range []int{p.max, p.max + 1} {
+			in := p.tpdu(n)
+			d := tpdu.TPDU{Direction: p.dirn}
+			err := d.UnmarshalBinary(in)
+			if n > p.max {
+				// the octet past the budget is the last
+				require.Len(t, in, 165)
+				assert.ErrorIs(t, err, tpdu.ErrOverlength, p.name)
+				assert.ErrorContains(t, err, ".ud at octet 164", p.name)
+				continue
+			}
+			require.Len(t, in, 164)
+			require.NoError(t, err, p.name)
+			assert.Equal(t, "     @", d.RA.Addr+d.DA.Addr, p.name)
+		}
+	}
+}
+
+// TestHeaderOnly7BitRoom includes the padding in the header's room, as
+// 3GPP TS 23.040 Section 9.2.3.16 counts "the number of septets in the
+// TP-User-Data-Header field (including any padding)".
+func TestHeaderOnly7BitRoom(t *testing.T) {
+	for _, p := range []struct {
+		name string
+		in   string
+		err  error
+	}{
+		{"padding exceeds room", "40 04 b5 9e 70 9c" + strings.Repeat("aa", 156), tpdu.ErrOverlength},
+		{"padding fits", "40 04 b4 9d 70 9b" + strings.Repeat("aa", 155), nil},
+		{"septet boundary", "40 04 b0 99 70 97" + strings.Repeat("aa", 151), nil},
+		{"8bit", "40 06 04 9f 9e 70 9c" + strings.Repeat("aa", 156), nil},
+		{"ignored header padding exceeds room", "40 04 b5 9e 70 ff" + strings.Repeat("aa", 156), tpdu.ErrOverlength},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			d := tpdu.TPDU{Direction: tpdu.MO}
+			err := d.UnmarshalBinary(unhex(t, p.in))
+			if p.err != nil {
+				require.ErrorIs(t, err, p.err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Nil(t, d.UD)
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			var decoded = tpdu.TPDU{Direction: tpdu.MO}
+			require.NoError(t, decoded.UnmarshalBinary(b))
+			assert.Equal(t, d, decoded)
+		})
+	}
+}
+
+func TestTPDUAlphanumericNumberingPlan(t *testing.T) {
+	for _, st := range []tpdu.SmsType{tpdu.SmsDeliver, tpdu.SmsSubmit, tpdu.SmsCommand, tpdu.SmsStatusReport} {
+		t.Run(st.String(), func(t *testing.T) {
+			d := tpdu.TPDU{}
+			require.NoError(t, d.SetSmsType(st))
+			a := tpdu.Address{TOA: 0xd1, Addr: "A"}
+			pos := 2
+			switch st {
+			case tpdu.SmsDeliver:
+				d.OA = a
+				pos = 1
+			case tpdu.SmsSubmit:
+				d.DA = a
+			case tpdu.SmsCommand:
+				d.DA = a
+				pos = 5
+			case tpdu.SmsStatusReport:
+				d.RA = a
+			}
+			b, err := d.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, byte(0xd0), b[pos+1])
+			in := append([]byte(nil), b...)
+			in[pos+1] = 0xd1
+			decoded := tpdu.TPDU{Direction: d.Direction}
+			require.NoError(t, decoded.UnmarshalBinary(in))
+			assert.Equal(t, d, decoded)
+			out, err := decoded.MarshalBinary()
+			require.NoError(t, err)
+			assert.Equal(t, b, out)
+			checkRemarshal(t, decoded, in, out, st.String())
+		})
 	}
 }
