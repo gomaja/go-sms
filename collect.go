@@ -18,6 +18,9 @@ import (
 // the reassembly is abandoned. A Collector is safe for concurrent use by
 // multiple goroutines.
 //
+// A Collector that is no longer needed should be closed, as each pending
+// timer keeps it reachable until the timer fires, or Close stops it.
+//
 // The zero value is a Collector with the default settings, as NewCollector
 // returns without options.
 type Collector struct {
@@ -369,7 +372,11 @@ func (c *Collector) Collect(pdu *tpdu.TPDU, options ...CollectOption) ([]*tpdu.T
 	segments, abandoned, err := c.collect(pdu, cfg)
 	// Each abandoned reassembly is marked done even if the handler panics,
 	// so that Close does not wait for it for ever.
-	defer c.settling.Add(-len(abandoned))
+	// A zero delta must not reach Add while Close may be waiting:
+	// https://github.com/golang/go/issues/82140.
+	if n := len(abandoned); n > 0 {
+		defer c.settling.Add(-n)
+	}
 	for _, p := range abandoned {
 		c.settle(p, ErrReassemblyLimit)
 	}
@@ -435,7 +442,9 @@ func (c *Collector) collect(pdu *tpdu.TPDU, cfg CollectConfig) ([]*tpdu.TPDU, []
 			p = nil
 		}
 	}
-	c.settling.Add(len(abandoned))
+	if n := len(abandoned); n > 0 {
+		c.settling.Add(n)
+	}
 	if p == nil {
 		p = &pipe{key: key, segments: make([]*tpdu.TPDU, ci.Total)}
 		c.pipes[key] = p

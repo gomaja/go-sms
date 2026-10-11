@@ -33,7 +33,7 @@ type tpduTemplate struct {
 }
 
 func (o tpduTemplate) ApplyEncoderOption(e *Encoder) {
-	e.pdu = o.t
+	e.pdu = cloneTPDU(&o.t)
 }
 
 type templateOption struct {
@@ -94,10 +94,12 @@ var (
 	WithAllCharsets = AllCharsetsOption{}
 
 	// WithDefaultCharset specifies that only the default character set is
-	// available for encoding or decoding.
+	// available for encoding or decoding, removing any national language
+	// tables enabled by earlier options. Later charset options add tables
+	// again.
 	//
 	// This is the default policy for encoding.
-	WithDefaultCharset = CharsetOption{}
+	WithDefaultCharset = DefaultCharsetOption{}
 )
 
 // WithMR specifies the counter that provides the TP-MR of each SMS-SUBMIT
@@ -190,7 +192,21 @@ func (o AllCharsetsOption) ApplyDecodeOption(cc *DecodeConfig) {
 	cc.dopts = append(cc.dopts, tpdu.WithAllCharsets)
 }
 
-// WithCharset creates an CharsetOption.
+// DefaultCharsetOption removes the national language tables available for
+// encoding or decoding. Later charset options add tables again.
+type DefaultCharsetOption struct{}
+
+// ApplyEncoderOption applies the DefaultCharsetOption to an Encoder.
+func (o DefaultCharsetOption) ApplyEncoderOption(e *Encoder) {
+	e.eopts = append(e.eopts, tpdu.WithDefaultCharset)
+}
+
+// ApplyDecodeOption applies the DefaultCharsetOption to decoding.
+func (o DefaultCharsetOption) ApplyDecodeOption(cc *DecodeConfig) {
+	cc.dopts = append(cc.dopts, tpdu.WithDefaultCharset)
+}
+
+// WithCharset adds the given character sets for encoding or decoding.
 //
 // The identifiers are copied, so the caller may go on to change its slice.
 func WithCharset(nli ...int) CharsetOption {
@@ -212,7 +228,8 @@ func (o CharsetOption) ApplyDecodeOption(cc *DecodeConfig) {
 	cc.dopts = append(cc.dopts, tpdu.WithCharset(o.nli...))
 }
 
-// WithLockingCharset creates an LockingCharsetOption.
+// WithLockingCharset adds the given locking character sets for encoding or
+// decoding.
 //
 // The identifiers are copied, so the caller may go on to change its slice.
 func WithLockingCharset(nli ...int) LockingCharsetOption {
@@ -235,7 +252,7 @@ func (o LockingCharsetOption) ApplyDecodeOption(cc *DecodeConfig) {
 	cc.dopts = append(cc.dopts, tpdu.WithLockingCharset(o.nli...))
 }
 
-// WithShiftCharset creates an ShiftCharsetOption.
+// WithShiftCharset adds the given shift character sets for encoding or decoding.
 //
 // The identifiers are copied, so the caller may go on to change its slice.
 func WithShiftCharset(nli ...int) ShiftCharsetOption {

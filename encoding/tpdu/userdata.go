@@ -228,13 +228,17 @@ type UDDecodeOption interface {
 	applyDecodeOption(udDecodeConfig) udDecodeConfig
 }
 
-// DecodeUserData converts TPDU UD into the corresponding UTF8 message.
+// DecodeUserData returns the message in TPDU UD. UCS2 is decoded with
+// ucs2.Decode and returned as UTF-8, with that function's surrogate handling
+// and errors. 8-bit data is returned unchanged, sharing the input slice:
+// 3GPP TS 23.038 Section 6.2.2 states "8 bit data is user defined".
+// GSM7, and any other alphabet value, is decoded as described below.
 //
 // The UD is expected to be unpacked, as stored in TPDU UD. If the UD is GSM7
 // encoded then it is translated to UTF8 with the default character set, or
 // with the character set specified in the UDH, assuming the corresponding
-// language has been registered with the UDDecoder. If the UDH specifies a
-// character set that has not been registered then that IE is ignored, as
+// language has been enabled by the options. If the UDH specifies a
+// character set that has not been enabled then that IE is ignored, as
 // required by 3GPP TS 23.038 Section 6.2.1.2.5, and the translation uses the
 // character set of an earlier IE of the same type, or failing that falls back
 // to the default character set.
@@ -388,7 +392,33 @@ func (o AllCharsetsOption) applyEncodeOption(e udEncodeConfig) udEncodeConfig {
 // NationalLanguageIdentifiers, in increasing order.
 var WithAllCharsets = AllCharsetsOption{}
 
-// WithCharset sets the set of character sets available to encode or decode.
+// WithDefaultCharset makes only the default character set available to
+// encode or decode, removing national language tables enabled by earlier
+// options. Later charset options add tables again.
+//
+// A national language IE is then unsupported and ignored, as required by
+// 3GPP TS 23.038 Section 6.2.1.2.5: "the receiving entity shall ignore the IE".
+var WithDefaultCharset = DefaultCharsetOption{}
+
+// DefaultCharsetOption removes the national language tables available for
+// encoding and decoding. Later charset options add tables again.
+type DefaultCharsetOption struct{}
+
+func (o DefaultCharsetOption) applyEncodeOption(e udEncodeConfig) udEncodeConfig {
+	e.locking = nil
+	e.shift = nil
+	return e
+}
+
+// applyDecodeOption replaces the maps rather than clearing them, as they may
+// be shared with the config an earlier option returned.
+func (o DefaultCharsetOption) applyDecodeOption(d udDecodeConfig) udDecodeConfig {
+	d.locking = map[int]bool{}
+	d.shift = map[int]bool{}
+	return d
+}
+
+// WithCharset adds character sets available to encode or decode.
 //
 // These are in addition to the default character set. The identifiers are
 // copied, so the caller may go on to change its slice.
@@ -396,7 +426,7 @@ func WithCharset(nli ...int) CharsetOption {
 	return CharsetOption{slices.Clone(nli)}
 }
 
-// WithLockingCharset sets the set of locking character sets available to
+// WithLockingCharset adds locking character sets available to
 // encode or decode.
 //
 // These are in addition to the default character set. The identifiers are
@@ -405,7 +435,7 @@ func WithLockingCharset(nli ...int) LockingCharsetOption {
 	return LockingCharsetOption{slices.Clone(nli)}
 }
 
-// WithShiftCharset sets the set of shift character sets available to
+// WithShiftCharset adds shift character sets available to
 // encode or decode.
 //
 // These are in addition to the default character set. The identifiers are

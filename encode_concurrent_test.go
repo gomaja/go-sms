@@ -15,6 +15,66 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type sourcePortOption byte
+
+func (o sourcePortOption) ApplyTPDUOption(t *tpdu.TPDU) error {
+	t.UDH[0].Data[3] = byte(o)
+	return nil
+}
+
+// 3GPP TS 23.040 Section 9.2.3.24.4: "octet 3,4 Originator port."
+func portTemplate() tpdu.TPDU {
+	return tpdu.TPDU{UDH: tpdu.UserDataHeader{
+		{ID: 0x05, Data: []byte{0x0b, 0x84, 0x00, 0xf1}},
+	}}
+}
+
+func TestEncoderPerCallTemplateMutation(t *testing.T) {
+	e := sms.NewEncoder(sms.WithTemplate(portTemplate()))
+	out, err := e.Encode([]byte("hi"), sms.WithTemplateOption(sourcePortOption(42)))
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 42}, out[0].UDH[0].Data)
+	out, err = e.Encode([]byte("hi"))
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 0xf1}, out[0].UDH[0].Data)
+}
+
+func TestEncoderPerCallTemplateOwnership(t *testing.T) {
+	tmpl := portTemplate()
+	e := sms.NewEncoder()
+	out, err := e.Encode([]byte("hi"), sms.WithTemplate(tmpl),
+		sms.WithTemplateOption(sourcePortOption(42)))
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 42}, out[0].UDH[0].Data)
+	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 0xf1}, tmpl.UDH[0].Data)
+}
+
+func TestEncoderConcurrentTemplateMutation(t *testing.T) {
+	e := sms.NewEncoder(sms.WithTemplate(portTemplate()))
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(port byte) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				out, err := e.Encode([]byte("hi"), sms.WithTemplateOption(sourcePortOption(port)))
+				if err != nil || len(out) != 1 || !bytes.Equal(out[0].UDH[0].Data, []byte{0x0b, 0x84, 0x00, port}) {
+					t.Errorf("source port %d: got %v, %v", port, out, err)
+					return
+				}
+			}
+		}(byte(w + 1))
+	}
+	wg.Wait()
+	out, err := e.Encode([]byte("hi"))
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 0xf1}, out[0].UDH[0].Data)
+}
+
 // Per call options apply to that call only, even when calls are concurrent
 // and the Encoder options were built with spare capacity: three charset
 // options leave the Encoder options with a length of 3 and a capacity of 4.

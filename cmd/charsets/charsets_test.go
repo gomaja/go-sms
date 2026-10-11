@@ -4,7 +4,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -28,6 +30,51 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+func TestMainWriteError(t *testing.T) {
+	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+	if err != nil {
+		t.Skip("/dev/full is unavailable")
+	}
+	defer func() { require.NoError(t, full.Close()) }()
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), runMainEnv+"=1")
+	cmd.Stdout = full
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	var exitErr *exec.ExitError
+	require.True(t, errors.As(err, &exitErr), "got %v, want exit status 1", err)
+	assert.Equal(t, 1, exitErr.ExitCode())
+	assert.Contains(t, stderr.String(), "charsets: ")
+}
+
+type errWriter struct {
+	err error
+}
+
+func (w errWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func TestDisplayWriteError(t *testing.T) {
+	errWrite := errors.New("write failed")
+	err := Display(errWriter{err: errWrite}, charset.NewDecoder(charset.Default))
+	assert.ErrorIs(t, err, errWrite)
+}
+
+func TestRunWriteError(t *testing.T) {
+	var stderr bytes.Buffer
+	status := run(errWriter{err: errors.New("write failed")}, &stderr)
+	assert.Equal(t, 1, status)
+	assert.Equal(t, "charsets: write failed\n", stderr.String())
+}
+
+func TestRunSuccess(t *testing.T) {
+	var stderr bytes.Buffer
+	assert.Zero(t, run(io.Discard, &stderr))
+	assert.Empty(t, stderr.String())
 }
 
 // shownTable is a table as the tool writes it.

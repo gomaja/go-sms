@@ -143,6 +143,9 @@ jobs:
                 echo "== $target =="
                 GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 go test ./... -exec true -count=1 -timeout 900s
               done
+          - kind: linux-386
+            os: ubuntu-latest
+            command: GOARCH=386 CGO_ENABLED=0 go test ./... -count=1 -timeout 900s
           - kind: macos
             os: macos-latest
             command: go test ./... -short -count=1 -timeout 900s
@@ -173,5 +176,5 @@ jobs:
           cache: true
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           "$(go env GOPATH)/bin/govulncheck" ./...

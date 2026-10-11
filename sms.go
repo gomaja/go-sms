@@ -120,7 +120,9 @@ func IsCompleteMessage(segments []*tpdu.TPDU) bool {
 	return true
 }
 
-// cloneTPDU returns a copy of the TPDU that shares no memory with it.
+// cloneTPDU returns a copy of the TPDU whose exported slices share no memory
+// with it. The unexported slices holding preserved wire data are shared, as
+// tpdu never modifies their contents.
 //
 // Its slices keep their nil or empty state, as that matters when marshalling:
 // an empty UDH is marshalled as a TP-UDHL of 0, while a nil one is not
