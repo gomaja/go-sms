@@ -487,9 +487,11 @@ const (
 // GSM7 is the most compact, and, if the default character set is insufficient,
 // tries the national language tables the options make available, in three
 // passes: each locking shift table, with the default extension table, then
-// each single shift table, with the default alphabet, then each table as both.
-// Each pass takes the tables in the order the options added them, and the
-// first that codes the whole message is used.
+// each single shift table, with the default alphabet, then each table enabled
+// both as a locking shift and as a single shift table, as both. Each pass
+// takes the tables in the order the options added them, the third in that of
+// the locking shift tables, and the first that codes the whole message is
+// used.
 //
 // This is not optimal as it performs language selection on the whole message,
 // rather than determining the best for each segment in turn. (which is totally
