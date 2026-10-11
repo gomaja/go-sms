@@ -88,9 +88,11 @@ var (
 	AsRPError = rpMessageOption{tpdu.RPError}
 
 	// WithAllCharsets specifies that all character sets are available for
-	// encoding or decoding.
+	// encoding or decoding, after any added by earlier options, which are
+	// tried first when encoding.
 	//
-	// This is the default policy for decoding.
+	// This is the default policy for decoding, when no charset option is
+	// given.
 	WithAllCharsets = AllCharsetsOption{}
 
 	// WithDefaultCharset specifies that only the default character set is
@@ -206,7 +208,10 @@ func (o DefaultCharsetOption) ApplyDecodeOption(cc *DecodeConfig) {
 	cc.dopts = append(cc.dopts, tpdu.WithDefaultCharset)
 }
 
-// WithCharset adds the given character sets for encoding or decoding.
+// WithCharset adds the given character sets to those available for encoding
+// or decoding. The charset options apply in order, starting from the default
+// character set alone, so for Decode they replace its default of all
+// character sets.
 //
 // The identifiers are copied, so the caller may go on to change its slice.
 func WithCharset(nli ...int) CharsetOption {
@@ -228,8 +233,8 @@ func (o CharsetOption) ApplyDecodeOption(cc *DecodeConfig) {
 	cc.dopts = append(cc.dopts, tpdu.WithCharset(o.nli...))
 }
 
-// WithLockingCharset adds the given locking character sets for encoding or
-// decoding.
+// WithLockingCharset adds the given locking character sets to those
+// available for encoding or decoding, in the way WithCharset does.
 //
 // The identifiers are copied, so the caller may go on to change its slice.
 func WithLockingCharset(nli ...int) LockingCharsetOption {
@@ -252,7 +257,8 @@ func (o LockingCharsetOption) ApplyDecodeOption(cc *DecodeConfig) {
 	cc.dopts = append(cc.dopts, tpdu.WithLockingCharset(o.nli...))
 }
 
-// WithShiftCharset adds the given shift character sets for encoding or decoding.
+// WithShiftCharset adds the given shift character sets to those available
+// for encoding or decoding, in the way WithCharset does.
 //
 // The identifiers are copied, so the caller may go on to change its slice.
 func WithShiftCharset(nli ...int) ShiftCharsetOption {

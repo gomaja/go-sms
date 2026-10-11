@@ -391,6 +391,7 @@ func collectorStress(t *testing.T, limit int) {
 		options = append(options, sms.WithReassemblyLimit(limit))
 	}
 	var closed atomic.Bool
+	defer closed.Store(true) // stops the workers if the test fails
 	var late atomic.Int32
 	var mu sync.Mutex
 	accepted := map[string]int{}
@@ -419,7 +420,9 @@ func collectorStress(t *testing.T, limit int) {
 		go func(w int) {
 			defer wg.Done()
 			oa := fmt.Sprintf("%d", 1000+w)
-			for m := 0; ; m++ {
+			// Collect is called until Close has returned, including while
+			// Close waits, when each call returns ErrClosed.
+			for m := 0; !closed.Load(); m++ {
 				// segments 3, 1, 1 again and 2, with segment 2 left out of
 				// every fifth message
 				for _, seqno := range []byte{3, 1, 1, 2} {
@@ -430,9 +433,6 @@ func collectorStress(t *testing.T, limit int) {
 					out, err := c.Collect(deliverSegment(oa, byte(m), 3, seqno, ud))
 					switch err {
 					case sms.ErrClosed:
-						if closed.Load() {
-							return
-						}
 						continue
 					case sms.ErrDuplicateSegment:
 						continue
@@ -482,7 +482,15 @@ func collectorStress(t *testing.T, limit int) {
 // Collect is called from several goroutines while Close waits, and as the
 // handler returns.
 func TestCollectorCollectWhileCloseWaits(t *testing.T) {
-	deadline := time.Now().Add(2 * time.Second)
+	// The panic needs Collect and the timer to run in parallel.
+	if runtime.GOMAXPROCS(0) < 2 {
+		defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(2))
+	}
+	d := 2 * time.Second
+	if testing.Short() {
+		d = 250 * time.Millisecond
+	}
+	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) && !t.Failed() {
 		collectWhileCloseWaits(t)
 	}

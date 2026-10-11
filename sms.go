@@ -26,6 +26,11 @@ type DecodeConfig struct {
 // A nil segment, as the Collector gives for a segment that was not received,
 // cannot be decoded, so ErrMissingSegment is returned.
 //
+// Without a charset option every character set is available, as with
+// WithAllCharsets. The charset options instead apply in order, starting from
+// the default character set alone, so WithCharset(charset.Turkish) leaves the
+// Turkish tables as the only national language tables available.
+//
 // A UTF-16 surrogate pair split between two consecutive UCS2 segments is
 // decoded as the one character it codes. Any other surrogate is unpaired and
 // decoded as U+FFFD, as ucs2.Decode does, including a high surrogate that

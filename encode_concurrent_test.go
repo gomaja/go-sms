@@ -52,6 +52,40 @@ func TestEncoderPerCallTemplateOwnership(t *testing.T) {
 	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 0xf1}, tmpl.UDH[0].Data)
 }
 
+// A per-call option that changes the UDH set by an earlier per-call
+// WithUDH, which may be reused, changes neither the caller's UDH nor later
+// calls.
+func TestEncoderPerCallUDHOption(t *testing.T) {
+	udh := portTemplate().UDH
+	withUDH := sms.WithTemplateOption(tpdu.WithUDH(udh))
+	e := sms.NewEncoder()
+	out, err := e.Encode([]byte("hi"), withUDH, sms.WithTemplateOption(sourcePortOption(42)))
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 42}, out[0].UDH[0].Data)
+	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 0xf1}, udh[0].Data)
+	out, err = e.Encode([]byte("hi"), withUDH)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, []byte{0x0b, 0x84, 0x00, 0xf1}, out[0].UDH[0].Data)
+
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(port byte) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				out, err := e.Encode([]byte("hi"), withUDH, sms.WithTemplateOption(sourcePortOption(port)))
+				if err != nil || len(out) != 1 || !bytes.Equal(out[0].UDH[0].Data, []byte{0x0b, 0x84, 0x00, port}) {
+					t.Errorf("source port %d: got %v, %v", port, out, err)
+					return
+				}
+			}
+		}(byte(w + 1))
+	}
+	wg.Wait()
+}
+
 func TestEncoderConcurrentTemplateMutation(t *testing.T) {
 	e := sms.NewEncoder(sms.WithTemplate(portTemplate()))
 	var wg sync.WaitGroup

@@ -35,6 +35,20 @@ func (ie InformationElement) marshalledLen() int {
 	return 2 + len(ie.Data)
 }
 
+// clone returns a copy of the UDH that shares no memory with it. A nil UDH,
+// which is not marshalled, stays nil, and an empty one, which is marshalled
+// as a TP-UDHL of 0, stays empty.
+func (udh UserDataHeader) clone() UserDataHeader {
+	if udh == nil {
+		return nil
+	}
+	c := make(UserDataHeader, len(udh))
+	for i, ie := range udh {
+		c[i] = InformationElement{ID: ie.ID, Data: slices.Clone(ie.Data)}
+	}
+	return c
+}
+
 // UDHL returns the encoded length of the UDH, not including the UDHL itself.
 func (udh UserDataHeader) UDHL() int {
 	udhl := 0
@@ -377,11 +391,10 @@ func (o AllCharsetsOption) applyDecodeOption(d udDecodeConfig) udDecodeConfig {
 }
 
 func (o AllCharsetsOption) applyEncodeOption(e udEncodeConfig) udEncodeConfig {
-	e.locking = make([]int, charset.Size)
 	for nli := charset.Start; nli < charset.End; nli++ {
-		e.locking[nli-1] = nli
+		e.locking = append(e.locking, nli)
+		e.shift = append(e.shift, nli)
 	}
-	e.shift = e.locking
 	return e
 }
 
@@ -389,7 +402,8 @@ func (o AllCharsetsOption) applyEncodeOption(e udEncodeConfig) udEncodeConfig {
 // decode.
 //
 // This is equivalent to calling WithCharset with all possible
-// NationalLanguageIdentifiers, in increasing order.
+// NationalLanguageIdentifiers, in increasing order, so the tables of earlier
+// options are tried first when encoding.
 var WithAllCharsets = AllCharsetsOption{}
 
 // WithDefaultCharset makes only the default character set available to

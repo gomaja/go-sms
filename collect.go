@@ -372,8 +372,9 @@ func (c *Collector) Collect(pdu *tpdu.TPDU, options ...CollectOption) ([]*tpdu.T
 	segments, abandoned, err := c.collect(pdu, cfg)
 	// Each abandoned reassembly is marked done even if the handler panics,
 	// so that Close does not wait for it for ever.
-	// A zero delta must not reach Add while Close may be waiting:
-	// https://github.com/golang/go/issues/82140.
+	// Add with a zero delta can panic if it races the last Done while Close
+	// waits (https://github.com/golang/go/issues/82140), so it is only
+	// called for abandoned reassemblies.
 	if n := len(abandoned); n > 0 {
 		defer c.settling.Add(-n)
 	}

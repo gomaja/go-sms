@@ -44,14 +44,17 @@ type UDHOption struct {
 	udh UserDataHeader
 }
 
-// ApplyTPDUOption applies the UDH to the TPDU, and sets the TP-UDHI to match,
-// as SetUDH does.
+// ApplyTPDUOption applies a copy of the UDH to the TPDU, and sets the TP-UDHI
+// to match, as SetUDH does.
 func (o UDHOption) ApplyTPDUOption(t *TPDU) error {
-	t.SetUDH(o.udh)
+	t.SetUDH(o.udh.clone())
 	return nil
 }
 
 // WithUDH creates a UDHOption to apply to a TPDU.
+//
+// The UDH is copied, so the caller may go on to change it, and each TPDU the
+// option is applied to gets a copy of its own.
 func WithUDH(udh UserDataHeader) UDHOption {
-	return UDHOption{udh}
+	return UDHOption{udh.clone()}
 }

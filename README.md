@@ -253,8 +253,9 @@ func collector() *sms.Collector {
 The core API is aimed at the most common use cases, those performed to the
 mobile station. e.g. By default, *sms.Encode* creates an SMS-SUBMIT TPDU and
 only uses the default character set.  By default, *sms.Decode* uses all
-character sets.  By default, *sms.Unmarshal* assumes the TPDU is mobile
-terminating.
+character sets, but given any charset option it uses only the character sets
+the options make available, applied in order from the default character set.
+By default, *sms.Unmarshal* assumes the TPDU is mobile terminating.
 
 The behaviour of the core API functions can be altered for other use cases
 using optional parameters.
@@ -339,7 +340,8 @@ All tools report errors on stderr and exit with status 0 on success.
 smssubmit, smsdeliver, smsdecode and smscounter exit with status 1 if they
 cannot process their input or write their output, and 2 if their arguments
 are not valid. charsets takes no input or arguments and exits with status 1
-if it cannot write its output.
+if it cannot write its output. As is usual for command line tools, writing to
+a pipe whose reader has gone ends any of them with SIGPIPE instead.
 
 ### Submit Encoding
 
