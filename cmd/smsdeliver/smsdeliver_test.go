@@ -37,6 +37,11 @@ const (
 
 	// an SMS-STATUS-REPORT, as received by the MS
 	statusReport = "060105912143f5101010000000001010100000000000"
+
+	// the TPDU of woot, and the same with a TP-DCS of 0x20, compressed GSM 7
+	// bit (3GPP TS 23.038 Section 4), which the message decoder rejects
+	deliver    = "040B911605935713F200008140806113912304D7F79B0E"
+	compressed = "040B911605935713F200208140806113912304D7F79B0E"
 )
 
 func TestRun(t *testing.T) {
@@ -64,6 +69,8 @@ func TestRun(t *testing.T) {
 		{"bad pdu mode", []string{"-p", "07"}, 1, "", "smsdeliver: TPDU 1: "},
 		{"status report", []string{statusReport}, 1, "",
 			"smsdeliver: TPDU 1: SmsStatusReport is not an SMS-DELIVER\n"},
+		{"undecodable then good", []string{compressed, deliver}, 1, "+61503975312: Woot\n",
+			"smsdeliver: TPDU 1: compressed user data unsupported\n"},
 		{"no pdu", nil, 2, "", "Usage: smsdeliver"},
 		{"unknown flag", []string{"-x"}, 2, "", "flag provided but not defined"},
 	}

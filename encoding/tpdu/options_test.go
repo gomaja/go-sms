@@ -53,6 +53,29 @@ func TestWithUDH(t *testing.T) {
 	assert.False(t, s.UDHI())
 }
 
+// The UDH is copied when the option is made and when it is applied, so a
+// change to the caller's UDH, or to that of a TPDU it was applied to, does
+// not reach the option.
+func TestWithUDHCopies(t *testing.T) {
+	udh := tpdu.UserDataHeader{{ID: 0x05, Data: []byte{0x0b, 0x84, 0x00, 0xf1}}}
+	want := tpdu.UserDataHeader{{ID: 0x05, Data: []byte{0x0b, 0x84, 0x00, 0xf1}}}
+	o := tpdu.WithUDH(udh)
+	udh[0].Data[3] = 0x42
+	var a, b tpdu.TPDU
+	require.NoError(t, o.ApplyTPDUOption(&a))
+	assert.Equal(t, want, a.UDH)
+	a.UDH[0].Data[3] = 0x43
+	require.NoError(t, o.ApplyTPDUOption(&b))
+	assert.Equal(t, want, b.UDH)
+
+	// an empty UDH, which is marshalled as a TP-UDHL of 0, stays empty
+	require.NoError(t, tpdu.WithUDH(tpdu.UserDataHeader{}).ApplyTPDUOption(&a))
+	assert.NotNil(t, a.UDH)
+	assert.Empty(t, a.UDH)
+	require.NoError(t, tpdu.WithUDH(nil).ApplyTPDUOption(&a))
+	assert.Nil(t, a.UDH)
+}
+
 func TestWithMTI(t *testing.T) {
 	s, err := tpdu.New(tpdu.MtSubmit)
 	require.Nil(t, err)

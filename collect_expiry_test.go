@@ -4,6 +4,7 @@ package sms_test
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -390,6 +391,7 @@ func collectorStress(t *testing.T, limit int) {
 		options = append(options, sms.WithReassemblyLimit(limit))
 	}
 	var closed atomic.Bool
+	defer closed.Store(true) // stops the workers if the test fails
 	var late atomic.Int32
 	var mu sync.Mutex
 	accepted := map[string]int{}
@@ -418,7 +420,9 @@ func collectorStress(t *testing.T, limit int) {
 		go func(w int) {
 			defer wg.Done()
 			oa := fmt.Sprintf("%d", 1000+w)
-			for m := 0; ; m++ {
+			// Collect is called until Close has returned, including while
+			// Close waits, when each call returns ErrClosed.
+			for m := 0; !closed.Load(); m++ {
 				// segments 3, 1, 1 again and 2, with segment 2 left out of
 				// every fifth message
 				for _, seqno := range []byte{3, 1, 1, 2} {
@@ -429,7 +433,7 @@ func collectorStress(t *testing.T, limit int) {
 					out, err := c.Collect(deliverSegment(oa, byte(m), 3, seqno, ud))
 					switch err {
 					case sms.ErrClosed:
-						return
+						continue
 					case sms.ErrDuplicateSegment:
 						continue
 					case nil:
@@ -471,4 +475,101 @@ func collectorStress(t *testing.T, limit int) {
 	// has expired, and then settled again.
 	assert.NotEmpty(t, accepted)
 	assert.Equal(t, accepted, settled)
+}
+
+// A zero delta that reaches WaitGroup.Add while Close waits for an expiry
+// handler can panic, in Collect or in the timer that ran the handler, so
+// Collect is called from several goroutines while Close waits, and as the
+// handler returns.
+func TestCollectorCollectWhileCloseWaits(t *testing.T) {
+	// The panic needs Collect and the timer to run in parallel.
+	if runtime.GOMAXPROCS(0) < 2 {
+		defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(2))
+	}
+	d := 2 * time.Second
+	if testing.Short() {
+		d = 250 * time.Millisecond
+	}
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) && !t.Failed() {
+		collectWhileCloseWaits(t)
+	}
+}
+
+func collectWhileCloseWaits(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	c := sms.NewCollector(sms.WithReassemblyTimeout(time.Millisecond),
+		sms.WithExpiryHandler(func(_ []*tpdu.TPDU, reason error) {
+			if reason == sms.ErrReassemblyTimeout {
+				close(entered)
+				<-release
+			}
+		}))
+	_, err := c.Collect(deliverSegment("123", 1, 2, 1, "a"))
+	require.NoError(t, err)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		c.Close()
+		t.Fatal("expiry handler did not start")
+	}
+	closed := make(chan struct{})
+	go func() {
+		c.Close()
+		close(closed)
+	}()
+	// A nil segment starts no reassembly, so no other timer, and Collect
+	// returns ErrClosed for it once Close has begun, which then waits for
+	// the handler.
+	for {
+		if _, err := c.Collect(nil); err == sms.ErrClosed {
+			break
+		}
+		runtime.Gosched()
+	}
+	stop := make(chan struct{})
+	ready := make(chan struct{}, 8)
+	failures := make(chan any, 8)
+	var wg sync.WaitGroup
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if p := recover(); p != nil {
+					failures <- p
+				}
+			}()
+			ready <- struct{}{}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, err := c.Collect(nil); err != sms.ErrClosed {
+					failures <- fmt.Sprintf("Collect: got %v, want ErrClosed", err)
+					return
+				}
+			}
+		}()
+	}
+	for w := 0; w < 8; w++ {
+		<-ready
+	}
+	time.Sleep(500 * time.Microsecond) // for Close to reach its wait
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Error("Close did not return")
+	}
+	close(stop)
+	wg.Wait()
+	close(failures)
+	for failure := range failures {
+		t.Errorf("Collect while Close waits: %v", failure)
+	}
 }

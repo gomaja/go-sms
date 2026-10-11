@@ -35,6 +35,20 @@ func (ie InformationElement) marshalledLen() int {
 	return 2 + len(ie.Data)
 }
 
+// clone returns a copy of the UDH that shares no memory with it. A nil UDH,
+// which is not marshalled, stays nil, and an empty one, which is marshalled
+// as a TP-UDHL of 0, stays empty.
+func (udh UserDataHeader) clone() UserDataHeader {
+	if udh == nil {
+		return nil
+	}
+	c := make(UserDataHeader, len(udh))
+	for i, ie := range udh {
+		c[i] = InformationElement{ID: ie.ID, Data: slices.Clone(ie.Data)}
+	}
+	return c
+}
+
 // UDHL returns the encoded length of the UDH, not including the UDHL itself.
 func (udh UserDataHeader) UDHL() int {
 	udhl := 0
@@ -228,13 +242,17 @@ type UDDecodeOption interface {
 	applyDecodeOption(udDecodeConfig) udDecodeConfig
 }
 
-// DecodeUserData converts TPDU UD into the corresponding UTF8 message.
+// DecodeUserData returns the message in TPDU UD. UCS2 is decoded with
+// ucs2.Decode and returned as UTF-8, with that function's surrogate handling
+// and errors. 8-bit data is returned unchanged, sharing the input slice:
+// 3GPP TS 23.038 Section 6.2.2 states "8 bit data is user defined".
+// GSM7, and any other alphabet value, is decoded as described below.
 //
 // The UD is expected to be unpacked, as stored in TPDU UD. If the UD is GSM7
 // encoded then it is translated to UTF8 with the default character set, or
 // with the character set specified in the UDH, assuming the corresponding
-// language has been registered with the UDDecoder. If the UDH specifies a
-// character set that has not been registered then that IE is ignored, as
+// language has been enabled by the options. If the UDH specifies a
+// character set that has not been enabled then that IE is ignored, as
 // required by 3GPP TS 23.038 Section 6.2.1.2.5, and the translation uses the
 // character set of an earlier IE of the same type, or failing that falls back
 // to the default character set.
@@ -373,11 +391,10 @@ func (o AllCharsetsOption) applyDecodeOption(d udDecodeConfig) udDecodeConfig {
 }
 
 func (o AllCharsetsOption) applyEncodeOption(e udEncodeConfig) udEncodeConfig {
-	e.locking = make([]int, charset.Size)
 	for nli := charset.Start; nli < charset.End; nli++ {
-		e.locking[nli-1] = nli
+		e.locking = append(e.locking, nli)
+		e.shift = append(e.shift, nli)
 	}
-	e.shift = e.locking
 	return e
 }
 
@@ -385,10 +402,37 @@ func (o AllCharsetsOption) applyEncodeOption(e udEncodeConfig) udEncodeConfig {
 // decode.
 //
 // This is equivalent to calling WithCharset with all possible
-// NationalLanguageIdentifiers, in increasing order.
+// NationalLanguageIdentifiers, in increasing order, so in each pass of
+// EncodeUserData the tables of earlier options are tried first.
 var WithAllCharsets = AllCharsetsOption{}
 
-// WithCharset sets the set of character sets available to encode or decode.
+// WithDefaultCharset makes only the default character set available to
+// encode or decode, removing national language tables enabled by earlier
+// options. Later charset options add tables again.
+//
+// A national language IE is then unsupported and ignored, as required by
+// 3GPP TS 23.038 Section 6.2.1.2.5: "the receiving entity shall ignore the IE".
+var WithDefaultCharset = DefaultCharsetOption{}
+
+// DefaultCharsetOption removes the national language tables available for
+// encoding and decoding. Later charset options add tables again.
+type DefaultCharsetOption struct{}
+
+func (o DefaultCharsetOption) applyEncodeOption(e udEncodeConfig) udEncodeConfig {
+	e.locking = nil
+	e.shift = nil
+	return e
+}
+
+// applyDecodeOption replaces the maps rather than clearing them, as they may
+// be shared with the config an earlier option returned.
+func (o DefaultCharsetOption) applyDecodeOption(d udDecodeConfig) udDecodeConfig {
+	d.locking = map[int]bool{}
+	d.shift = map[int]bool{}
+	return d
+}
+
+// WithCharset adds character sets available to encode or decode.
 //
 // These are in addition to the default character set. The identifiers are
 // copied, so the caller may go on to change its slice.
@@ -396,7 +440,7 @@ func WithCharset(nli ...int) CharsetOption {
 	return CharsetOption{slices.Clone(nli)}
 }
 
-// WithLockingCharset sets the set of locking character sets available to
+// WithLockingCharset adds locking character sets available to
 // encode or decode.
 //
 // These are in addition to the default character set. The identifiers are
@@ -405,7 +449,7 @@ func WithLockingCharset(nli ...int) LockingCharsetOption {
 	return LockingCharsetOption{slices.Clone(nli)}
 }
 
-// WithShiftCharset sets the set of shift character sets available to
+// WithShiftCharset adds shift character sets available to
 // encode or decode.
 //
 // These are in addition to the default character set. The identifiers are
@@ -441,8 +485,13 @@ const (
 // and so may need to be segmented into several concatenated messages. Encode
 // attempts to pick the most compact alphabet for the given message. It assumes
 // GSM7 is the most compact, and, if the default character set is insufficient,
-// tries combinations of supported language character sets, in the order they
-// were added to the UDEncoder.
+// tries the national language tables the options make available, in three
+// passes: each locking shift table, with the default extension table, then
+// each single shift table, with the default alphabet, then each table enabled
+// both as a locking shift and as a single shift table, as both. Each pass
+// takes the tables in the order the options added them, the third in that of
+// the locking shift tables, and the first that codes the whole message is
+// used.
 //
 // This is not optimal as it performs language selection on the whole message,
 // rather than determining the best for each segment in turn. (which is totally

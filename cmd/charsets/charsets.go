@@ -3,7 +3,10 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
 )
@@ -26,14 +29,32 @@ var charsetName = []string{
 }
 
 func main() {
+	os.Exit(run(os.Stdout, os.Stderr))
+}
+
+// run writes the character tables to stdout and returns 1 on a write error,
+// reporting the error on stderr, or 0 on success.
+func run(stdout, stderr io.Writer) int {
+	w := bufio.NewWriter(stdout)
 	for nli := charset.Default; nli <= charset.Urdu; nli++ {
-		fmt.Printf("%s Locking (NLI=%d)\n", charsetName[nli], nli)
-		Display(charset.NewDecoder(nli))
-		fmt.Println()
-		fmt.Printf("%s Shift (NLI=%d)\n", charsetName[nli], nli)
-		Display(charset.NewExtDecoder(nli))
-		fmt.Println()
+		_, _ = fmt.Fprintf(w, "%s Locking (NLI=%d)\n", charsetName[nli], nli)
+		if err := Display(w, charset.NewDecoder(nli)); err != nil {
+			_, _ = fmt.Fprintf(stderr, "charsets: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintf(w, "%s Shift (NLI=%d)\n", charsetName[nli], nli)
+		if err := Display(w, charset.NewExtDecoder(nli)); err != nil {
+			_, _ = fmt.Fprintf(stderr, "charsets: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(w)
 	}
+	if err := w.Flush(); err != nil {
+		_, _ = fmt.Fprintf(stderr, "charsets: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // esc is the escape septet, which is not a character. In a locking shift
@@ -43,11 +64,13 @@ func main() {
 // Note 1 and Annex A.2).
 const esc = 0x1b
 
-// Display prints the character set for a given character set decoder.
+// Display writes the character set for a given decoder, returning the first
+// write error.
 //
 // The escape is shown at 0x1B whatever the decoder has there, as no decoder
 // has an entry for it.
-func Display(m charset.Decoder) {
+func Display(stdout io.Writer, m charset.Decoder) error {
+	w := bufio.NewWriter(stdout)
 	specials := map[rune]string{
 		'\n':   "LF",
 		'\r':   "CR",
@@ -55,31 +78,32 @@ func Display(m charset.Decoder) {
 		' ':    "SP",
 		0x20ac: " €",
 	}
-	fmt.Printf("      ")
+	_, _ = fmt.Fprintf(w, "      ")
 	for c := 0; c < 8; c++ {
-		fmt.Printf("0x%d_ ", c)
+		_, _ = fmt.Fprintf(w, "0x%d_ ", c)
 	}
-	fmt.Println("")
+	_, _ = fmt.Fprintln(w)
 	for r := 0; r < 0x10; r++ {
-		fmt.Printf("0x_%x: ", r)
+		_, _ = fmt.Fprintf(w, "0x_%x: ", r)
 		for c := 0; c < 8; c++ {
 			k := byte(c*0x10 + r)
 			if k == esc {
-				fmt.Printf("%3s  ", "ESC")
+				_, _ = fmt.Fprintf(w, "%3s  ", "ESC")
 				continue
 			}
 			if v, ok := m[k]; ok {
 				if s, ok := specials[v]; ok {
-					fmt.Printf("%3s  ", s)
+					_, _ = fmt.Fprintf(w, "%3s  ", s)
 				} else if v >= 0x400 {
-					fmt.Printf("%04x ", v)
+					_, _ = fmt.Fprintf(w, "%04x ", v)
 				} else {
-					fmt.Printf("  %c  ", v)
+					_, _ = fmt.Fprintf(w, "  %c  ", v)
 				}
 			} else {
-				fmt.Printf("     ")
+				_, _ = fmt.Fprintf(w, "     ")
 			}
 		}
-		fmt.Println()
+		_, _ = fmt.Fprintln(w)
 	}
+	return w.Flush()
 }

@@ -18,6 +18,9 @@ import (
 // the reassembly is abandoned. A Collector is safe for concurrent use by
 // multiple goroutines.
 //
+// A Collector that is no longer needed should be closed, as each pending
+// timer keeps it reachable until the timer fires, or Close stops it.
+//
 // The zero value is a Collector with the default settings, as NewCollector
 // returns without options.
 type Collector struct {
@@ -33,14 +36,22 @@ type Collector struct {
 	handler func([]*tpdu.TPDU, error)
 
 	// settling counts the reassembly timers that may yet call the handler,
-	// which Close waits for.
-	settling sync.WaitGroup
+	// which Close waits for. It is a *sync.WaitGroup, held as a waitGroup so
+	// that tests can check the deltas given to Add.
+	settling waitGroup
 
 	// done is closed once Close has settled every reassembly.
 	done chan struct{}
 
 	// lastID is the id of the last pipe created.
 	lastID uint64
+}
+
+// waitGroup is the part of sync.WaitGroup that a Collector uses.
+type waitGroup interface {
+	Add(delta int)
+	Done()
+	Wait()
 }
 
 // CollectorOption alters the behaviour of a Collector.
@@ -175,6 +186,7 @@ func (c *Collector) init() {
 	}
 	c.pipes = make(map[pipeKey]*pipe)
 	c.done = make(chan struct{})
+	c.settling = new(sync.WaitGroup)
 	if c.timeout == 0 {
 		c.timeout = DefaultReassemblyTimeout
 	}
@@ -369,7 +381,12 @@ func (c *Collector) Collect(pdu *tpdu.TPDU, options ...CollectOption) ([]*tpdu.T
 	segments, abandoned, err := c.collect(pdu, cfg)
 	// Each abandoned reassembly is marked done even if the handler panics,
 	// so that Close does not wait for it for ever.
-	defer c.settling.Add(-len(abandoned))
+	// Add with a zero delta can panic if it races the last Done while Close
+	// waits (https://github.com/golang/go/issues/82140), so it is only
+	// called for abandoned reassemblies.
+	if n := len(abandoned); n > 0 {
+		defer c.settling.Add(-n)
+	}
 	for _, p := range abandoned {
 		c.settle(p, ErrReassemblyLimit)
 	}
@@ -435,7 +452,9 @@ func (c *Collector) collect(pdu *tpdu.TPDU, cfg CollectConfig) ([]*tpdu.TPDU, []
 			p = nil
 		}
 	}
-	c.settling.Add(len(abandoned))
+	if n := len(abandoned); n > 0 {
+		c.settling.Add(n)
+	}
 	if p == nil {
 		p = &pipe{key: key, segments: make([]*tpdu.TPDU, ci.Total)}
 		c.pipes[key] = p

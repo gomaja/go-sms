@@ -156,14 +156,17 @@ func NewEncoder(options ...EncoderOption) *Encoder {
 // segments, and a tpdu.ErrUnsupportedSmsType if the template is of no TPDU
 // type. No TPDU is returned with an error, and no counter is drawn from.
 //
-// The TPDUs returned share no memory with the Encoder, its template or the
-// message, so the caller may change them, and reuse the message.
+// The TPDUs returned share no mutable memory with the Encoder, its template
+// or the message, so the caller may change them, and reuse the message.
 func (e Encoder) Encode(msg []byte, options ...EncoderOption) ([]tpdu.TPDU, error) {
 	// e is a copy, but its slices share their backing arrays with the
 	// Encoder, which may be in use by other goroutines, so appending to them
 	// must allocate.
 	e.eopts = slices.Clip(e.eopts)
 	e.sopts = slices.Clip(e.sopts)
+	if len(options) > 0 {
+		e.pdu = cloneTPDU(&e.pdu)
+	}
 	for _, option := range options {
 		option.ApplyEncoderOption(&e)
 	}
@@ -263,10 +266,11 @@ func withNationalLanguage(udh, nl tpdu.UserDataHeader) (tpdu.UserDataHeader, boo
 // for concurrent use.
 //
 // Its zero value has counted to 0, so its first Count returns 1.
+// A Counter must not be copied after first use.
 //
 // It also provides a Read method on the current value for diagnostic purposes.
 type Counter struct {
-	c int64
+	c atomic.Int64
 }
 
 // NewCounter returns a Counter that has counted to last, so its first Count
@@ -275,16 +279,18 @@ type Counter struct {
 // To continue the TP-MR of a (U)SIM, as 3GPP TS 23.040 Section 9.2.3.6
 // requires, last is its LastUsedTPMR.
 func NewCounter(last int) *Counter {
-	return &Counter{c: int64(last)}
+	c := &Counter{}
+	c.c.Store(int64(last))
+	return c
 }
 
 // Count increments and returns the counter.
 func (c *Counter) Count() int {
-	return int(atomic.AddInt64(&c.c, 1))
+	return int(c.c.Add(1))
 }
 
 // Read returns the value the counter has counted to, which is the value last
 // returned by Count.
 func (c *Counter) Read() int {
-	return int(atomic.LoadInt64(&c.c))
+	return int(c.c.Load())
 }

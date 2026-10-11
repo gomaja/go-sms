@@ -19,6 +19,19 @@ import (
 // longMsg needs two segments.
 var longMsg = []byte(strings.Repeat("a", 200))
 
+func TestCounterEmbeddedAfterInt32(t *testing.T) {
+	v := new(struct {
+		n int32
+		c sms.Counter
+	})
+	v.n = 7
+	assert.Zero(t, v.c.Read())
+	assert.Equal(t, 1, v.c.Count())
+	assert.Equal(t, 1, v.c.Read())
+	assert.Equal(t, 2, v.c.Count())
+	assert.Equal(t, int32(7), v.n)
+}
+
 func concatRef(t *testing.T, pdus []tpdu.TPDU) int {
 	t.Helper()
 	require.Greater(t, len(pdus), 1)

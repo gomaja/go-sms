@@ -13,6 +13,90 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEncoderDefaultCharsetReset(t *testing.T) {
+	patterns := []struct {
+		name    string
+		options []sms.EncoderOption
+		dcs     tpdu.DCS
+		udh     tpdu.UserDataHeader
+	}{
+		{"reset template", []sms.EncoderOption{sms.WithDefaultCharset}, tpdu.DcsUCS2Data, nil},
+		{"all then reset", []sms.EncoderOption{sms.WithAllCharsets, sms.WithDefaultCharset}, tpdu.DcsUCS2Data, nil},
+		{"shift then reset", []sms.EncoderOption{sms.WithDefaultCharset, sms.WithShiftCharset(charset.Turkish), sms.WithDefaultCharset}, tpdu.DcsUCS2Data, nil},
+		{"reset then Turkish", []sms.EncoderOption{sms.WithDefaultCharset, sms.WithCharset(charset.Turkish)}, 0, tpdu.UserDataHeader{lockingIE(charset.Turkish)}},
+		{"reset then all", []sms.EncoderOption{sms.WithDefaultCharset, sms.WithAllCharsets}, 0, tpdu.UserDataHeader{lockingIE(charset.Turkish)}},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			e := sms.NewEncoder(sms.WithCharset(charset.Turkish))
+			out, err := e.Encode([]byte("ı"), p.options...)
+			require.NoError(t, err)
+			require.Len(t, out, 1)
+			assert.Equal(t, p.dcs, out[0].DCS)
+			assert.Equal(t, p.udh, out[0].UDH)
+			out, err = e.Encode([]byte("ı"))
+			require.NoError(t, err)
+			require.Len(t, out, 1)
+			assert.Equal(t, tpdu.DCS(0), out[0].DCS)
+			assert.Equal(t, tpdu.UserDataHeader{lockingIE(charset.Turkish)}, out[0].UDH)
+		})
+	}
+}
+
+// 3GPP TS 23.038 Section 6.2.1.2.5: "the receiving entity shall ignore the
+// IE" when the identifier is not supported. The default table has ì at 0x07 (Section
+// 6.2.1), while the Turkish locking table has ı (Annex A.3.1).
+func TestDecodeDefaultCharsetReset(t *testing.T) {
+	segments := []*tpdu.TPDU{{
+		UDH: tpdu.UserDataHeader{lockingIE(charset.Turkish)},
+		UD:  tpdu.UserData{0x07},
+	}}
+	patterns := []struct {
+		name    string
+		options []sms.DecodeOption
+		want    string
+	}{
+		{"implicit all", nil, "ı"},
+		{"default only", []sms.DecodeOption{sms.WithDefaultCharset}, "ì"},
+		{"all then reset", []sms.DecodeOption{sms.WithAllCharsets, sms.WithDefaultCharset}, "ì"},
+		{"Turkish then reset", []sms.DecodeOption{sms.WithCharset(charset.Turkish), sms.WithDefaultCharset}, "ì"},
+		{"reset then all", []sms.DecodeOption{sms.WithDefaultCharset, sms.WithAllCharsets}, "ı"},
+		{"reset then Turkish", []sms.DecodeOption{sms.WithDefaultCharset, sms.WithCharset(charset.Turkish)}, "ı"},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			msg, err := sms.Decode(segments, p.options...)
+			require.NoError(t, err)
+			assert.Equal(t, p.want, string(msg))
+		})
+	}
+}
+
+func TestEncoderConcurrentDefaultCharsetReset(t *testing.T) {
+	e := sms.NewEncoder(sms.WithCharset(charset.Turkish))
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(reset bool) {
+			defer wg.Done()
+			var options []sms.EncoderOption
+			want := tpdu.DCS(0)
+			if reset {
+				options = []sms.EncoderOption{sms.WithDefaultCharset}
+				want = tpdu.DcsUCS2Data
+			}
+			for i := 0; i < 200; i++ {
+				out, err := e.Encode([]byte("ı"), options...)
+				if err != nil || len(out) != 1 || out[0].DCS != want {
+					t.Errorf("reset %t: got %v, %v; want DCS %02x", reset, out, err, byte(want))
+					return
+				}
+			}
+		}(w%2 == 0)
+	}
+	wg.Wait()
+}
+
 // charsetPatterns are the charset options, each with a message only the
 // national language table it is given can code in GSM 7 bit, and the IE
 // that table gives it.

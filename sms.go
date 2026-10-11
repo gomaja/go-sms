@@ -26,6 +26,11 @@ type DecodeConfig struct {
 // A nil segment, as the Collector gives for a segment that was not received,
 // cannot be decoded, so ErrMissingSegment is returned.
 //
+// Without a charset option every character set is available, as with
+// WithAllCharsets. The charset options instead apply in order, starting from
+// the default character set alone, so WithCharset(charset.Turkish) leaves the
+// Turkish tables as the only national language tables available.
+//
 // A UTF-16 surrogate pair split between two consecutive UCS2 segments is
 // decoded as the one character it codes. Any other surrogate is unpaired and
 // decoded as U+FFFD, as ucs2.Decode does, including a high surrogate that
@@ -120,7 +125,9 @@ func IsCompleteMessage(segments []*tpdu.TPDU) bool {
 	return true
 }
 
-// cloneTPDU returns a copy of the TPDU that shares no memory with it.
+// cloneTPDU returns a copy of the TPDU whose exported slices share no memory
+// with it. The unexported slices holding preserved wire data are shared, as
+// tpdu never modifies their contents.
 //
 // Its slices keep their nil or empty state, as that matters when marshalling:
 // an empty UDH is marshalled as a TP-UDHL of 0, while a nil one is not

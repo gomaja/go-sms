@@ -14,6 +14,74 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEncodeUserDataDefaultCharsetReset(t *testing.T) {
+	for _, option := range []tpdu.UDEncodeOption{
+		tpdu.WithAllCharsets,
+		tpdu.WithCharset(charset.Turkish),
+		tpdu.WithLockingCharset(charset.Turkish),
+		tpdu.WithShiftCharset(charset.Turkish),
+	} {
+		ud, udh, alpha, err := tpdu.EncodeUserData([]byte("ı"), option, tpdu.WithDefaultCharset)
+		require.NoError(t, err)
+		assert.Equal(t, tpdu.AlphaUCS2, alpha)
+		assert.Nil(t, udh)
+		assert.Equal(t, tpdu.UserData{0x01, 0x31}, ud)
+		_, udh, alpha, err = tpdu.EncodeUserData([]byte("ı"), tpdu.WithDefaultCharset, option)
+		require.NoError(t, err)
+		assert.Equal(t, tpdu.Alpha7Bit, alpha)
+		assert.NotEmpty(t, udh)
+	}
+}
+
+// 3GPP TS 23.038 Section 6.2.1.2.5: "the receiving entity shall ignore the
+// IE" for an unsupported national language. 0x07 and ESC 0x69 encode ı in
+// the Turkish tables (Annexes A.3.1 and A.2.1).
+// WithAllCharsets adds the tables after those of earlier options, as
+// WithCharset with every identifier does, so those are tried first: ç is in
+// both the Portuguese and the Turkish locking shift tables (3GPP TS 23.038
+// Annexes A.3.3 and A.3.1).
+func TestEncodeUserDataAllCharsetsOrder(t *testing.T) {
+	all := make([]int, 0, charset.Size)
+	for nli := charset.Start; nli < charset.End; nli++ {
+		all = append(all, nli)
+	}
+	for _, option := range []tpdu.UDEncodeOption{tpdu.WithAllCharsets, tpdu.WithCharset(all...)} {
+		_, udh, alpha, err := tpdu.EncodeUserData([]byte("ç"), tpdu.WithCharset(charset.Portuguese), option)
+		require.NoError(t, err)
+		assert.Equal(t, tpdu.Alpha7Bit, alpha)
+		assert.Equal(t, tpdu.UserDataHeader{{ID: 0x25, Data: []byte{byte(charset.Portuguese)}}}, udh)
+	}
+	_, udh, _, err := tpdu.EncodeUserData([]byte("ç"), tpdu.WithAllCharsets)
+	require.NoError(t, err)
+	assert.Equal(t, tpdu.UserDataHeader{{ID: 0x25, Data: []byte{byte(charset.Turkish)}}}, udh)
+}
+
+func TestDecodeUserDataDefaultCharsetReset(t *testing.T) {
+	udh := tpdu.UserDataHeader{
+		{ID: 0x25, Data: []byte{0x01}},
+		{ID: 0x24, Data: []byte{0x01}},
+	}
+	patterns := []struct {
+		option tpdu.UDDecodeOption
+		want   string
+	}{
+		{tpdu.WithAllCharsets, "ıı"},
+		{tpdu.WithCharset(charset.Turkish), "ıı"},
+		{tpdu.WithLockingCharset(charset.Turkish), "ıi"},
+		{tpdu.WithShiftCharset(charset.Turkish), "ìı"},
+	}
+	for _, p := range patterns {
+		msg, err := tpdu.DecodeUserData(tpdu.UserData{0x07, 0x1b, 0x69}, udh, tpdu.Alpha7Bit,
+			p.option, tpdu.WithDefaultCharset)
+		require.NoError(t, err)
+		assert.Equal(t, "ìi", string(msg))
+		msg, err = tpdu.DecodeUserData(tpdu.UserData{0x07, 0x1b, 0x69}, udh, tpdu.Alpha7Bit,
+			tpdu.WithDefaultCharset, p.option)
+		require.NoError(t, err)
+		assert.Equal(t, p.want, string(msg))
+	}
+}
+
 func TestUserDataHeaderMarshalBinary(t *testing.T) {
 	patterns := []struct {
 		name string
@@ -607,7 +675,8 @@ func TestConcatInfo(t *testing.T) {
 }
 
 func TestDecodeUserData(t *testing.T) {
-	// Also tests NewUDDecoder, AddLockingCharset and AddShiftCharset
+	// Also tests the WithCharset, WithLockingCharset and WithShiftCharset
+	// decode options.
 	patterns := []struct {
 		name    string
 		ud      tpdu.UserData

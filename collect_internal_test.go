@@ -3,6 +3,8 @@
 package sms
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -89,4 +91,67 @@ func TestCollectorLateExpiryKeepsNewReassembly(t *testing.T) {
 	assert.Empty(t, c.Pipes())
 	assert.Equal(t, 1, abandoned)
 	c.Close()
+}
+
+// zeroAddWaitGroup counts the calls of Add with a zero delta, which can panic
+// if one races the last Done while Close waits
+// (https://github.com/golang/go/issues/82140).
+type zeroAddWaitGroup struct {
+	sync.WaitGroup
+	zero atomic.Int32
+}
+
+func (w *zeroAddWaitGroup) Add(delta int) {
+	if delta == 0 {
+		w.zero.Add(1)
+	}
+	w.WaitGroup.Add(delta)
+}
+
+// The Collector gives Add no zero delta on any path: a reassembly started,
+// abandoned at the limit, completed, timed out or closed, a nil segment, and
+// a segment after Close.
+func TestCollectorSettlingAdds(t *testing.T) {
+	segment := func(ref, seqno byte) *tpdu.TPDU {
+		p := tpdu.TPDU{OA: tpdu.Address{Addr: "1234", TOA: 0x91}}
+		p.SetUDH(tpdu.UserDataHeader{{ID: 0, Data: []byte{ref, 2, seqno}}})
+		return &p
+	}
+	reasons := make(chan error, 8)
+	collector := func(options ...CollectorOption) (*Collector, *zeroAddWaitGroup) {
+		options = append(options, WithExpiryHandler(func(_ []*tpdu.TPDU, reason error) {
+			reasons <- reason
+		}))
+		c := NewCollector(options...)
+		c.Pipes() // initialises the Collector
+		w := &zeroAddWaitGroup{}
+		c.settling = w
+		return c, w
+	}
+
+	c, w := collector(WithReassemblyLimit(1))
+	_, err := c.Collect(segment(1, 1))
+	require.NoError(t, err)
+	_, err = c.Collect(segment(2, 1))
+	require.NoError(t, err)
+	assert.Equal(t, ErrReassemblyLimit, <-reasons)
+	out, err := c.Collect(segment(2, 2))
+	require.NoError(t, err)
+	assert.Len(t, out, 2)
+	_, err = c.Collect(nil)
+	assert.Equal(t, ErrMissingSegment, err)
+	_, err = c.Collect(segment(3, 1))
+	require.NoError(t, err)
+	c.Close()
+	assert.Equal(t, ErrClosed, <-reasons)
+	_, err = c.Collect(segment(4, 1))
+	assert.Equal(t, ErrClosed, err)
+	assert.Zero(t, w.zero.Load(), "Add with a zero delta")
+
+	c, w = collector(WithReassemblyTimeout(time.Millisecond))
+	_, err = c.Collect(segment(1, 1))
+	require.NoError(t, err)
+	assert.Equal(t, ErrReassemblyTimeout, <-reasons)
+	c.Close()
+	assert.Zero(t, w.zero.Load(), "Add with a zero delta")
 }
