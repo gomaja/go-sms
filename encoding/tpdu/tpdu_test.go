@@ -4949,6 +4949,18 @@ func TestReportReservedPILength(t *testing.T) {
 	}
 }
 
+// TestLongPIChain checks that a TP-PI whose extension octets run past the
+// 164-octet budget is refused where they do, rather than read to the end of
+// the input.
+func TestLongPIChain(t *testing.T) {
+	in := append([]byte{0x00, 0xff}, bytes.Repeat([]byte{0xff}, 1<<20)...)
+	d := tpdu.TPDU{Direction: tpdu.MO}
+	err := d.UnmarshalBinary(in)
+	assert.ErrorIs(t, err, tpdu.ErrOverlength)
+	assert.ErrorContains(t, err, ".pi at octet 164")
+	assert.Less(t, len(d.PIExt), 164)
+}
+
 // TestReceivedAddressLength checks the 164-octet budget against the octets
 // received, which an alphanumeric address can take more of than it marshals
 // to: an escape followed by another is read as a space (3GPP TS 23.038

@@ -569,8 +569,9 @@ func (t *TPDU) SetSmsType(st SmsType) error {
 // data and the TP-CD of an SMS-COMMAND, it is the number of octets, and for
 // UCS2 it is even.
 //
-// The size is negative if the UDH does not fit in the TPDU, or, without a
-// UDH, if the other fields of a report already fill it.
+// The size is negative if the TPDU cannot be marshalled even without UD, as
+// when the UDH does not fit, or the other fields of a report take more than
+// the TPDU can hold. It is 0 for a report they fill exactly.
 func (t *TPDU) UDBlockSize() int {
 	if t.keepsIgnoredUDH() {
 		return t.blockSize(len(t.ignoredUDH))
@@ -1229,6 +1230,11 @@ func (t *TPDU) unmarshalPI(src []byte, ri int) (int, error) {
 	for ext := t.PI&PiExt != 0; ext; ri++ {
 		if len(src) <= ri {
 			return ri, NewDecodeError("pi", ri, ErrUnderflow)
+		}
+		// The TP-PI is one of the fields that must fit the budget, so a
+		// chain of extension octets that runs past it is refused there.
+		if 1+ri >= maxDefinedTPDULen {
+			return ri, NewDecodeError("pi", ri, ErrOverlength)
 		}
 		t.PIExt = append(t.PIExt, src[ri])
 		ext = src[ri]&PiExt != 0
