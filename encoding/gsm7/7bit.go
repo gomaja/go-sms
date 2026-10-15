@@ -104,43 +104,62 @@ func checkFillBits(fillBits int) {
 	}
 }
 
-// Pack7BitUSSD packs an array of septets into an 8bit array as per the USSD
-// packing rules defined in 3GPP TS 23.038 Section 6.1.2.3.1.
+// Pack7BitCR packs septets as Pack7Bit does, with the CR padding used for
+// USSD in 3GPP TS 23.038 V20.0.0 Section 6.1.2.3.1. It is for data whose
+// length is given in octets rather than septets.
 //
-// The septets are packed as for SMS, with no fill bits. A message of 8n-1
-// septets leaves 7 spare bits in the final octet, and these are filled with
-// CR rather than zeroes so the receiver does not decode them as '@'. A message
-// of 8n septets that ends with CR ends on an octet boundary, where the
-// receiver would discard that CR as filler, so a second CR is appended.
+// The fillBits is the number of zero bits before the septets. As for Pack7Bit,
+// it must be 0 to 6, and Pack7BitCR panics on any other value. It returns an
+// ErrInvalidSeptet for the first byte above 0x7F. An empty u packs to no octets.
 //
-// As for Pack7Bit, it returns an ErrInvalidSeptet for a byte above 0x7F.
-func Pack7BitUSSD(u []byte) ([]byte, error) {
-	p, err := Pack7Bit(u, 0)
+// If the fill bits and septets leave 7 spare bits in the last octet, those
+// bits are filled with CR so the receiver does not decode them as '@'. If a
+// final CR ends on an octet boundary, another CR and a zero padding bit are
+// appended. All other spare bits are zero.
+func Pack7BitCR(u []byte, fillBits int) ([]byte, error) {
+	p, err := Pack7Bit(u, fillBits)
 	if err != nil {
 		return nil, err
 	}
+	if len(u) == 0 {
+		return p, nil
+	}
+	spare := (8 - (fillBits+7*len(u))%8) % 8
 	switch {
-	case len(u)%8 == 7:
+	case spare == 7:
 		p[len(p)-1] |= cr << 1
-	case len(u)%8 == 0 && len(u) > 0 && u[len(u)-1] == cr:
+	case spare == 0 && u[len(u)-1] == cr:
 		p = append(p, cr)
 	}
 	return p, nil
 }
 
-// Unpack7BitUSSD unpacks septets, packed into an 8bit array as per the USSD
-// packing rules defined in 3GPP TS 23.038 Section 6.1.2.3.1, into an array of
-// septets.
+// Unpack7BitCR unpacks septets as Unpack7Bit does, and removes a final CR
+// where the septets end on an octet boundary, following 3GPP TS 23.038
+// V20.0.0 Section 6.1.2.3.1. The fillBits must be 0 to 6, as for Unpack7Bit;
+// Unpack7BitCR panics on any other value. No octets unpack to no septets.
 //
-// When the septets end on an octet boundary, which is when the number of
-// octets is a multiple of 7, a final CR is filler and is removed. A message
-// that the sender ended with a doubled CR keeps both, as "the definition of
-// <CR> in clause 6.1.1 is identical to the definition of <CR><CR>" (3GPP TS
-// 23.038 Section 6.1.2.3.1, which also has the sender double the CR).
-func Unpack7BitUSSD(p []byte) []byte {
-	u := Unpack7Bit(p, 0)
-	if len(p)%7 == 0 && len(u) > 0 && u[len(u)-1] == cr {
+// A final CR doubled by Pack7BitCR keeps both CRs: Section 6.1.2.3.1 defines
+// CR and CR CR to have the same effect. A caller that knows the number of
+// septets can instead take that many from Unpack7Bit.
+func Unpack7BitCR(p []byte, fillBits int) []byte {
+	u := Unpack7Bit(p, fillBits)
+	if (8*len(p)-fillBits)%7 == 0 && len(u) > 0 && u[len(u)-1] == cr {
 		u = u[:len(u)-1]
 	}
 	return u
+}
+
+// Pack7BitUSSD packs septets using the USSD packing rules defined in 3GPP
+// TS 23.038 Section 6.1.2.3.1. It is Pack7BitCR with no fill bits.
+//
+// As for Pack7Bit, it returns an ErrInvalidSeptet for a byte above 0x7F.
+func Pack7BitUSSD(u []byte) ([]byte, error) {
+	return Pack7BitCR(u, 0)
+}
+
+// Unpack7BitUSSD unpacks septets using the USSD packing rules defined in
+// 3GPP TS 23.038 Section 6.1.2.3.1. It is Unpack7BitCR with no fill bits.
+func Unpack7BitUSSD(p []byte) []byte {
+	return Unpack7BitCR(p, 0)
 }
