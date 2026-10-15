@@ -41,7 +41,49 @@ func TestDecode(t *testing.T) {
 		{
 			"odd",
 			[]byte{1, 2, 3, 4, 5},
+			[]rune{0x0102, 0x0304},
+			ucs2.ErrInvalidLength,
+		},
+		{
+			"odd bmp",
+			[]byte{0x00, 0x41, 0x00},
+			[]rune{'A'},
+			ucs2.ErrInvalidLength,
+		},
+		{
+			"odd single octet",
+			[]byte{0x00},
 			nil,
+			ucs2.ErrInvalidLength,
+		},
+		{
+			"odd high surrogate",
+			[]byte{0xd8, 0x3d, 0x00},
+			[]rune{0xfffd},
+			ucs2.ErrInvalidLength,
+		},
+		{
+			"odd bmp high surrogate",
+			[]byte{0x00, 0x41, 0xd8, 0x3d, 0x00},
+			[]rune{'A', 0xfffd},
+			ucs2.ErrInvalidLength,
+		},
+		{
+			"odd bmp low surrogate",
+			[]byte{0x00, 0x41, 0xde, 0x01, 0x00},
+			[]rune{'A', 0xfffd},
+			ucs2.ErrInvalidLength,
+		},
+		{
+			"odd pair",
+			[]byte{0xd8, 0x3d, 0xde, 0x01, 0xd8},
+			[]rune{0x1f601},
+			ucs2.ErrInvalidLength,
+		},
+		{
+			"odd high surrogate before pair",
+			[]byte{0xd8, 0x3d, 0xd8, 0x3d, 0xde, 0x01, 0x00},
+			[]rune{0xfffd, 0x1f601},
 			ucs2.ErrInvalidLength,
 		},
 		{
@@ -297,14 +339,18 @@ func TestErrDanglingSurrogateCopy(t *testing.T) {
 
 // FuzzDecode checks Decode against the standard library UTF-16 decoder, which
 // replaces each unpaired surrogate with U+FFFD and keeps the unit after it.
-// The one difference is a trailing high surrogate, which Decode returns as an
-// ErrDanglingSurrogate so it can be joined to the next segment. Well-formed
-// input must also re-encode unchanged with EncodeUTF16, and with Encode if it
-// holds no surrogate pair.
+// The differences are a trailing high surrogate, which Decode returns as an
+// ErrDanglingSurrogate so it can be joined to the next segment, and the final
+// octet of an odd length, which Decode leaves undecoded and reports with
+// ErrInvalidLength. Well-formed units must also re-encode unchanged with
+// EncodeUTF16, and with Encode if they hold no surrogate pair.
 func FuzzDecode(f *testing.F) {
 	seeds := [][]byte{
 		nil,
 		{1, 2, 3, 4, 5},
+		{0x00},
+		{0x00, 0x41, 0x00},
+		{0x00, 0x41, 0xd8, 0x3d, 0x00},
 		{
 			0x4F, 0x60, 0x59, 0x7D, 0xFF, 0x01, 0x00, 0x48, 0x00, 0x6F,
 			0x00, 0x77, 0x00, 0x64, 0x00, 0x79,
@@ -322,20 +368,20 @@ func FuzzDecode(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, src []byte) {
 		dst, err := ucs2.Decode(src)
-		if len(src)%2 != 0 {
-			require.Equal(t, ucs2.ErrInvalidLength, err)
-			require.Nil(t, dst)
-			return
-		}
 		units := make([]uint16, len(src)/2)
 		for i := range units {
 			units[i] = binary.BigEndian.Uint16(src[2*i:])
 		}
 		n := len(units)
-		if n > 0 && units[n-1] >= 0xd800 && units[n-1] < 0xdc00 {
+		switch {
+		case len(src)%2 != 0:
+			// A high surrogate before the final octet is unpaired, as the
+			// standard library has a trailing one.
+			require.Equal(t, ucs2.ErrInvalidLength, err)
+		case n > 0 && units[n-1] >= 0xd800 && units[n-1] < 0xdc00:
 			require.Equal(t, ucs2.ErrDanglingSurrogate(src[len(src)-2:]), err)
 			units = units[:n-1]
-		} else {
+		default:
 			require.NoError(t, err)
 		}
 		want := utf16.Decode(units)

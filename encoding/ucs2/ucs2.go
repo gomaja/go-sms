@@ -41,8 +41,13 @@ import (
 // surrogate followed by a low surrogate is decoded as one rune, as RFC 2781
 // Section 2.2 decodes it.
 //
-// As each unit is two bytes, the length of the byte array provided must be
-// even, or ErrInvalidLength is returned.
+// As each unit is two bytes, UCS2 having "Bits per character: 16" (3GPP TS
+// 23.038 Section 6.2.3), the length of the byte array provided must be even.
+// If it is odd then ErrInvalidLength is returned, with the runes decoded from
+// the complete units before the final octet. That octet is not decoded, nor
+// held for the next segment of a concatenated message, in which "A UCS2
+// character shall not be split in the middle" (3GPP TS 23.040 Sections
+// 9.2.3.24.1 and 9.2.3.24.8).
 //
 // Any other surrogate is unpaired, an error from which RFC 2781 Section 2.2
 // leaves the recovery to the decoder ("Error recovery is not specified by
@@ -50,13 +55,16 @@ import (
 // U+FFFD and consumes only its own two bytes. If the array ends with a high
 // surrogate then the runes before it are returned with an
 // ErrDanglingSurrogate holding that unit, which the next segment of a
-// concatenated message may complete.
+// concatenated message may complete. A high surrogate followed by the final
+// octet of an odd length is unpaired, so only ErrInvalidLength is returned.
 func Decode(src []byte) ([]rune, error) {
-	if len(src) == 0 {
-		return nil, nil
-	}
+	var err error
 	if len(src)&0x01 == 0x01 {
-		return nil, ErrInvalidLength
+		src = src[:len(src)-1]
+		err = ErrInvalidLength
+	}
+	if len(src) == 0 {
+		return nil, err
 	}
 	l := len(src) / 2
 	dst := make([]rune, 0, l)
@@ -65,6 +73,10 @@ func Decode(src []byte) ([]rune, error) {
 		switch {
 		case isHighSurrogate(r):
 			if ri+2 == len(src) {
+				if err != nil {
+					// Followed by the final octet, not a low surrogate.
+					return append(dst, unicode.ReplacementChar), err
+				}
 				// Copied, as the caller may append to it.
 				return dst, ErrDanglingSurrogate(append([]byte(nil), src[ri:]...))
 			}
@@ -83,7 +95,7 @@ func Decode(src []byte) ([]rune, error) {
 		}
 		dst = append(dst, r)
 	}
-	return dst, nil
+	return dst, err
 }
 
 func isHighSurrogate(r rune) bool {
@@ -243,6 +255,7 @@ func (e ErrDanglingSurrogate) Error() string {
 }
 
 var (
-	// ErrInvalidLength indicates the binary provided has an invalid (odd) length.
+	// ErrInvalidLength indicates the binary provided has an invalid (odd)
+	// length. Decode returns it with the runes decoded before the final octet.
 	ErrInvalidLength = errors.New("ucs2: length must be even")
 )
