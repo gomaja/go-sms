@@ -46,6 +46,12 @@ aligned to ITU-T E.164 (02/2026). A number given as a string is international
 only if it starts with '+', and is otherwise of unknown type, following the
 default type of address of 3GPP TS 27.005 Section 3.1.
 
+The `encoding/cbs` package covers the CBS Data Coding Scheme in
+3GPP TS 23.038 V20.0.0 Section 5 and provides USSD text helpers, including
+its language indications. TS 29.002 V19.1.0 Section 17.7.4 defines the USSD
+data coding scheme by reference to this CBS scheme. Cell Broadcast message
+pages (TS 23.041) are not implemented; USSD length limits are left to the caller.
+
 The package does not implement the RP/CP transport procedures in
 3GPP TS 24.011, SMS over IP in 3GPP TS 24.341, or the `sms:` URI scheme in
 RFC 5724.
@@ -499,6 +505,8 @@ or SMS-SUBMIT-REPORT carried by an RP-ERROR, which has a TP-FCS, with -e.
 The [tpdu](encoding/tpdu) package [![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white&style=flat-square)](https://pkg.go.dev/github.com/gomaja/go-sms/encoding/tpdu) provides the core TPDU types and conversions to and from their binary form.
 
 The [pdumode](encoding/pdumode) package [![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white&style=flat-square)](https://pkg.go.dev/github.com/gomaja/go-sms/encoding/pdumode) provides encoding and decoding of PDUs exchanged with GSM modems in PDU mode.
+
+The [cbs](encoding/cbs) package [![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white&style=flat-square)](https://pkg.go.dev/github.com/gomaja/go-sms/encoding/cbs) provides the CBS Data Coding Scheme and USSD text encoding and decoding, including language indications, as specified in 3GPP TS 23.038 Section 5.
 
 A number of packages provide functionality to encode and decode TPDU fields:
 
