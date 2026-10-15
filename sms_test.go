@@ -189,6 +189,22 @@ func TestDecode(t *testing.T) {
 			nil,
 		},
 		{
+			"ucs2 odd segment before low surrogate",
+			[]*tpdu.TPDU{
+				{
+					DCS: tpdu.DcsUCS2Data,
+					UD:  []byte{0x00, 0x41, 0xd8, 0x3d, 0x00},
+				},
+				{
+					DCS: tpdu.DcsUCS2Data,
+					UD:  []byte{0xde, 0x01, 0x00, 0x42},
+				},
+			},
+			nil,
+			nil,
+			ucs2.ErrInvalidLength,
+		},
+		{
 			"ucs2 odd length",
 			[]*tpdu.TPDU{
 				{
