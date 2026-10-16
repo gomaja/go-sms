@@ -190,6 +190,9 @@ func (udh UserDataHeader) IEs(id byte) []InformationElement {
 // ConcatInfo is the segmentation information carried by a Concatenated short
 // messages IE, as defined in 3GPP TS 23.040 Sections 9.2.3.24.1 (8-bit
 // reference number) and 9.2.3.24.8 (16-bit reference number).
+//
+// The values may be out of range, as InformationElement.ConcatInfo does not
+// check them; Valid reports whether they are in range.
 type ConcatInfo struct {
 	// Ref is the concatenated short message reference number.
 	Ref int
@@ -207,7 +210,7 @@ type ConcatInfo struct {
 	Total int
 
 	// Seqno is the sequence number of the short message within the
-	// concatenated short message, from 1 to Total.
+	// concatenated short message, from 1 to Total when Valid returns true.
 	Seqno int
 }
 
@@ -223,36 +226,78 @@ type ConcatInfo struct {
 // means skipping over it, so of the remaining 8-bit and 16-bit concatenation
 // IEs, which are mutually exclusive, the last occurring one is used, as
 // required by 3GPP TS 23.040 Section 9.2.3.24.
+//
+// InformationElement.ConcatInfo decodes a concatenation IE whatever its
+// values, so a caller can tell a header whose concatenation IE is ignored
+// from one without any.
 func (udh UserDataHeader) ConcatInfo() (ci ConcatInfo, ok bool) {
 	for i := len(udh) - 1; i >= 0; i-- {
-		if ci, ok = udh[i].concatInfo(); ok {
-			return ci, ok
+		if ci, err := udh[i].ConcatInfo(); err == nil && ci.Valid() {
+			return ci, true
 		}
 	}
 	return ConcatInfo{}, false
 }
 
-// concatInfo returns the segmentation info carried by the IE, if it is a valid
-// concatenation IE.
-func (ie InformationElement) concatInfo() (ConcatInfo, bool) {
+// ConcatInfo decodes the values carried by a concatenation IE, as defined in
+// 3GPP TS 23.040 Sections 9.2.3.24.1 (8-bit reference number) and 9.2.3.24.8
+// (16-bit reference number), without checking their ranges, so unlike
+// UserDataHeader.ConcatInfo it also returns those of an IE that a receiving
+// entity ignores. Valid reports whether a receiving entity uses them.
+//
+// An IE with another IEI returns a DecodeError for the iei wrapping
+// ErrInvalid. Data other than the 3 octets of the 8-bit reference IE, or the
+// 4 of the 16-bit one, returns a DecodeError for the ied wrapping
+// ErrUnderflow if it is shorter, or ErrOverlength if it is longer. The
+// ConcatInfo is then zero.
+func (ie InformationElement) ConcatInfo() (ConcatInfo, error) {
+	var length int
+	switch ie.ID {
+	case IEIConcat8Bit:
+		length = 3
+	case IEIConcat16Bit:
+		length = 4
+	default:
+		return ConcatInfo{}, NewDecodeError("iei", 0, ErrInvalid)
+	}
+	if len(ie.Data) < length {
+		return ConcatInfo{}, NewDecodeError("ied", 2, ErrUnderflow)
+	}
+	if len(ie.Data) > length {
+		return ConcatInfo{}, NewDecodeError("ied", 2, ErrOverlength)
+	}
 	var ci ConcatInfo
-	switch {
-	case ie.ID == IEIConcat8Bit && len(ie.Data) == 3:
+	if ie.ID == IEIConcat8Bit {
 		ci.Ref = int(ie.Data[0])
 		ci.Total = int(ie.Data[1])
 		ci.Seqno = int(ie.Data[2])
-	case ie.ID == IEIConcat16Bit && len(ie.Data) == 4:
+	} else {
 		ci.Ref = int(binary.BigEndian.Uint16(ie.Data[0:2]))
 		ci.Ref16Bit = true
 		ci.Total = int(ie.Data[2])
 		ci.Seqno = int(ie.Data[3])
-	default:
-		return ConcatInfo{}, false
 	}
-	if ci.Total == 0 || ci.Seqno == 0 || ci.Seqno > ci.Total {
-		return ConcatInfo{}, false
+	return ci, nil
+}
+
+// Valid reports whether every value fits in a concatenation IE and can be
+// used by a receiving entity. Ref must fit in 8 bits, or 16 bits when Ref16Bit
+// is true; Total must be from 1 to 255 and Seqno from 1 to Total.
+//
+// 3GPP TS 23.040 Section 9.2.3.24.1 states for the total: "If the value is
+// zero then the receiving entity shall ignore the whole Information Element."
+// For the sequence number it states: "If the value is zero or the value is
+// greater than the value in octet 2 then the receiving entity shall ignore
+// the whole Information Element." Section 9.2.3.24.8 applies the same rules
+// to the 16-bit reference IE, whose total is in octet 3.
+func (ci ConcatInfo) Valid() bool {
+	maxRef := 255
+	if ci.Ref16Bit {
+		maxRef = 65535
 	}
-	return ci, true
+	return ci.Ref >= 0 && ci.Ref <= maxRef &&
+		ci.Total >= 1 && ci.Total <= maxSegments &&
+		ci.Seqno >= 1 && ci.Seqno <= ci.Total
 }
 
 type udDecodeConfig struct {

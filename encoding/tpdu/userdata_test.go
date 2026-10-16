@@ -815,6 +815,148 @@ func TestConcatInfo(t *testing.T) {
 	}
 }
 
+func TestUserDataHeaderConcatInfoAllValues(t *testing.T) {
+	for _, wide := range []bool{false, true} {
+		for total := 0; total <= 255; total++ {
+			for seqno := 0; seqno <= 255; seqno++ {
+				ref := total ^ seqno
+				ie := tpdu.InformationElement{ID: tpdu.IEIConcat8Bit, Data: []byte{byte(ref), byte(total), byte(seqno)}}
+				if wide {
+					ref = total<<8 | seqno
+					ie = tpdu.InformationElement{ID: tpdu.IEIConcat16Bit, Data: []byte{byte(total), byte(seqno), byte(total), byte(seqno)}}
+				}
+				// 3GPP TS 23.040 Sections 9.2.3.24.1 and 9.2.3.24.8:
+				// ignore a zero total, a zero sequence number, or one beyond the total.
+				wantOK := total >= 1 && seqno >= 1 && seqno <= total
+				decoded, err := ie.ConcatInfo()
+				wantDecoded := tpdu.ConcatInfo{Ref: ref, Ref16Bit: wide, Total: total, Seqno: seqno}
+				if err != nil || decoded != wantDecoded || decoded.Valid() != wantOK {
+					t.Fatalf("wide=%t total=%d seqno=%d: decoded %+v, %v; want %+v, valid=%t", wide, total, seqno, decoded, err, wantDecoded, wantOK)
+				}
+				want := tpdu.ConcatInfo{}
+				if wantOK {
+					want = wantDecoded
+				}
+				got, ok := (tpdu.UserDataHeader{ie}).ConcatInfo()
+				if got != want || ok != wantOK {
+					t.Fatalf("wide=%t total=%d seqno=%d: got %+v, %t; want %+v, %t", wide, total, seqno, got, ok, want, wantOK)
+				}
+			}
+		}
+	}
+}
+
+func TestInformationElementConcatInfo(t *testing.T) {
+	patterns := []struct {
+		name   string
+		ie     tpdu.InformationElement
+		ci     tpdu.ConcatInfo
+		valid  bool
+		err    error
+		field  string
+		offset int
+	}{
+		{"concat8", tpdu.InformationElement{ID: 0, Data: []byte{78, 3, 2}}, tpdu.ConcatInfo{Ref: 78, Total: 3, Seqno: 2}, true, nil, "", 0},
+		{"concat16", tpdu.InformationElement{ID: 8, Data: []byte{0x12, 0x34, 3, 2}}, tpdu.ConcatInfo{Ref: 0x1234, Ref16Bit: true, Total: 3, Seqno: 2}, true, nil, "", 0},
+		{"part 5 of 3", tpdu.InformationElement{ID: 0, Data: []byte{78, 3, 5}}, tpdu.ConcatInfo{Ref: 78, Total: 3, Seqno: 5}, false, nil, "", 0},
+		{"part 0 of 3", tpdu.InformationElement{ID: 8, Data: []byte{0x12, 0x34, 3, 0}}, tpdu.ConcatInfo{Ref: 0x1234, Ref16Bit: true, Total: 3}, false, nil, "", 0},
+		{"total 0", tpdu.InformationElement{ID: 0, Data: []byte{78, 0, 1}}, tpdu.ConcatInfo{Ref: 78, Seqno: 1}, false, nil, "", 0},
+		{"zero8", tpdu.InformationElement{ID: 0, Data: []byte{0, 0, 0}}, tpdu.ConcatInfo{}, false, nil, "", 0},
+		{"zero16", tpdu.InformationElement{ID: 8, Data: []byte{0, 0, 0, 0}}, tpdu.ConcatInfo{Ref16Bit: true}, false, nil, "", 0},
+		{"max8", tpdu.InformationElement{ID: 0, Data: []byte{255, 255, 255}}, tpdu.ConcatInfo{Ref: 255, Total: 255, Seqno: 255}, true, nil, "", 0},
+		{"max16", tpdu.InformationElement{ID: 8, Data: []byte{255, 255, 255, 255}}, tpdu.ConcatInfo{Ref: 65535, Ref16Bit: true, Total: 255, Seqno: 255}, true, nil, "", 0},
+		{"id1 length3", tpdu.InformationElement{ID: 1, Data: []byte{1, 2, 3}}, tpdu.ConcatInfo{}, false, tpdu.ErrInvalid, "iei", 0},
+		{"id1 length4", tpdu.InformationElement{ID: 1, Data: []byte{1, 2, 3, 4}}, tpdu.ConcatInfo{}, false, tpdu.ErrInvalid, "iei", 0},
+		{"id9 length3", tpdu.InformationElement{ID: 9, Data: []byte{1, 2, 3}}, tpdu.ConcatInfo{}, false, tpdu.ErrInvalid, "iei", 0},
+		{"id9 length4", tpdu.InformationElement{ID: 9, Data: []byte{1, 2, 3, 4}}, tpdu.ConcatInfo{}, false, tpdu.ErrInvalid, "iei", 0},
+		{"nil8", tpdu.InformationElement{ID: 0}, tpdu.ConcatInfo{}, false, tpdu.ErrUnderflow, "ied", 2},
+		{"empty8", tpdu.InformationElement{ID: 0, Data: []byte{}}, tpdu.ConcatInfo{}, false, tpdu.ErrUnderflow, "ied", 2},
+		{"short8", tpdu.InformationElement{ID: 0, Data: []byte{1, 2}}, tpdu.ConcatInfo{}, false, tpdu.ErrUnderflow, "ied", 2},
+		{"long8", tpdu.InformationElement{ID: 0, Data: []byte{1, 2, 1, 4}}, tpdu.ConcatInfo{}, false, tpdu.ErrOverlength, "ied", 2},
+		{"nil16", tpdu.InformationElement{ID: 8}, tpdu.ConcatInfo{}, false, tpdu.ErrUnderflow, "ied", 2},
+		{"short16", tpdu.InformationElement{ID: 8, Data: []byte{1, 2, 3}}, tpdu.ConcatInfo{}, false, tpdu.ErrUnderflow, "ied", 2},
+		{"long16", tpdu.InformationElement{ID: 8, Data: []byte{1, 2, 3, 1, 5}}, tpdu.ConcatInfo{}, false, tpdu.ErrOverlength, "ied", 2},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			ci, err := p.ie.ConcatInfo()
+			assert.Equal(t, p.ci, ci)
+			if p.err != nil {
+				require.True(t, errors.Is(err, p.err))
+				var de tpdu.DecodeError
+				require.True(t, errors.As(err, &de))
+				assert.Equal(t, p.field, de.Field)
+				assert.Equal(t, p.offset, de.Offset)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, p.valid, ci.Valid())
+		})
+	}
+}
+
+func TestInformationElementConcatInfoAllIDsAndLengths(t *testing.T) {
+	for id := 0; id <= 255; id++ {
+		for length := 0; length <= 255; length++ {
+			ie := tpdu.InformationElement{ID: byte(id), Data: bytes.Repeat([]byte{1}, length)}
+			ci, err := ie.ConcatInfo()
+			var wantErr error
+			field, offset := "ied", 2
+			switch {
+			case id != 0 && id != 8:
+				wantErr, field, offset = tpdu.ErrInvalid, "iei", 0
+			case id == 0 && length < 3 || id == 8 && length < 4:
+				wantErr = tpdu.ErrUnderflow
+			case id == 0 && length > 3 || id == 8 && length > 4:
+				wantErr = tpdu.ErrOverlength
+			}
+			if wantErr == nil {
+				if err != nil {
+					t.Fatalf("id=%d length=%d: %v", id, length, err)
+				}
+				continue
+			}
+			var de tpdu.DecodeError
+			if !errors.Is(err, wantErr) || !errors.As(err, &de) || de.Field != field || de.Offset != offset || ci != (tpdu.ConcatInfo{}) {
+				t.Fatalf("id=%d length=%d: got %+v, %v; want zero, %s at %d: %v", id, length, ci, err, field, offset, wantErr)
+			}
+		}
+	}
+}
+
+func TestConcatInfoValid(t *testing.T) {
+	patterns := []struct {
+		name  string
+		ci    tpdu.ConcatInfo
+		valid bool
+	}{
+		{"zero", tpdu.ConcatInfo{}, false},
+		{"negative ref8", tpdu.ConcatInfo{Ref: -1, Total: 1, Seqno: 1}, false},
+		{"max ref8", tpdu.ConcatInfo{Ref: 255, Total: 1, Seqno: 1}, true},
+		{"large ref8", tpdu.ConcatInfo{Ref: 256, Total: 1, Seqno: 1}, false},
+		{"negative ref16", tpdu.ConcatInfo{Ref: -1, Ref16Bit: true, Total: 1, Seqno: 1}, false},
+		{"ref16", tpdu.ConcatInfo{Ref: 256, Ref16Bit: true, Total: 1, Seqno: 1}, true},
+		{"max ref16", tpdu.ConcatInfo{Ref: 65535, Ref16Bit: true, Total: 1, Seqno: 1}, true},
+		{"large ref16", tpdu.ConcatInfo{Ref: 65536, Ref16Bit: true, Total: 1, Seqno: 1}, false},
+		{"negative total", tpdu.ConcatInfo{Total: -1, Seqno: 1}, false},
+		{"zero total", tpdu.ConcatInfo{Total: 0, Seqno: 1}, false},
+		{"one total", tpdu.ConcatInfo{Total: 1, Seqno: 1}, true},
+		{"max total", tpdu.ConcatInfo{Total: 255, Seqno: 1}, true},
+		{"large total", tpdu.ConcatInfo{Total: 256, Seqno: 1}, false},
+		{"negative seqno", tpdu.ConcatInfo{Total: 3, Seqno: -1}, false},
+		{"zero seqno", tpdu.ConcatInfo{Total: 3, Seqno: 0}, false},
+		{"one seqno", tpdu.ConcatInfo{Total: 3, Seqno: 1}, true},
+		{"last seqno", tpdu.ConcatInfo{Total: 3, Seqno: 3}, true},
+		{"large seqno", tpdu.ConcatInfo{Total: 3, Seqno: 4}, false},
+		{"negative pair", tpdu.ConcatInfo{Total: -5, Seqno: -6}, false},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			assert.Equal(t, p.valid, p.ci.Valid())
+		})
+	}
+}
+
 func TestDecodeUserData(t *testing.T) {
 	// Also tests the WithCharset, WithLockingCharset and WithShiftCharset
 	// decode options.
