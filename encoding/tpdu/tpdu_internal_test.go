@@ -526,6 +526,9 @@ func TestChunk7Bit(t *testing.T) {
 		f := func(t *testing.T) {
 			out := chunk7Bit(p.in, p.bs)
 			assert.Equal(t, p.out, out)
+			for _, c := range out {
+				assert.Equal(t, len(c), cap(c))
+			}
 		}
 		t.Run(p.name, f)
 	}
@@ -586,6 +589,9 @@ func TestChunk8Bit(t *testing.T) {
 		f := func(t *testing.T) {
 			out := chunk8Bit(p.in, p.bs)
 			assert.Equal(t, p.out, out)
+			for _, c := range out {
+				assert.Equal(t, len(c), cap(c))
+			}
 		}
 		t.Run(p.name, f)
 	}
@@ -684,6 +690,9 @@ func TestChunkUCS2(t *testing.T) {
 		f := func(t *testing.T) {
 			out := chunkUCS2(p.in, p.bs)
 			assert.Equal(t, p.out, out)
+			for _, c := range out {
+				assert.Equal(t, len(c), cap(c))
+			}
 		}
 		t.Run(p.name, f)
 	}

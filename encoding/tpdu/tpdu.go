@@ -340,6 +340,8 @@ type SegmentationOption func(*segmentationConfig)
 // No counter is drawn from on error.
 //
 // The template, including the backing array of its UDH, is not changed.
+// The UDs share the array of the message, with their capacity limited to their
+// length, so appending to one changes neither another nor the message.
 func (t TPDU) Segment(msg []byte, options ...SegmentationOption) ([]TPDU, error) {
 	cfg := segmentationConfig{newInfoElement, nil, nil}
 	for _, o := range options {
@@ -363,7 +365,7 @@ func (t TPDU) Segment(msg []byte, options ...SegmentationOption) ([]TPDU, error)
 		p := t
 		p.UD = nil
 		if len(msg) > 0 {
-			p.UD = msg
+			p.UD = msg[:len(msg):len(msg)]
 		}
 		if cfg.mr != nil && allocatesMR(st) {
 			p.MR = byte(cfg.mr.Count())
@@ -1903,6 +1905,55 @@ const (
 	esc byte = 0x1b
 )
 
+// SplitUserData splits user data that is already encoded into chunks of at
+// most limit units, as Segment splits a message, and returns them in order.
+// The units are septets for Alpha7Bit, one per byte and unpacked, and octets
+// for Alpha8Bit, which is also the coding to give for compressed data, and
+// for AlphaUCS2, whose limit is rounded down to whole 16-bit units. Any
+// positive limit is accepted, even one above what a short message holds, and
+// the number of chunks is not limited.
+//
+// No chunk ends in the middle of a character, as 3GPP TS 23.040 Sections
+// 9.2.3.24.1 and 9.2.3.24.8 require: "A character represented by an
+// escape-sequence shall not be split in the middle" and "A UCS2 character
+// shall not be split in the middle". An escape is kept with the septet after
+// it, which may be another escape, as 3GPP TS 23.038 Section 6.2.1.1 reserves
+// that code "for the extension to another extension table". A high surrogate
+// that would end a chunk starts the next one instead, so a UTF-16 surrogate
+// pair is kept whole.
+//
+// An alphabet other than Alpha7Bit, Alpha8Bit and AlphaUCS2, or a limit below
+// 1, returns ErrInvalid, and data that is not valid for the alphabet returns
+// the error Segment returns for it. A limit too small for a character returns
+// an EncodeError for the sm wrapping ErrOverlength: a limit below 2 for GSM 7
+// bit data with an escape, and for UCS2 data a limit below 2, or below 4 if it
+// holds a high surrogate. No chunks are returned with an error, or for empty
+// data.
+//
+// The chunks share the array of ud, with their capacity limited to their
+// length, so appending to one changes neither another nor ud, which is not
+// modified.
+func SplitUserData(ud []byte, alpha Alphabet, limit int) ([][]byte, error) {
+	switch alpha {
+	case Alpha7Bit, Alpha8Bit, AlphaUCS2:
+	default:
+		return nil, ErrInvalid
+	}
+	if limit <= 0 {
+		return nil, ErrInvalid
+	}
+	if err := checkMessage(ud, alpha); err != nil {
+		return nil, err
+	}
+	if len(ud) == 0 {
+		return nil, nil
+	}
+	if limit < minBlockSize(ud, alpha) {
+		return nil, NewEncodeError("sm", ErrOverlength)
+	}
+	return chunk(ud, alpha, limit), nil
+}
+
 // chunk splits a message into chunks that are not larger than bs.
 //
 // The bs must be at least minBlockSize, and chunk returns nil if it is not.
@@ -1946,10 +1997,10 @@ func chunk7Bit(msg []byte, bs int) [][]byte {
 		if n%2 == 1 && bend-1 > bstart {
 			bend--
 		}
-		chunks = append(chunks, msg[bstart:bend])
+		chunks = append(chunks, msg[bstart:bend:bend])
 		bstart = bend
 	}
-	chunks = append(chunks, msg[bstart:])
+	chunks = append(chunks, msg[bstart:len(msg):len(msg)])
 	return chunks
 }
 
@@ -1962,10 +2013,10 @@ func chunk8Bit(msg []byte, bs int) [][]byte {
 	chunks := make([][]byte, 0, 1+len(msg)/bs)
 	bstart := 0
 	for len(msg)-bstart > bs {
-		chunks = append(chunks, msg[bstart:bstart+bs])
+		chunks = append(chunks, msg[bstart:bstart+bs:bstart+bs])
 		bstart += bs
 	}
-	chunks = append(chunks, msg[bstart:])
+	chunks = append(chunks, msg[bstart:len(msg):len(msg)])
 	return chunks
 }
 
@@ -2001,9 +2052,9 @@ func chunkUCS2(msg []byte, bs int) [][]byte {
 		if surrHighStart <= r && r < surrLowStart && bend-2 > bstart {
 			bend -= 2
 		}
-		chunks = append(chunks, msg[bstart:bend])
+		chunks = append(chunks, msg[bstart:bend:bend])
 		bstart = bend
 	}
-	chunks = append(chunks, msg[bstart:])
+	chunks = append(chunks, msg[bstart:len(msg):len(msg)])
 	return chunks
 }
