@@ -5,6 +5,8 @@ package tpdu_test
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
@@ -167,6 +169,103 @@ func TestUserDataHeaderOverlengthTPDU(t *testing.T) {
 	assert.Nil(t, b)
 }
 
+func TestInformationElementUnmarshalBinary(t *testing.T) {
+	type pattern struct {
+		name   string
+		src    []byte
+		data   []byte
+		n      int
+		field  string
+		offset int
+	}
+	patterns := []pattern{
+		{"empty", nil, nil, 0, "iei", 0},
+		{"iei only", []byte{0x70}, nil, 0, "iedl", 1},
+		{"empty data", []byte{0x70, 0}, nil, 2, "", 0},
+		{"missing data", []byte{0x70, 1}, nil, 0, "ied", 2},
+		{"trailing octet", []byte{0x70, 1, 0x41, 0x99}, []byte{0x41}, 3, "", 0},
+	}
+	for length := 0; length <= 255; length++ {
+		var data []byte
+		for i := 0; i < length; i++ {
+			data = append(data, byte(i))
+		}
+		src := append([]byte{0x70, byte(length)}, data...)
+		src = append(src, 0xee)
+		patterns = append(patterns, pattern{fmt.Sprintf("length %d", length), src, data, 2 + length, "", 0})
+		if length > 0 {
+			patterns = append(patterns, pattern{fmt.Sprintf("short length %d", length), append([]byte(nil), src[:1+length]...), nil, 0, "ied", 2})
+		}
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			ie := tpdu.InformationElement{ID: 1, Data: []byte{2}}
+			n, err := ie.UnmarshalBinary(p.src)
+			assert.Equal(t, p.n, n)
+			if p.field != "" {
+				require.True(t, errors.Is(err, tpdu.ErrUnderflow))
+				var de tpdu.DecodeError
+				require.True(t, errors.As(err, &de))
+				assert.Equal(t, p.field, de.Field)
+				assert.Equal(t, p.offset, de.Offset)
+				assert.Equal(t, tpdu.InformationElement{ID: 1, Data: []byte{2}}, ie)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, byte(0x70), ie.ID)
+			assert.Equal(t, p.data, ie.Data)
+			for i := range p.src {
+				p.src[i] ^= 0xff
+			}
+			assert.Equal(t, p.data, ie.Data)
+		})
+	}
+}
+
+func FuzzInformationElementUnmarshalBinary(f *testing.F) {
+	for _, seed := range [][]byte{nil, {0x70}, {0x70, 0}, {0x70, 1}, {0x70, 1, 0x41, 0x99},
+		append([]byte{0x70, 255}, make([]byte, 255)...)} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, src []byte) {
+		ie := tpdu.InformationElement{ID: 1, Data: []byte{2}}
+		n, err := ie.UnmarshalBinary(src)
+		if len(src) < 2 || len(src) < 2+int(src[1]) {
+			require.Zero(t, n)
+			require.True(t, errors.Is(err, tpdu.ErrUnderflow))
+			var de tpdu.DecodeError
+			require.True(t, errors.As(err, &de))
+			field, offset := "ied", 2
+			if len(src) == 0 {
+				field, offset = "iei", 0
+			} else if len(src) == 1 {
+				field, offset = "iedl", 1
+			}
+			assert.Equal(t, field, de.Field)
+			assert.Equal(t, offset, de.Offset)
+			assert.Equal(t, tpdu.InformationElement{ID: 1, Data: []byte{2}}, ie)
+			return
+		}
+		require.NoError(t, err)
+		require.Equal(t, 2+int(src[1]), n)
+		assert.Equal(t, src[0], ie.ID)
+		data := append([]byte(nil), src[2:n]...)
+		assert.Equal(t, data, ie.Data)
+		want := append([]byte{byte(n)}, src[:n]...)
+		for i := range src {
+			src[i] ^= 0xff
+		}
+		assert.Equal(t, data, ie.Data)
+		out, err := (tpdu.UserDataHeader{ie}).MarshalBinary()
+		if n > 255 {
+			require.ErrorIs(t, err, tpdu.ErrOverlength)
+			return
+		}
+		require.NoError(t, err)
+		assert.Equal(t, want, out)
+	})
+}
+
 func TestUserDataHeaderUnmarshalBinary(t *testing.T) {
 	patterns := []struct {
 		name string
@@ -253,6 +352,7 @@ func TestUserDataHeaderUnmarshalBinary(t *testing.T) {
 			3,
 			nil,
 		},
+		{"ied borrows message octet", []byte{2, 0x70, 1, 0x41}, tpdu.UserDataHeader{}, 3, nil},
 		{"dangling octet",
 			[]byte{5, 0, 2, 1, 2, 0x41},
 			tpdu.UserDataHeader{},
@@ -384,6 +484,43 @@ func ieTiles(body []byte) bool {
 	return true
 }
 
+// referenceUserDataHeader follows the UDHL and IE length fields in 3GPP TS
+// 23.040 Section 9.2.3.24. An incomplete final IE discards the whole header.
+func referenceUserDataHeader(src []byte) (tpdu.UserDataHeader, int, error) {
+	if len(src) == 0 {
+		return nil, 0, tpdu.NewDecodeError("udhl", 0, tpdu.ErrUnderflow)
+	}
+	end := 1 + int(src[0])
+	if end > len(src) {
+		return nil, 1, tpdu.NewDecodeError("ie", 1, tpdu.ErrUnderflow)
+	}
+	header := tpdu.UserDataHeader{}
+	var data []byte
+	var id byte
+	remaining := -1
+	for _, octet := range src[1:end] {
+		switch remaining {
+		case -1:
+			id = octet
+			remaining = -2
+		case -2:
+			remaining = int(octet)
+			data = nil
+		default:
+			data = append(data, octet)
+			remaining--
+		}
+		if remaining == 0 {
+			header = append(header, tpdu.InformationElement{ID: id, Data: data})
+			remaining = -1
+		}
+	}
+	if remaining != -1 {
+		return tpdu.UserDataHeader{}, end, nil
+	}
+	return header, end, nil
+}
+
 // FuzzUserDataHeaderUnmarshalBinary checks that any UDH either fails to
 // unmarshal because the UDHL runs past the data, or consumes exactly the UDHL
 // octets and re-marshals to them. The exception is a header whose IEs do not
@@ -409,6 +546,10 @@ func FuzzUserDataHeaderUnmarshalBinary(f *testing.F) {
 		orig := append([]byte(nil), src...)
 		var udh tpdu.UserDataHeader
 		n, err := udh.UnmarshalBinary(src)
+		want, count, decodeErr := referenceUserDataHeader(src)
+		require.Equal(t, decodeErr, err)
+		require.Equal(t, count, n)
+		require.Equal(t, want, udh)
 		if err != nil {
 			if len(src) > 0 && int(src[0]) < len(src) {
 				t.Fatalf("% x: unexpected error %v", orig, err)
@@ -1257,6 +1398,9 @@ func TestUserDataHeaderIgnoredRoundTrip(t *testing.T) {
 		bs   int // room left by the UDH as received
 		ud   tpdu.UserData
 	}{
+		{"deliver 8bit ie borrows message octet", tpdu.MT,
+			deliver(0x04, 0x04, 0x02, 0x70, 0x01, 0x41),
+			2, 140 - 3, tpdu.UserData{0x41}},
 		{"submit 8bit ie overruns udhl", tpdu.MO,
 			[]byte{0x41, 0x00, 0x00, 0x80, 0x00, 0x04, 0x05, 0x03, 0x00, 0x02, 0x01, 0x41},
 			3, 140 - 4, tpdu.UserData{0x41}},
