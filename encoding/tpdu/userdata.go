@@ -31,6 +31,34 @@ type InformationElement struct {
 	Data []byte
 }
 
+// UnmarshalBinary decodes one information element from the start of src: its
+// IEI, its IEDL and IEDL octets of data, as laid out by 3GPP TS 23.040
+// Section 9.2.3.24, in which "The "Length-of-Information-Element" fields
+// shall be the integer representation of the number of octets within its
+// associated "Information-Element-Data" field which follows and shall not
+// include itself in its count value."
+//
+// It returns the number of octets decoded, 2+IEDL, and does not read the
+// octets after them. The data is copied from src, and is nil if IEDL is 0.
+//
+// If src ends before the element does, a DecodeError for the iei, iedl or
+// ied wrapping ErrUnderflow is returned with a count of 0, and the
+// information element is not changed.
+func (ie *InformationElement) UnmarshalBinary(src []byte) (int, error) {
+	if len(src) < 1 {
+		return 0, NewDecodeError("iei", 0, ErrUnderflow)
+	}
+	if len(src) < 2 {
+		return 0, NewDecodeError("iedl", 1, ErrUnderflow)
+	}
+	n := 2 + int(src[1])
+	if len(src) < n {
+		return 0, NewDecodeError("ied", 2, ErrUnderflow)
+	}
+	*ie = InformationElement{ID: src[0], Data: append([]byte(nil), src[2:n]...)}
+	return n, nil
+}
+
 func (ie InformationElement) marshalledLen() int {
 	return 2 + len(ie.Data)
 }
@@ -122,18 +150,14 @@ func (udh *UserDataHeader) UnmarshalBinary(src []byte) (int, error) {
 	}
 	ies := UserDataHeader{}
 	for ri < udhl {
-		if udhl < ri+2 || udhl < ri+2+int(src[ri+1]) {
+		var ie InformationElement
+		n, err := ie.UnmarshalBinary(src[ri:udhl])
+		if err != nil {
 			// too few or too many octets in the final IE
 			*udh = UserDataHeader{}
 			return udhl, nil
 		}
-		var ie InformationElement
-		ie.ID = src[ri]
-		ri++
-		iedl := int(src[ri])
-		ri++
-		ie.Data = append([]byte(nil), src[ri:ri+iedl]...)
-		ri += iedl
+		ri += n
 		ies = append(ies, ie)
 	}
 	*udh = ies
