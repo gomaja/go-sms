@@ -579,6 +579,36 @@ func (t *TPDU) UDBlockSize() int {
 	return t.blockSize(udhOctets(t.UDH))
 }
 
+// UserDataCapacity returns how much user data fits in the TP-UD of an
+// SMS-SUBMIT or SMS-DELIVER, of MaxUDL octets (3GPP TS 23.040 Section 3.1),
+// beside a user data header that takes headerOctets octets, including its
+// UDHL, or none if headerOctets is 0. UDBlockSize returns the same for such a
+// TPDU.
+//
+// The capacity is in septets for Alpha7Bit, after the septets the header
+// takes with its fill bits (Sections 9.2.3.16 and 9.2.3.24), and in octets
+// for Alpha8Bit and AlphaUCS2, rounded down to whole 16-bit units for
+// AlphaUCS2 (Section 9.2.3.24.1). Compressed data is counted in octets
+// (Section 9.2.3.16), so its capacity is that of Alpha8Bit.
+//
+// An alphabet other than Alpha7Bit, Alpha8Bit and AlphaUCS2 returns
+// ErrInvalid. A negative headerOctets returns an EncodeError for the udh
+// wrapping ErrInvalid, and one above MaxUDL an EncodeError wrapping
+// ErrOverlength, with a capacity of 0. A header of MaxUDL octets fits, and
+// leaves a capacity of 0.
+func UserDataCapacity(alpha Alphabet, headerOctets int) (int, error) {
+	if alpha < Alpha7Bit || alpha >= AlphaReserved {
+		return 0, ErrInvalid
+	}
+	if headerOctets < 0 {
+		return 0, NewEncodeError("udh", ErrInvalid)
+	}
+	if headerOctets > MaxUDL {
+		return 0, NewEncodeError("udh", ErrOverlength)
+	}
+	return userDataCapacity(alpha, MaxUDL, headerOctets), nil
+}
+
 // keepsIgnoredUDH reports whether the TPDU marshals the octets of a UDH that
 // was ignored when unmarshalling, which it does while UDH is left empty.
 func (t *TPDU) keepsIgnoredUDH() bool {
@@ -616,7 +646,13 @@ func (t *TPDU) blockSize(udho int) int {
 	if room == -1 && udho == 0 && !t.PI.UDL() {
 		return 0
 	}
-	switch t.udCoding() {
+	return userDataCapacity(t.udCoding(), room, udho)
+}
+
+// userDataCapacity returns the capacity left by udho header octets in room
+// octets, in septets for Alpha7Bit and in octets otherwise.
+func userDataCapacity(alpha Alphabet, room, udho int) int {
+	switch alpha {
 	case Alpha7Bit:
 		// 3GPP TS 23.040 Section 9.2.3.16: the TP-UDL counts the septets
 		// of the header, including its fill bits, and the short message,
