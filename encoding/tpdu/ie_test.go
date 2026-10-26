@@ -287,3 +287,388 @@ func TestUserDataHeaderSectionsShareMemory(t *testing.T) {
 	sections[0].Elements = append(sections[0].Elements, tpdu.InformationElement{ID: 12})
 	assert.Equal(t, byte(7), header[1].ID)
 }
+
+func TestInformationElementEmailHeaderLengthAllIDsAndLengths(t *testing.T) {
+	checkIEContract(t, tpdu.InformationElement.EmailHeaderLength, map[byte]int{0x20: 1})
+}
+
+func TestEmailHeaderLengthAllValues(t *testing.T) {
+	assert.Equal(t, byte(0x20), tpdu.IEIEmailHeader)
+	for n := 0; n < 256; n++ {
+		got, err := (tpdu.InformationElement{ID: 0x20, Data: []byte{byte(n)}}).EmailHeaderLength()
+		require.NoError(t, err)
+		assert.Equal(t, n, got)
+	}
+}
+
+func TestInformationElementHyperlinkAllIDsAndLengths(t *testing.T) {
+	checkIEContract(t, tpdu.InformationElement.Hyperlink, map[byte]int{0x21: 4})
+}
+
+func TestHyperlinkAllValues(t *testing.T) {
+	assert.Equal(t, byte(0x21), tpdu.IEIHyperlink)
+	check := func(position, title, url int) {
+		t.Helper()
+		// Section 9.2.3.24.12 numbers the first character 1; both lengths
+		// count characters and have no reserved values.
+		ie := tpdu.InformationElement{ID: 0x21, Data: []byte{byte(position / 256), byte(position % 256), byte(title), byte(url)}}
+		want := tpdu.Hyperlink{Position: position, TitleLength: title, URLLength: url}
+		got, err := ie.Hyperlink()
+		if err != nil || got != want || got.Valid() != (position >= 1) {
+			t.Fatalf("%x: got %+v, %v; want %+v valid=%t", ie.Data, got, err, want, position >= 1)
+		}
+	}
+	for position := 0; position <= 65535; position++ {
+		for _, length := range []int{0, 1, 127, 255} {
+			check(position, length, 255-length)
+		}
+	}
+	for length := 0; length <= 255; length++ {
+		for _, position := range []int{0, 1, 256, 65535} {
+			check(position, length, 17)
+			check(position, 23, length)
+		}
+	}
+}
+
+func TestHyperlinkValid(t *testing.T) {
+	for _, position := range []int{-1, 0, 1, 65535, 65536} {
+		for _, title := range []int{-1, 0, 255, 256} {
+			for _, url := range []int{-1, 0, 255, 256} {
+				got := tpdu.Hyperlink{Position: position, TitleLength: title, URLLength: url}
+				assert.Equal(t, position >= 1 && position <= 65535 && title >= 0 && title <= 255 && url >= 0 && url <= 255, got.Valid(), "%+v", got)
+			}
+		}
+	}
+}
+
+func TestReplyAddress(t *testing.T) {
+	assert.Equal(t, byte(0x22), tpdu.IEIReplyAddress)
+	for _, p := range []struct {
+		name string
+		data []byte
+		want tpdu.Address
+	}{
+		{"numeric", []byte{3, 0x91, 0x21, 0xf3}, tpdu.Address{TOA: 0x91, Addr: "123"}},
+		{"alphanumeric", []byte{2, 0xd0, 0x41}, tpdu.Address{TOA: 0xd0, Addr: "A"}},
+		{"empty", []byte{0, 0x81}, tpdu.Address{TOA: 0x81}},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			got, err := (tpdu.InformationElement{ID: 0x22, Data: p.data}).ReplyAddress()
+			require.NoError(t, err)
+			assert.Equal(t, p.want, got)
+			for n := 0; n < len(p.data); n++ {
+				got, err = (tpdu.InformationElement{ID: 0x22, Data: p.data[:n]}).ReplyAddress()
+				assert.Equal(t, tpdu.Address{}, got)
+				assert.Equal(t, tpdu.NewDecodeError("ied", 2, tpdu.ErrUnderflow), err, "length %d", n)
+			}
+			got, err = (tpdu.InformationElement{ID: 0x22, Data: append(append([]byte(nil), p.data...), 0)}).ReplyAddress()
+			assert.Equal(t, tpdu.Address{}, got)
+			assert.Equal(t, tpdu.NewDecodeError("ied", 2, tpdu.ErrOverlength), err)
+		})
+	}
+}
+
+func TestReplyAddressErrors(t *testing.T) {
+	for id := 0; id < 256; id++ {
+		if id == 0x22 {
+			continue
+		}
+		got, err := (tpdu.InformationElement{ID: byte(id), Data: []byte{0, 0x81}}).ReplyAddress()
+		assert.Equal(t, tpdu.Address{}, got)
+		assert.Equal(t, tpdu.NewDecodeError("iei", 0, tpdu.ErrInvalid), err)
+	}
+	for _, data := range [][]byte{{21, 0x91}, {2, 0x91, 0xff}} {
+		var address tpdu.Address
+		_, addressErr := address.UnmarshalBinary(data)
+		require.Error(t, addressErr)
+		got, err := (tpdu.InformationElement{ID: 0x22, Data: data}).ReplyAddress()
+		assert.Equal(t, tpdu.Address{}, got)
+		assert.Equal(t, tpdu.NewDecodeError("ied", 2, addressErr), err)
+	}
+}
+
+func TestUserDataHeaderEmailHyperlinkReply(t *testing.T) {
+	for _, h := range []tpdu.UserDataHeader{nil, {}, {{ID: 0x20}, {ID: 0x21}, {ID: 0x22}}, {{ID: 0xff}}} {
+		n, ok := h.EmailHeaderLength()
+		assert.Zero(t, n)
+		assert.False(t, ok)
+		assert.Nil(t, h.Hyperlinks())
+		a, ok := h.ReplyAddress()
+		assert.Equal(t, tpdu.Address{}, a)
+		assert.False(t, ok)
+	}
+	h := tpdu.UserDataHeader{
+		{ID: 0x20, Data: []byte{3}}, {ID: 0x20, Data: []byte{0}}, {ID: 0x20}, {ID: 0x20, Data: []byte{1, 2}},
+		{ID: 0x21, Data: []byte{0, 1, 2, 3}}, {ID: 0x21}, {ID: 0x21, Data: []byte{0, 0, 0, 0}}, {ID: 0x21, Data: []byte{1, 2, 3, 4, 5}},
+		{ID: 0x22, Data: []byte{2, 0x81, 0x21}}, {ID: 0x22, Data: []byte{2, 0x81, 0x43}}, {ID: 0x22}, {ID: 0x22, Data: []byte{0, 0x81, 0}}, {ID: 0xff},
+	}
+	n, ok := h.EmailHeaderLength()
+	assert.True(t, ok)
+	assert.Zero(t, n)
+	assert.Equal(t, []tpdu.Hyperlink{{Position: 1, TitleLength: 2, URLLength: 3}, {}}, h.Hyperlinks())
+	a, ok := h.ReplyAddress()
+	assert.True(t, ok)
+	assert.Equal(t, tpdu.Address{TOA: 0x81, Addr: "34"}, a)
+}
+
+func ExampleUserDataHeader_Hyperlinks() {
+	header := tpdu.UserDataHeader{{ID: tpdu.IEIHyperlink, Data: []byte{0, 1, 4, 19}}}
+	for _, link := range header.Hyperlinks() {
+		fmt.Printf("position %d, title %d characters, URL %d characters\n", link.Position, link.TitleLength, link.URLLength)
+	}
+	// Output: position 1, title 4 characters, URL 19 characters
+}
+
+// Each width is one parameter in table order, including whole address
+// fields and conditional length/data parameters. It is also the independent
+// oracle for the parameter cut short at every possible truncation.
+type voiceMailVector struct {
+	name   string
+	data   []byte
+	widths []int
+	want   tpdu.EnhancedVoiceMail
+	valid  bool
+}
+
+func voiceMailVectors() []voiceMailVector {
+	return []voiceMailVector{
+		{"zero notifications", []byte{0, 2, 0x91, 0x21, 0, 0}, []int{1, 3, 1, 1},
+			tpdu.EnhancedVoiceMail{Profile: 1, AccessAddress: tpdu.Address{TOA: 0x91, Addr: "12"}}, true},
+		{"two notifications", []byte{0x7c, 3, 0x91, 0x21, 0xf3, 255, 2,
+			0x12, 0x34, 60, 0x47, 2, 0xd0, 0x41,
+			0xff, 0xff, 255, 31, 0, 0x81}, []int{1, 4, 1, 1, 2, 1, 1, 3, 2, 1, 1, 2},
+			tpdu.EnhancedVoiceMail{Profile: 4, Store: true, AlmostFull: true, Full: true, AccessAddress: tpdu.Address{TOA: 0x91, Addr: "123"}, VoiceMessages: 255,
+				Notifications: []tpdu.VoiceMailNotification{
+					{ID: 0x1234, Length: 60, RetentionDays: 7, Urgent: true, CallingLineIdentity: tpdu.Address{TOA: 0xd0, Addr: "A"}},
+					{ID: 65535, Length: 255, RetentionDays: 31, CallingLineIdentity: tpdu.Address{TOA: 0x81}},
+				}}, true},
+		{"mailbox extension", []byte{0x80, 0, 0x81, 1, 0, 2, 0xaa, 0xbb}, []int{1, 2, 1, 1, 1, 2},
+			tpdu.EnhancedVoiceMail{Profile: 1, AccessAddress: tpdu.Address{TOA: 0x81}, VoiceMessages: 1, MailboxExtensionIndicator: true, MailboxExtension: []byte{0xaa, 0xbb}}, false},
+		{"notification extension", []byte{0, 0, 0x81, 1, 1, 0, 1, 2, 0x83, 0, 0x81, 2, 0xaa, 0xbb}, []int{1, 2, 1, 1, 2, 1, 1, 2, 1, 2},
+			tpdu.EnhancedVoiceMail{Profile: 1, AccessAddress: tpdu.Address{TOA: 0x81}, VoiceMessages: 1,
+				Notifications: []tpdu.VoiceMailNotification{{ID: 1, Length: 2, RetentionDays: 3, CallingLineIdentity: tpdu.Address{TOA: 0x81}, ExtensionIndicator: true, Extension: []byte{0xaa, 0xbb}}}}, false},
+		{"empty extensions", []byte{0x80, 0, 0x81, 1, 1, 0, 0, 1, 2, 0x80, 0, 0x81, 0}, []int{1, 2, 1, 1, 1, 0, 2, 1, 1, 2, 1, 0},
+			tpdu.EnhancedVoiceMail{Profile: 1, AccessAddress: tpdu.Address{TOA: 0x81}, VoiceMessages: 1, MailboxExtensionIndicator: true, MailboxExtension: []byte{},
+				Notifications: []tpdu.VoiceMailNotification{{ID: 1, Length: 2, CallingLineIdentity: tpdu.Address{TOA: 0x81}, ExtensionIndicator: true, Extension: []byte{}}}}, false},
+		{"zero deletes", []byte{1, 0, 0x81, 0, 0}, []int{1, 2, 1, 1},
+			tpdu.EnhancedVoiceMail{DeleteConfirmation: true, Profile: 1, AccessAddress: tpdu.Address{TOA: 0x81}}, true},
+		{"three deletes", []byte{0x15, 2, 0x81, 0x21, 2, 3, 0x12, 0x34, 0, 0xab, 0xcd, 0, 0, 0, 0}, []int{1, 3, 1, 1, 2, 1, 2, 1, 2, 1},
+			tpdu.EnhancedVoiceMail{DeleteConfirmation: true, Profile: 2, Store: true, AccessAddress: tpdu.Address{TOA: 0x81, Addr: "12"}, VoiceMessages: 2,
+				Deletes: []tpdu.VoiceMailDelete{{ID: 0x1234}, {ID: 0xabcd}, {}}}, true},
+		{"delete extensions", []byte{0x89, 0, 0x81, 255, 2, 1, 0xaa, 0x12, 0x34, 0x80, 2, 0xbb, 0xcc, 0xab, 0xcd, 0}, []int{1, 2, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1},
+			tpdu.EnhancedVoiceMail{DeleteConfirmation: true, Profile: 3, AccessAddress: tpdu.Address{TOA: 0x81}, VoiceMessages: 255, MailboxExtensionIndicator: true, MailboxExtension: []byte{0xaa},
+				Deletes: []tpdu.VoiceMailDelete{{ID: 0x1234, ExtensionIndicator: true, Extension: []byte{0xbb, 0xcc}}, {ID: 0xabcd}}}, false},
+	}
+}
+
+func TestEnhancedVoiceMailVectors(t *testing.T) {
+	assert.Equal(t, byte(0x23), tpdu.IEIEnhancedVoiceMail)
+	for _, p := range voiceMailVectors() {
+		t.Run(p.name, func(t *testing.T) {
+			data := append([]byte(nil), p.data...)
+			got, err := (tpdu.InformationElement{ID: 0x23, Data: data}).EnhancedVoiceMail()
+			require.NoError(t, err)
+			assert.Equal(t, p.want, got)
+			assert.Equal(t, p.valid, got.Valid())
+			// The extensions are copied, not shared with the IE data.
+			for i := range data {
+				data[i] = 0x5a
+			}
+			assert.Equal(t, p.want, got)
+		})
+	}
+}
+
+func TestEnhancedVoiceMailTruncationAndSurplus(t *testing.T) {
+	for _, p := range voiceMailVectors() {
+		t.Run(p.name, func(t *testing.T) {
+			start, last := 0, 0
+			for _, width := range p.widths {
+				last = start
+				for n := start; n < start+width; n++ {
+					got, err := (tpdu.InformationElement{ID: 0x23, Data: p.data[:n]}).EnhancedVoiceMail()
+					assert.Equal(t, tpdu.EnhancedVoiceMail{}, got, "length %d", n)
+					assert.Equal(t, tpdu.NewDecodeError("ied", 2+start, tpdu.ErrUnderflow), err, "length %d", n)
+				}
+				start += width
+			}
+			require.Equal(t, len(p.data), start)
+			for _, extra := range [][]byte{{0}, {0, 1, 2}} {
+				got, err := (tpdu.InformationElement{ID: 0x23, Data: append(append([]byte(nil), p.data...), extra...)}).EnhancedVoiceMail()
+				assert.Equal(t, tpdu.EnhancedVoiceMail{}, got)
+				assert.Equal(t, tpdu.NewDecodeError("ied", 2+last, tpdu.ErrOverlength), err)
+			}
+		})
+	}
+}
+
+func TestEnhancedVoiceMailAddressErrors(t *testing.T) {
+	for _, p := range []struct {
+		data   []byte
+		offset int
+	}{
+		{[]byte{0, 21, 0x91}, 1},
+		{[]byte{1, 2, 0x91, 0xff}, 1},
+		{[]byte{0, 0, 0x81, 1, 1, 0, 1, 2, 3, 21, 0x91}, 9},
+		{[]byte{0, 0, 0x81, 1, 1, 0, 1, 2, 3, 2, 0x91, 0xff}, 9},
+	} {
+		var a tpdu.Address
+		_, addressErr := a.UnmarshalBinary(p.data[p.offset:])
+		require.Error(t, addressErr)
+		got, err := (tpdu.InformationElement{ID: 0x23, Data: p.data}).EnhancedVoiceMail()
+		assert.Equal(t, tpdu.EnhancedVoiceMail{}, got)
+		assert.Equal(t, tpdu.NewDecodeError("ied", 2+p.offset, addressErr), err)
+	}
+	for id := 0; id < 256; id++ {
+		if id == 0x23 {
+			continue
+		}
+		got, err := (tpdu.InformationElement{ID: byte(id)}).EnhancedVoiceMail()
+		assert.Equal(t, tpdu.EnhancedVoiceMail{}, got)
+		assert.Equal(t, tpdu.NewDecodeError("iei", 0, tpdu.ErrInvalid), err)
+	}
+}
+
+func TestEnhancedVoiceMailProfilesAndFlags(t *testing.T) {
+	for _, kind := range []byte{0, 1} {
+		// Codes are written bit 2 first: 00, 10, 01, 11.
+		for profile, code := range []byte{0x00, 0x04, 0x08, 0x0c} {
+			for _, flags := range []byte{0, 0x10, 0x20, 0x40, 0x70} {
+				got, err := (tpdu.InformationElement{ID: 0x23, Data: []byte{kind | code | flags, 0, 0x81, 0, 0}}).EnhancedVoiceMail()
+				require.NoError(t, err)
+				assert.Equal(t, tpdu.EnhancedVoiceMail{DeleteConfirmation: kind == 1, Profile: profile + 1, Store: flags&0x10 != 0, AlmostFull: flags&0x20 != 0, Full: flags&0x40 != 0, AccessAddress: tpdu.Address{TOA: 0x81}}, got)
+				assert.True(t, got.Valid())
+			}
+		}
+	}
+}
+
+func TestEnhancedVoiceMailReservedBits(t *testing.T) {
+	for _, kind := range []byte{0, 1} {
+		for _, p := range []struct {
+			offset   int
+			bit      byte
+			reserved int
+			count    int
+		}{
+			{0, 0x02, 0x02, 0}, {4, 0x20, 0, 0x20}, {4, 0x40, 0, 0x40}, {4, 0x80, 0, 0x80},
+		} {
+			data := []byte{kind, 0, 0x81, 0, 0}
+			data[p.offset] |= p.bit
+			got, err := (tpdu.InformationElement{ID: 0x23, Data: data}).EnhancedVoiceMail()
+			require.NoError(t, err)
+			assert.Equal(t, tpdu.EnhancedVoiceMail{DeleteConfirmation: kind == 1, Profile: 1, AccessAddress: tpdu.Address{TOA: 0x81}, Reserved: p.reserved, CountReserved: p.count}, got)
+			assert.False(t, got.Valid())
+		}
+	}
+	got, err := (tpdu.InformationElement{ID: 0x23, Data: []byte{0, 0, 0x81, 1, 1, 0, 1, 2, 0x20, 0, 0x81}}).EnhancedVoiceMail()
+	require.NoError(t, err)
+	assert.Equal(t, tpdu.EnhancedVoiceMail{Profile: 1, AccessAddress: tpdu.Address{TOA: 0x81}, VoiceMessages: 1, Notifications: []tpdu.VoiceMailNotification{{ID: 1, Length: 2, Reserved: 0x20, CallingLineIdentity: tpdu.Address{TOA: 0x81}}}}, got)
+	assert.False(t, got.Valid())
+	for bit := 0; bit < 7; bit++ {
+		got, err = (tpdu.InformationElement{ID: 0x23, Data: []byte{1, 0, 0x81, 0, 1, 0, 1, 1 << bit}}).EnhancedVoiceMail()
+		require.NoError(t, err)
+		assert.Equal(t, tpdu.EnhancedVoiceMail{DeleteConfirmation: true, Profile: 1, AccessAddress: tpdu.Address{TOA: 0x81}, Deletes: []tpdu.VoiceMailDelete{{ID: 1, Reserved: 1 << bit}}}, got)
+		assert.False(t, got.Valid())
+	}
+}
+
+func TestEnhancedVoiceMailCounts(t *testing.T) {
+	for _, kind := range []byte{0, 1} {
+		for count := 0; count <= 31; count++ {
+			data := []byte{kind, 0, 0x81, 255, byte(count)}
+			want := tpdu.EnhancedVoiceMail{DeleteConfirmation: kind == 1, Profile: 1, AccessAddress: tpdu.Address{TOA: 0x81}, VoiceMessages: 255}
+			for i := 0; i < count; i++ {
+				if kind == 1 {
+					data = append(data, 0, byte(i), 0)
+					want.Deletes = append(want.Deletes, tpdu.VoiceMailDelete{ID: i})
+				} else {
+					data = append(data, 0, byte(i), 0, 0, 0, 0x81)
+					want.Notifications = append(want.Notifications, tpdu.VoiceMailNotification{ID: i, CallingLineIdentity: tpdu.Address{TOA: 0x81}})
+				}
+			}
+			got, err := (tpdu.InformationElement{ID: 0x23, Data: data}).EnhancedVoiceMail()
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+			assert.Equal(t, kind == 1 || count <= 15, got.Valid())
+		}
+	}
+}
+
+func TestEnhancedVoiceMailValid(t *testing.T) {
+	for _, profile := range []int{-1, 0, 1, 4, 5} {
+		for _, count := range []int{-1, 0, 255, 256} {
+			v := tpdu.EnhancedVoiceMail{Profile: profile, VoiceMessages: count}
+			assert.Equal(t, profile >= 1 && profile <= 4 && count >= 0 && count <= 255, v.Valid(), "%+v", v)
+		}
+	}
+	for _, n := range []int{0, 1, 15, 16, 31, 32, 63, 64} {
+		v := tpdu.EnhancedVoiceMail{Profile: 1, Notifications: make([]tpdu.VoiceMailNotification, n)}
+		assert.Equal(t, n <= 15, v.Valid())
+		v = tpdu.EnhancedVoiceMail{Profile: 1, DeleteConfirmation: true, Deletes: make([]tpdu.VoiceMailDelete, n)}
+		assert.Equal(t, n <= 63, v.Valid())
+	}
+	for _, id := range []int{-1, 0, 65535, 65536} {
+		for _, length := range []int{-1, 0, 255, 256} {
+			for _, days := range []int{-1, 0, 31, 32} {
+				v := tpdu.EnhancedVoiceMail{Profile: 1, Notifications: []tpdu.VoiceMailNotification{{ID: id, Length: length, RetentionDays: days}}}
+				assert.Equal(t, id >= 0 && id <= 65535 && length >= 0 && length <= 255 && days >= 0 && days <= 31, v.Valid())
+			}
+		}
+		v := tpdu.EnhancedVoiceMail{Profile: 1, DeleteConfirmation: true, Deletes: []tpdu.VoiceMailDelete{{ID: id}}}
+		assert.Equal(t, id >= 0 && id <= 65535, v.Valid())
+	}
+	for _, reserved := range []int{-1, 1, 2, 0x20, 0x2000, 0x10000} {
+		assert.False(t, (tpdu.EnhancedVoiceMail{Profile: 1, Reserved: reserved}).Valid())
+		assert.False(t, (tpdu.EnhancedVoiceMail{Profile: 1, CountReserved: reserved}).Valid())
+		assert.False(t, (tpdu.EnhancedVoiceMail{Profile: 1, Notifications: []tpdu.VoiceMailNotification{{Reserved: reserved}}}).Valid())
+		assert.False(t, (tpdu.EnhancedVoiceMail{Profile: 1, DeleteConfirmation: true, Deletes: []tpdu.VoiceMailDelete{{Reserved: reserved}}}).Valid())
+	}
+	for _, length := range []int{0, 1, 255, 256} {
+		for _, indicator := range []bool{false, true} {
+			ext := make([]byte, length)
+			want := !indicator && length == 0
+			assert.Equal(t, want, (tpdu.EnhancedVoiceMail{Profile: 1, MailboxExtensionIndicator: indicator, MailboxExtension: ext}).Valid())
+			assert.Equal(t, want, (tpdu.EnhancedVoiceMail{Profile: 1, Notifications: []tpdu.VoiceMailNotification{{ExtensionIndicator: indicator, Extension: ext}}}).Valid())
+			assert.Equal(t, want, (tpdu.EnhancedVoiceMail{Profile: 1, DeleteConfirmation: true, Deletes: []tpdu.VoiceMailDelete{{ExtensionIndicator: indicator, Extension: ext}}}).Valid())
+		}
+	}
+	assert.False(t, (tpdu.EnhancedVoiceMail{Profile: 1, Deletes: []tpdu.VoiceMailDelete{{}}}).Valid())
+	assert.False(t, (tpdu.EnhancedVoiceMail{Profile: 1, DeleteConfirmation: true, Notifications: []tpdu.VoiceMailNotification{{}}}).Valid())
+}
+
+func TestUserDataHeaderEnhancedVoiceMail(t *testing.T) {
+	for _, h := range []tpdu.UserDataHeader{nil, {}, {{ID: 0x23}}, {{ID: 0xff}}} {
+		got, ok := h.EnhancedVoiceMail()
+		assert.Equal(t, tpdu.EnhancedVoiceMail{}, got)
+		assert.False(t, ok)
+	}
+	for _, p := range voiceMailVectors() {
+		h := tpdu.UserDataHeader{{ID: 0x23, Data: []byte{0, 0, 0x81, 42, 0}}, {ID: 0x23, Data: p.data}, {ID: 0xff}, {ID: 0x23}, {ID: 0x23, Data: []byte{0, 0, 0x81, 0, 0, 0}}}
+		got, ok := h.EnhancedVoiceMail()
+		assert.True(t, ok)
+		assert.Equal(t, p.want, got)
+	}
+	got, ok := (tpdu.UserDataHeader{{ID: 0x23, Data: []byte{0, 0, 0x81, 0, 0}}, {ID: 0x23, Data: []byte{2, 0, 0x81, 0, 0}}}).EnhancedVoiceMail()
+	assert.True(t, ok)
+	assert.Equal(t, 2, got.Reserved)
+	assert.False(t, got.Valid())
+}
+
+func ExampleUserDataHeader_EnhancedVoiceMail() {
+	header := tpdu.UserDataHeader{{ID: tpdu.IEIEnhancedVoiceMail, Data: []byte{
+		0x10, 3, 0x91, 0x21, 0xf3, 2, 2,
+		0, 1, 60, 0x47, 2, 0x81, 0x54,
+		0, 2, 30, 7, 0, 0x81,
+	}}}
+	mail, ok := header.EnhancedVoiceMail()
+	fmt.Printf("mailbox %s: %d unread, found %t\n", mail.AccessAddress.Number(), mail.VoiceMessages, ok)
+	for _, message := range mail.Notifications {
+		fmt.Printf("message %d: %d seconds, urgent %t\n", message.ID, message.Length, message.Urgent)
+	}
+	// Output:
+	// mailbox +123: 2 unread, found true
+	// message 1: 60 seconds, urgent true
+	// message 2: 30 seconds, urgent false
+}

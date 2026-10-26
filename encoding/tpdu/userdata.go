@@ -556,6 +556,22 @@ const (
 	// reference number IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.8.
 	IEIConcat16Bit byte = 0x08
 
+	// IEIEmailHeader identifies the IETF RFC 5322 E-Mail Header IE, as
+	// defined in 3GPP TS 23.040 Section 9.2.3.24.11.
+	IEIEmailHeader byte = 0x20
+
+	// IEIHyperlink identifies the Hyperlink format element, as defined in
+	// 3GPP TS 23.040 Section 9.2.3.24.12.
+	IEIHyperlink byte = 0x21
+
+	// IEIReplyAddress identifies the Reply Address Element, as defined in
+	// 3GPP TS 23.040 Section 9.2.3.24.10.1.17.
+	IEIReplyAddress byte = 0x22
+
+	// IEIEnhancedVoiceMail identifies the Enhanced Voice Mail Information
+	// IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.13.
+	IEIEnhancedVoiceMail byte = 0x23
+
 	// IEINationalLanguageSingleShift identifies the National Language Single
 	// Shift IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.15.
 	IEINationalLanguageSingleShift byte = 0x24
