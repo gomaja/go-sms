@@ -57,7 +57,31 @@ import (
 // ErrDanglingSurrogate holding that unit, which the next segment of a
 // concatenated message may complete. A high surrogate followed by the final
 // octet of an odd length is unpaired, so only ErrInvalidLength is returned.
+// DecodeReport reports each unpaired surrogate decoded as U+FFFD.
 func Decode(src []byte) ([]rune, error) {
+	return decode(src, nil)
+}
+
+// A Replacement records a unit that Decode decoded as U+FFFD: an unpaired
+// surrogate, as determined by RFC 2781 Section 2.2.
+type Replacement struct {
+	// Offset is the byte index of the unit in src.
+	Offset int
+	// Unit is the unpaired surrogate.
+	Unit uint16
+}
+
+// DecodeReport decodes src as Decode does and reports each unit replaced
+// with U+FFFD, in byte order. Replacements is nil when no unit is replaced.
+// A literal U+FFFD, the final octet of an odd length, and a final high
+// surrogate returned as ErrDanglingSurrogate are not replacements.
+func DecodeReport(src []byte) ([]rune, []Replacement, error) {
+	var replacements []Replacement
+	dst, err := decode(src, &replacements)
+	return dst, replacements, err
+}
+
+func decode(src []byte, replacements *[]Replacement) ([]rune, error) {
 	var err error
 	if len(src)&0x01 == 0x01 {
 		src = src[:len(src)-1]
@@ -75,6 +99,9 @@ func Decode(src []byte) ([]rune, error) {
 			if ri+2 == len(src) {
 				if err != nil {
 					// Followed by the final octet, not a low surrogate.
+					if replacements != nil {
+						*replacements = append(*replacements, Replacement{Offset: ri, Unit: uint16(r)})
+					}
 					return append(dst, unicode.ReplacementChar), err
 				}
 				// Copied, as the caller may append to it.
@@ -88,9 +115,15 @@ func Decode(src []byte) ([]rune, error) {
 				r = utf16.DecodeRune(r, r2)
 				ri += 2
 			} else {
+				if replacements != nil {
+					*replacements = append(*replacements, Replacement{Offset: ri, Unit: uint16(r)})
+				}
 				r = unicode.ReplacementChar
 			}
 		case isLowSurrogate(r):
+			if replacements != nil {
+				*replacements = append(*replacements, Replacement{Offset: ri, Unit: uint16(r)})
+			}
 			r = unicode.ReplacementChar
 		}
 		dst = append(dst, r)

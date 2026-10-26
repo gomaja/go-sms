@@ -367,6 +367,7 @@ func FuzzDecode(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, src []byte) {
+		checkDecodeReport(t, src)
 		dst, err := ucs2.Decode(src)
 		units := make([]uint16, len(src)/2)
 		for i := range units {
@@ -687,4 +688,105 @@ func FuzzEncodeUTF16(f *testing.F) {
 		require.NoError(t, err)
 		require.Equal(t, in, out)
 	})
+}
+
+func TestDecodeReport(t *testing.T) {
+	for _, p := range []struct {
+		name         string
+		src          []byte
+		text         []rune
+		replacements []ucs2.Replacement
+		err          error
+	}{
+		{"empty", nil, nil, nil, nil},
+		{"interior", []byte{0, 0x41, 0xdc, 0, 0, 0x42, 0xd8, 0, 0, 0x43}, []rune{'A', 0xfffd, 'B', 0xfffd, 'C'}, []ucs2.Replacement{{Offset: 2, Unit: 0xdc00}, {Offset: 6, Unit: 0xd800}}, nil},
+		{"high high low", []byte{0xd8, 0, 0xd8, 0, 0xdc, 0}, []rune{0xfffd, 0x10000}, []ucs2.Replacement{{Unit: 0xd800}}, nil},
+		{"low high pair", []byte{0xdc, 0, 0xd8, 0, 0xdc, 0}, []rune{0xfffd, 0x10000}, []ucs2.Replacement{{Unit: 0xdc00}}, nil},
+		{"literal fffd", []byte{0xff, 0xfd}, []rune{0xfffd}, nil, nil},
+		{"odd high", []byte{0xd8, 0, 0}, []rune{0xfffd}, []ucs2.Replacement{{Unit: 0xd800}}, ucs2.ErrInvalidLength},
+		{"dangling", []byte{0xd8, 0}, []rune{}, nil, ucs2.ErrDanglingSurrogate{0xd8, 0}},
+		{"odd", []byte{0, 0x41, 0}, []rune{'A'}, nil, ucs2.ErrInvalidLength},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			text, replacements, err := ucs2.DecodeReport(p.src)
+			assert.Equal(t, p.text, text)
+			assert.Equal(t, p.replacements, replacements)
+			assert.Equal(t, p.err, err)
+			checkDecodeReport(t, p.src)
+		})
+	}
+}
+
+// reportOracle follows RFC 2781 Section 2.2: only a high surrogate
+// followed by a low surrogate forms a pair. A final high unit is held for
+// ErrDanglingSurrogate only if there is no octet after it.
+func reportOracle(src []byte) []ucs2.Replacement {
+	var out []ucs2.Replacement
+	for i := 0; i+1 < len(src); i += 2 {
+		u := uint16(src[i])*256 + uint16(src[i+1])
+		if u < 0xd800 || u > 0xdfff {
+			continue
+		}
+		if u < 0xdc00 {
+			if i+2 == len(src) {
+				continue
+			}
+			if i+3 < len(src) {
+				next := uint16(src[i+2])*256 + uint16(src[i+3])
+				if next >= 0xdc00 && next <= 0xdfff {
+					i += 2
+					continue
+				}
+			}
+		}
+		out = append(out, ucs2.Replacement{Offset: i, Unit: u})
+	}
+	return out
+}
+
+func checkDecodeReport(t *testing.T, src []byte) {
+	got, replacements, err := ucs2.DecodeReport(src)
+	want, wantErr := ucs2.Decode(src)
+	sameError := false
+	if dangling, ok := wantErr.(ucs2.ErrDanglingSurrogate); ok {
+		reported, ok := err.(ucs2.ErrDanglingSurrogate)
+		sameError = ok && slices.Equal(reported, dangling)
+	} else {
+		sameError = err == wantErr
+	}
+	if !slices.Equal(got, want) || (got == nil) != (want == nil) || !sameError {
+		t.Fatalf("report % x: %U %v, Decode %U %v", src, got, err, want, wantErr)
+	}
+	expected := reportOracle(src)
+	if !slices.Equal(replacements, expected) || (replacements == nil) != (expected == nil) {
+		t.Fatalf("report % x: got %+v, want %+v", src, replacements, expected)
+	}
+}
+
+func TestDecodeReportExhaustive(t *testing.T) {
+	values := []uint16{0, 0x41, 0xd7ff, 0xd800, 0xdbff, 0xdc00, 0xdfff, 0xe000, 0xfffd, 0xffff}
+	var walk func([]byte, int)
+	walk = func(src []byte, left int) {
+		checkDecodeReport(t, src)
+		checkDecodeReport(t, append(src, 0xa5))
+		if left == 0 {
+			return
+		}
+		for _, u := range values {
+			walk(append(src, byte(u>>8), byte(u)), left-1)
+		}
+	}
+	walk(make([]byte, 0, 11), 5)
+}
+
+func ExampleDecodeReport() {
+	text, replacements, _ := ucs2.DecodeReport([]byte{0, 0x41, 0xdc, 0, 0, 0x42, 0xd8, 0, 0, 0x43})
+	fmt.Println(string(text))
+	for _, r := range replacements {
+		fmt.Printf("%d %04x\n", r.Offset, r.Unit)
+	}
+	// Output:
+	// A�B�C
+	// 2 dc00
+	// 6 d800
 }

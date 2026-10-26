@@ -105,6 +105,13 @@ func Decode(src []byte, options ...DecoderOption) ([]byte, error) {
 	return d.Decode(src)
 }
 
+// DecodeReport converts src from unpacked GSM7 to UTF-8 and reports each
+// replacement. It is the same as NewDecoder(options...).DecodeReport(src).
+func DecodeReport(src []byte, options ...DecoderOption) ([]byte, []Replacement, error) {
+	d := NewDecoder(options...)
+	return d.DecodeReport(src)
+}
+
 // Encode converts the src from UTF-8 to unpacked GSM7.
 //
 // It is the same as NewEncoder(options...).Encode(src). See Encoder.Encode
@@ -136,14 +143,86 @@ func Encode(src []byte, options ...EncoderOption) ([]byte, error) {
 //     which is not a septet, are decoded as a space.
 //
 // A Strict Decoder instead returns an ErrInvalidSeptet for the first of
-// these it finds.
+// these it finds. DecodeReport reports each replacement made by a non-Strict
+// Decoder.
 func (d *Decoder) Decode(src []byte) ([]byte, error) {
+	return d.decode(src, nil)
+}
+
+// A Replacement records a septet that a Decoder decoded by one of the rules
+// 3GPP TS 23.038 gives a receiver, rather than as a character of its tables.
+type Replacement struct {
+	// Offset is the index of Septet in the septets, as in ErrInvalidSeptet.
+	Offset int
+	// Septet is the replaced septet, or a byte above 0x7F.
+	Septet byte
+	// Escaped reports that Septet follows an escape.
+	Escaped bool
+	// Rule is the receiver rule applied to Septet.
+	Rule ReplacementRule
+	// Rune is the character Septet was decoded as.
+	Rune rune
+}
+
+// ReplacementRule identifies the receiver rule applied to a replaced septet.
+// The zero value is not a rule.
+type ReplacementRule int
+
+const (
+	// ExtensionFallback decodes an escaped septet with no character in the
+	// extension set as its character in the character set (3GPP TS 23.038
+	// Section 6.2.1.1).
+	ExtensionFallback ReplacementRule = iota + 1
+	// ReservedEscape decodes an escape after an escape as a space (3GPP TS
+	// 23.038 Section 6.2.1.1, Note 1). The replacement records the second escape.
+	ReservedEscape
+	// DanglingEscape decodes an escape at the end of the septets as a space
+	// (3GPP TS 23.038 Section 6.2.1, Note 1). Escaped is false.
+	DanglingEscape
+	// Unassigned decodes a septet with no character in the character set
+	// (when escaped, in neither set) as a space.
+	Unassigned
+	// NotSeptet decodes a byte above 0x7F, which is not a septet, as a space.
+	NotSeptet
+)
+
+// String returns the name of the rule, or ReplacementRule(n) for an unknown value.
+func (r ReplacementRule) String() string {
+	switch r {
+	case ExtensionFallback:
+		return "ExtensionFallback"
+	case ReservedEscape:
+		return "ReservedEscape"
+	case DanglingEscape:
+		return "DanglingEscape"
+	case Unassigned:
+		return "Unassigned"
+	case NotSeptet:
+		return "NotSeptet"
+	default:
+		return fmt.Sprintf("ReplacementRule(%d)", int(r))
+	}
+}
+
+// DecodeReport decodes src as Decode does and reports each replaced septet
+// in septet order, with the receiver rule applied and the resulting character.
+// The rules are those of 3GPP TS 23.038 Sections 6.2.1 and 6.2.1.1 described
+// by Decode. Replacements is nil when no septet is replaced. A Strict
+// Decoder returns nil text and nil replacements on an ErrInvalidSeptet.
+func (d *Decoder) DecodeReport(src []byte) ([]byte, []Replacement, error) {
+	var replacements []Replacement
+	dst, err := d.decode(src, &replacements)
+	return dst, replacements, err
+}
+
+func (d *Decoder) decode(src []byte, replacements *[]Replacement) ([]byte, error) {
 	if len(src) == 0 {
 		return nil, nil
 	}
 	dst := make([]byte, 0, len(src))
 	for i := 0; i < len(src); i++ {
 		g := src[i]
+		escaped := false
 		if g == esc {
 			i++
 			if i == len(src) {
@@ -153,10 +232,14 @@ func (d *Decoder) Decode(src []byte) ([]byte, error) {
 				if d.strict {
 					return nil, ErrInvalidSeptet{Offset: i - 1, Septet: esc}
 				}
+				if replacements != nil {
+					*replacements = append(*replacements, Replacement{Offset: i - 1, Septet: esc, Rule: DanglingEscape, Rune: ' '})
+				}
 				dst = append(dst, sp)
 				break
 			}
 			g = src[i]
+			escaped = true
 			if r, ok := lookup(d.ext, g); ok {
 				dst = utf8.AppendRune(dst, r)
 				continue
@@ -173,6 +256,18 @@ func (d *Decoder) Decode(src []byte) ([]byte, error) {
 				return nil, ErrInvalidSeptet{Offset: i, Septet: g}
 			}
 			r = rune(sp)
+		}
+		if replacements != nil && (escaped || !ok) {
+			rule := Unassigned
+			switch {
+			case g == esc:
+				rule = ReservedEscape
+			case g > 0x7f:
+				rule = NotSeptet
+			case escaped && ok:
+				rule = ExtensionFallback
+			}
+			*replacements = append(*replacements, Replacement{Offset: i, Septet: g, Escaped: escaped, Rule: rule, Rune: r})
 		}
 		dst = utf8.AppendRune(dst, r)
 	}
