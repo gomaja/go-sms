@@ -173,7 +173,8 @@ func TestDecoderStrict(t *testing.T) {
 
 // TestDecoderNotStrict decodes, with the tables of TestDecoderStrict, each
 // input a Strict Decoder rejects, applying the receiver rules of 3GPP TS
-// 23.038 V20.0.0 Sections 6.2.1 and 6.2.1.1.
+// 23.038 V20.0.0 Sections 6.2.1 and 6.2.1.1, and a space where those give
+// none.
 func TestDecoderNotStrict(t *testing.T) {
 	set := map[byte]rune{'m': 'M', 'e': 'E', 's': 'S', 'a': 'A', 'g': 'G', 0x1b: 'Z', 0x80: 'Z'}
 	ext := map[byte]rune{'e': 'E', 'x': 'X', 't': 'T', 0x1b: 'Z', 0x80: 'Z'}
@@ -582,7 +583,8 @@ func FuzzEncode(f *testing.F) {
 
 // FuzzDecode decodes arbitrary bytes with every combination of locking and
 // single shift tables. It checks the result against a walk of the receiver
-// rules of 3GPP TS 23.038 Sections 6.2.1 and 6.2.1.1, and that a Strict
+// rules of 3GPP TS 23.038 Sections 6.2.1 and 6.2.1.1, with a space where
+// those give none, and that a Strict
 // Decoder fails exactly where that walk finds no character, and otherwise
 // agrees with the lenient one.
 func FuzzDecode(f *testing.F) {
@@ -756,7 +758,8 @@ func TestReplacementRuleString(t *testing.T) {
 }
 
 // reportOracle applies the receiver rules of 3GPP TS 23.038 Sections
-// 6.2.1 and 6.2.1.1 directly to the charset tables.
+// 6.2.1 and 6.2.1.1, and a space where those give none, directly to the
+// charset tables.
 func reportOracle(src []byte, set, ext charset.Decoder) []gsm7.Replacement {
 	var out []gsm7.Replacement
 	for i := 0; i < len(src); i++ {
