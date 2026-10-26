@@ -5,6 +5,7 @@ package tpdu
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"slices"
 	"unicode/utf8"
 
@@ -139,20 +140,35 @@ func (udh UserDataHeader) MarshalBinary() ([]byte, error) {
 // empty UDH with a returned length greater than one indicates an ignored
 // header.
 func (udh *UserDataHeader) UnmarshalBinary(src []byte) (int, error) {
+	return udh.unmarshalBinary(src, nil)
+}
+
+func (udh *UserDataHeader) unmarshalBinary(src []byte, r *decodeRecorder) (int, error) {
 	if len(src) < 1 {
 		return 0, NewDecodeError("udhl", 0, ErrUnderflow)
 	}
 	udhl := int(src[0])
 	udhl++ // so it includes itself
 	ri := 1
-	if len(src) < udhl {
+	short := len(src) < udhl
+	if short && r == nil {
 		return ri, NewDecodeError("ie", ri, ErrUnderflow)
 	}
+	end := min(udhl, len(src))
 	ies := UserDataHeader{}
-	for ri < udhl {
+	for ri < end {
 		var ie InformationElement
-		n, err := ie.UnmarshalBinary(src[ri:udhl])
+		n, err := ie.UnmarshalBinary(src[ri:end])
 		if err != nil {
+			if short {
+				break
+			}
+			// Identify the final IE by index, and the first missing octet
+			// within the advertised header, not the start of its data.
+			if r != nil {
+				de := err.(DecodeError)
+				r.note(fmt.Sprintf("ie[%d].%s", len(ies), de.Field), end, de.Err)
+			}
 			// too few or too many octets in the final IE
 			*udh = UserDataHeader{}
 			return udhl, nil
@@ -161,6 +177,9 @@ func (udh *UserDataHeader) UnmarshalBinary(src []byte) (int, error) {
 		ies = append(ies, ie)
 	}
 	*udh = ies
+	if short {
+		return 1, NewDecodeError("ie", 1, ErrUnderflow)
+	}
 	return udhl, nil
 }
 

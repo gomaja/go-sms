@@ -64,12 +64,36 @@ func (t *Timestamp) MarshalBinary() ([]byte, error) {
 // zero.  In either case the received octets are retained, and are reproduced
 // by MarshalBinary.
 func (t *Timestamp) UnmarshalBinary(src []byte) error {
+	return t.unmarshalBinary(src, nil)
+}
+
+func (t *Timestamp) unmarshalBinary(src []byte, r *decodeRecorder) error {
 	if len(src) < 7 {
 		return ErrUnderflow
 	}
 	var raw [7]byte
 	copy(raw[:], src)
 	*t = Timestamp{Time: decodeTimestamp(raw)}
+	if r != nil {
+		// 3GPP TS 23.040 Section 9.2.3.11: "If the MS receives a non-integer
+		// value in the SCTS, it shall assume that the digit is set to 0 but shall
+		// store the entire field exactly as received." The time zone is
+		// part of the SCTS; bit 3 is its sign rather than a digit bit.
+		for i, b := range raw {
+			if i == 6 {
+				b &^= 8
+			}
+			if b&15 > 9 {
+				r.add(NewDecodeError("low", i, ErrNonDecimal), false)
+			}
+			if b>>4 > 9 {
+				r.add(NewDecodeError("high", i, ErrNonDecimal), false)
+			}
+		}
+		if t.IsZero() {
+			r.add(DecodeError{Offset: 0, Err: ErrInvalid}, false)
+		}
+	}
 	if enc, err := encodeTimestamp(t.Time); err != nil || enc != raw {
 		t.raw = raw
 		t.hasRaw = true

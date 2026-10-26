@@ -42,7 +42,7 @@ func TestWithUDH(t *testing.T) {
 	b, err := s.MarshalBinary()
 	require.Nil(t, err)
 	d := tpdu.TPDU{Direction: tpdu.MO}
-	require.Nil(t, d.UnmarshalBinary(b))
+	require.Nil(t, unmarshalTPDU(t, &d, b))
 	assert.Equal(t, udh, d.UDH)
 	assert.Equal(t, []byte("hi"), []byte(d.UD))
 	assert.Equal(t, s.FirstOctet, d.FirstOctet)

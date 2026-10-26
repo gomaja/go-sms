@@ -87,7 +87,7 @@ func TestEncodeError(t *testing.T) {
 // MarshalBinary.
 func TestErrorsIsThroughTPDUErrors(t *testing.T) {
 	d := tpdu.TPDU{}
-	err := d.UnmarshalBinary([]byte{0x04})
+	err := unmarshalTPDU(t, &d, []byte{0x04})
 	if !errors.Is(err, tpdu.ErrUnderflow) {
 		t.Errorf("decode: errors.Is(%v, ErrUnderflow) is false", err)
 	}
@@ -103,7 +103,7 @@ func TestErrorsIsThroughTPDUErrors(t *testing.T) {
 // MarshalBinary.
 func TestErrorsAsThroughTPDUErrors(t *testing.T) {
 	d := tpdu.TPDU{Direction: tpdu.MO}
-	err := d.UnmarshalBinary([]byte{0x03})
+	err := unmarshalTPDU(t, &d, []byte{0x03})
 	var de tpdu.DecodeError
 	require.True(t, errors.As(err, &de))
 	assert.Equal(t, "tpdu.firstOctet", de.Field)

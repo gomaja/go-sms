@@ -371,7 +371,7 @@ func TestTimestampNonIntegerDeliver(t *testing.T) {
 		0x05, 0xe8, 0x32, 0x9b, 0xfd, 0x06, // UDL and UD "hello"
 	}
 	var pdu tpdu.TPDU
-	err := pdu.UnmarshalBinary(b)
+	err := unmarshalTPDU(t, &pdu, b)
 	require.Nil(t, err)
 	assert.True(t, pdu.SCTS.Equal(time.Date(2017, time.August, 31, 11, 21, 4, 0, time.FixedZone("SCTS", 8*3600))))
 	m, err := pdu.MarshalBinary()

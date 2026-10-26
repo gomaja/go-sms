@@ -135,12 +135,19 @@ func (a *Address) MarshalBinary() (dst []byte, err error) {
 // no character in the extension table as the character of the main table,
 // and an escape followed by another escape, or by nothing, as a space.
 func (a *Address) UnmarshalBinary(src []byte) (int, error) {
+	return a.unmarshalBinary(src, nil)
+}
+
+func (a *Address) unmarshalBinary(src []byte, r *decodeRecorder) (int, error) {
 	if len(src) < 2 {
 		return 0, NewDecodeError("addr", 0, ErrUnderflow)
 	}
 	l := int(src[0]) // len is semi-octets and ignores toa
 	if l > maxAddressLength {
-		return 0, NewDecodeError("addr", 0, ErrOverlength)
+		err := NewDecodeError("addr", 0, ErrOverlength)
+		if r.reject(err) {
+			return 0, err
+		}
 	}
 	ol := (l + 1) / 2 // octet length
 	toa := src[1]
@@ -148,6 +155,11 @@ func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 	ri := 2
 	if len(src) < ri+ol {
 		return len(src), NewDecodeError("addr", ri, ErrUnderflow)
+	}
+	if ton != TonAlphanumeric && l%2 != 0 && src[ri+ol-1]>>4 != 15 {
+		// 3GPP TS 23.040 Section 9.1.2.3: odd-address fill bits
+		// "shall always be set to '1111'".
+		r.note("fill", ri+ol-1, ErrInvalid)
 	}
 	switch ton {
 	case TonAlphanumeric:
@@ -175,7 +187,11 @@ func (a *Address) UnmarshalBinary(src []byte) (int, error) {
 			return ri, NewDecodeError("addr", ri-n, err)
 		}
 		if n != ol || len(baddr) < l {
-			return ri, NewDecodeError("addr", ri-n, ErrUnderflow)
+			err := NewDecodeError("addr", ri-n, ErrUnderflow)
+			if r.reject(err) {
+				return ri, err
+			}
+			return ri, nil
 		}
 		a.Addr = string(baddr[:l])
 	}

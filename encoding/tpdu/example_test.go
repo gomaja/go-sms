@@ -55,3 +55,15 @@ func ExampleUserDataHeader_SpecialMessageIndications() {
 	// type 0, messages 4, store false
 	// type 1, messages 2, store true
 }
+
+func ExampleTPDU_Inspect() {
+	t := tpdu.TPDU{Direction: tpdu.MO}
+	departures, err := t.Inspect([]byte{0x01, 0, 2, 0x91, 0x21, 0, 8, 4, 0, 0x41})
+	fmt.Println(err)
+	fmt.Printf("destination %s, user data % x\n", t.DA.Addr, t.UD)
+	fmt.Printf("departures %d, rejected %t\n", len(departures), departures[0].Rejected)
+	// Output:
+	// tpdu: error decoding SmsSubmit.ud.sm at octet 8: underflow
+	// destination 12, user data 00 41
+	// departures 1, rejected true
+}
