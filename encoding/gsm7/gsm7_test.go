@@ -5,6 +5,7 @@ package gsm7_test
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -603,6 +604,8 @@ func FuzzDecode(f *testing.F) {
 	f.Fuzz(func(t *testing.T, src []byte, set, ext uint8) {
 		ls, ss := int(set)%charset.End, int(ext)%charset.End
 		lock, shift := lockingDecoders[ls], shiftDecoders[ss]
+		checkDecodeReport(t, gsm7.NewDecoder(gsm7.WithCharset(ls), gsm7.WithExtCharset(ss)), lock, shift, src)
+		checkDecodeReport(t, gsm7.NewDecoder(gsm7.WithCharset(ls), gsm7.WithoutExtCharset), lock, nil, src)
 		char := func(d charset.Decoder, g byte) (rune, bool) {
 			r, ok := d[g]
 			return r, ok && g < 0x80 && g != 0x1b
@@ -672,4 +675,206 @@ func FuzzDecode(f *testing.F) {
 			t.Fatalf("set %d ext %d decode % x -> %q -> % x -> %q, %v", ls, ss, src, strict, enc, again, err)
 		}
 	})
+}
+
+func TestDecodeReportAllocations(t *testing.T) {
+	d := gsm7.NewDecoder()
+	src := []byte{0x41, 0x1b, 0, 0x1b, 0x1b, 0x80, 0x1b}
+	n := testing.AllocsPerRun(1000, func() { _, _ = d.Decode(src) })
+	t.Logf("Decode allocations: %g", n)
+	require.Equal(t, float64(1), n)
+}
+
+func TestDecodeReport(t *testing.T) {
+	for _, p := range []struct {
+		name         string
+		src          []byte
+		text         string
+		replacements []gsm7.Replacement
+	}{
+		{"empty", nil, "", nil},
+		{"characters", []byte{0x41, 0x1b, 0x65}, "A€", nil},
+		{"fallback and reserved", []byte{0x41, 0x1b, 0, 0x1b, 0x1b, 0x42}, "A@ B", []gsm7.Replacement{{Offset: 2, Septet: 0, Escaped: true, Rule: gsm7.ExtensionFallback, Rune: '@'}, {Offset: 4, Septet: 0x1b, Escaped: true, Rule: gsm7.ReservedEscape, Rune: ' '}}},
+		{"dangling", []byte{0x41, 0x1b}, "A ", []gsm7.Replacement{{Offset: 1, Septet: 0x1b, Rule: gsm7.DanglingEscape, Rune: ' '}}},
+		{"escaped octet", []byte{0x1b, 0x80}, " ", []gsm7.Replacement{{Offset: 1, Septet: 0x80, Escaped: true, Rule: gsm7.NotSeptet, Rune: ' '}}},
+		{"octet", []byte{0x80}, " ", []gsm7.Replacement{{Septet: 0x80, Rule: gsm7.NotSeptet, Rune: ' '}}},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			text, replacements, err := gsm7.DecodeReport(p.src)
+			require.NoError(t, err)
+			assert.Equal(t, p.text, string(text))
+			assert.Equal(t, p.replacements, replacements)
+			checkDecodeReport(t, gsm7.NewDecoder(), charset.DefaultDecoder(), charset.DefaultExtDecoder(), p.src)
+		})
+	}
+	// Find a missing national locking code; if all are assigned, remove one
+	// from a caller-owned table instead.
+	set := charset.DefaultDecoder()
+	code := byte(0x41)
+	found := false
+	for nli := charset.Start; nli < charset.End && !found; nli++ {
+		candidate := charset.NewDecoder(nli)
+		for g := 0; g < 128; g++ {
+			if _, ok := candidate[byte(g)]; !ok && g != 0x1b {
+				set, code, found = candidate, byte(g), true
+				break
+			}
+		}
+	}
+	if !found {
+		delete(set, code)
+	}
+	ext := charset.Decoder{0x1b: 'Z', 0x80: 'Z'}
+	d := gsm7.NewDecoder().WithCharset(set).WithExtCharset(ext)
+	for _, escaped := range []bool{false, true} {
+		src := []byte{code}
+		offset := 0
+		if escaped {
+			src = []byte{0x1b, code}
+			offset = 1
+		}
+		text, replacements, err := d.DecodeReport(src)
+		require.NoError(t, err)
+		assert.Equal(t, " ", string(text))
+		assert.Equal(t, []gsm7.Replacement{{Offset: offset, Septet: code, Escaped: escaped, Rule: gsm7.Unassigned, Rune: ' '}}, replacements)
+		checkDecodeReport(t, d, set, ext, src)
+	}
+	checkDecodeReport(t, d, set, ext, []byte{0x1b, 0x1b, 0x1b, 0x80, 0x80})
+}
+
+func TestReplacementRuleString(t *testing.T) {
+	for _, p := range []struct {
+		rule gsm7.ReplacementRule
+		text string
+	}{
+		{gsm7.ExtensionFallback, "ExtensionFallback"}, {gsm7.ReservedEscape, "ReservedEscape"},
+		{gsm7.DanglingEscape, "DanglingEscape"}, {gsm7.Unassigned, "Unassigned"}, {gsm7.NotSeptet, "NotSeptet"},
+		{0, "ReplacementRule(0)"}, {-1, "ReplacementRule(-1)"}, {6, "ReplacementRule(6)"},
+	} {
+		assert.Equal(t, p.text, p.rule.String())
+	}
+}
+
+// reportOracle applies the receiver rules of 3GPP TS 23.038 Sections
+// 6.2.1 and 6.2.1.1 directly to the charset tables.
+func reportOracle(src []byte, set, ext charset.Decoder) []gsm7.Replacement {
+	var out []gsm7.Replacement
+	for i := 0; i < len(src); i++ {
+		escaped := src[i] == 0x1b && i+1 < len(src)
+		if escaped {
+			i++
+		}
+		g := src[i]
+		r, assigned := set[g]
+		rule := gsm7.ReplacementRule(0)
+		switch {
+		case g == 0x1b && escaped:
+			rule = gsm7.ReservedEscape
+		case g == 0x1b:
+			rule = gsm7.DanglingEscape
+		case g > 0x7f:
+			rule = gsm7.NotSeptet
+		default:
+			if escaped {
+				if _, ok := ext[g]; ok {
+					continue
+				}
+				if assigned {
+					rule = gsm7.ExtensionFallback
+				} else {
+					rule = gsm7.Unassigned
+				}
+			} else if !assigned {
+				rule = gsm7.Unassigned
+			}
+		}
+		if rule != 0 {
+			if rule != gsm7.ExtensionFallback {
+				r = ' '
+			}
+			out = append(out, gsm7.Replacement{Offset: i, Septet: g, Escaped: escaped, Rule: rule, Rune: r})
+		}
+	}
+	return out
+}
+
+func checkDecodeReport(t *testing.T, d gsm7.Decoder, set, ext charset.Decoder, src []byte) {
+	got, replacements, err := d.DecodeReport(src)
+	want, wantErr := d.Decode(src)
+	if !bytes.Equal(got, want) || (got == nil) != (want == nil) || err != wantErr {
+		t.Fatalf("report % x: text/error %q %v, Decode %q %v", src, got, err, want, wantErr)
+	}
+	expected := reportOracle(src, set, ext)
+	if !slices.Equal(replacements, expected) || (replacements == nil) != (expected == nil) {
+		t.Fatalf("report % x: got %+v, want %+v", src, replacements, expected)
+	}
+	strict := d.Strict()
+	strictText, strictErr := strict.Decode(src)
+	reportText, report, reportErr := strict.DecodeReport(src)
+	if !bytes.Equal(reportText, strictText) || (reportText == nil) != (strictText == nil) || report != nil || reportErr != strictErr {
+		t.Fatalf("strict report % x: %q %+v %v, Decode %q %v", src, reportText, report, reportErr, strictText, strictErr)
+	}
+	if len(replacements) == 0 {
+		if strictErr != nil {
+			t.Fatalf("strict % x: unexpected %v", src, strictErr)
+		}
+	} else {
+		first := replacements[0]
+		if strictErr != (gsm7.ErrInvalidSeptet{Offset: first.Offset, Septet: first.Septet, Escaped: first.Escaped}) || strictText != nil {
+			t.Fatalf("strict % x: %v disagrees with %+v", src, strictErr, first)
+		}
+	}
+}
+
+func TestDecodeReportExhaustive(t *testing.T) {
+	values := []byte{0, 0x0a, 0x14, 0x1b, 0x20, 0x28, 0x40, 0x41, 0x65, 0x7f, 0x80, 0xff}
+	for nli := charset.Default - 1; nli < charset.End; nli++ {
+		t.Run(fmt.Sprintf("tables %d", nli), func(t *testing.T) {
+			set, ext := charset.NewDecoder(nli), charset.NewExtDecoder(nli)
+			d := gsm7.NewDecoder(gsm7.WithCharset(nli), gsm7.WithExtCharset(nli))
+			if nli < charset.Default {
+				d = gsm7.NewDecoder(gsm7.WithoutExtCharset)
+				ext = nil
+			}
+			check := func(src []byte) { checkDecodeReport(t, d, set, ext, src) }
+			check(nil)
+			for a := 0; a < 256; a++ {
+				check([]byte{byte(a)})
+				for b := 0; b < 256; b++ {
+					check([]byte{byte(a), byte(b)})
+				}
+			}
+			for _, a := range values {
+				for _, b := range values {
+					for _, c := range values {
+						check([]byte{a, b, c})
+						for _, e := range values {
+							check([]byte{a, b, c, e})
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestDecodeReportTablePairs checks all locking and single shift table
+// combinations over every two-byte input.
+func TestDecodeReportTablePairs(t *testing.T) {
+	for ls := charset.Default; ls < charset.End; ls++ {
+		for ss := charset.Default; ss < charset.End; ss++ {
+			if ls == ss {
+				continue
+			} // Covered by TestDecodeReportExhaustive.
+			d := gsm7.NewDecoder(gsm7.WithCharset(ls), gsm7.WithExtCharset(ss))
+			set, ext := charset.NewDecoder(ls), charset.NewExtDecoder(ss)
+			t.Run(fmt.Sprintf("%d/%d", ls, ss), func(t *testing.T) {
+				for a := 0; a < 256; a++ {
+					for b := 0; b < 256; b++ {
+						checkDecodeReport(t, d, set, ext, []byte{byte(a), byte(b)})
+					}
+				}
+			})
+		}
+	}
 }
