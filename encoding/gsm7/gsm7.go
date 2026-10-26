@@ -138,9 +138,10 @@ func Encode(src []byte, options ...EncoderOption) ([]byte, error) {
 //   - an escape after an escape, which is "reserved for the extension to
 //     another extension table", is decoded as a space (Section 6.2.1.1, Note
 //     1), and the septet after it is decoded normally;
-//   - an escape at the end of src is decoded as a space, as a receiver that
-//     does not understand an escape "shall display it as a space character"
-//     (Section 6.2.1, Note 1).
+//   - an escape at the end of src has no septet to escape, so the escape
+//     mechanism cannot apply to it, and it is decoded as a space, as a
+//     receiving entity that does not understand that mechanism "shall
+//     display it as a space character" (Section 6.2.1, Note 1).
 //
 // TS 23.038 gives a receiver no rule for the rest, and the Decoder decodes
 // each of them as a space:
@@ -157,9 +158,10 @@ func (d *Decoder) Decode(src []byte) ([]byte, error) {
 	return d.decode(src, nil)
 }
 
-// A Replacement records a septet that a Decoder decoded other than as a
-// character of its tables: by a rule 3GPP TS 23.038 gives a receiver, or as
-// a space where the specification gives none. Decode lists both kinds.
+// A Replacement records a septet that a Decoder could not decode from the
+// table that applies to it, and the rule the Decoder applied instead: a rule
+// 3GPP TS 23.038 gives a receiver, or a space where the specification gives
+// none. Decode lists both kinds.
 type Replacement struct {
 	// Offset is the index of Septet in the septets, as in ErrInvalidSeptet.
 	Offset int
@@ -188,8 +190,10 @@ const (
 	// ReservedEscape decodes an escape after an escape as a space (3GPP TS
 	// 23.038 Section 6.2.1.1, Note 1). The replacement records the second escape.
 	ReservedEscape
-	// DanglingEscape decodes an escape at the end of the septets as a space
-	// (3GPP TS 23.038 Section 6.2.1, Note 1). Escaped is false.
+	// DanglingEscape decodes an escape at the end of the septets, which has
+	// no septet to escape, as a space, as for an escape a receiving entity
+	// does not understand (3GPP TS 23.038 Section 6.2.1, Note 1). Escaped is
+	// false.
 	DanglingEscape
 	// Unassigned decodes a septet with no character in the character set
 	// (when escaped, in neither set) as a space. 3GPP TS 23.038 gives no

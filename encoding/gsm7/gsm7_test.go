@@ -583,7 +583,8 @@ func FuzzEncode(f *testing.F) {
 
 // FuzzDecode decodes arbitrary bytes with every combination of locking and
 // single shift tables. It checks the result against a walk of the receiver
-// rules of 3GPP TS 23.038 Sections 6.2.1 and 6.2.1.1, and that a Strict
+// rules of 3GPP TS 23.038 Sections 6.2.1 and 6.2.1.1, with a space where
+// those give none, and that a Strict
 // Decoder fails exactly where that walk finds no character, and otherwise
 // agrees with the lenient one.
 func FuzzDecode(f *testing.F) {
