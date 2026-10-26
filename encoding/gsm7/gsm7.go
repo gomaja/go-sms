@@ -128,7 +128,7 @@ func Encode(src []byte, options ...EncoderOption) ([]byte, error) {
 // Each septet is looked up in the character set, except that the escape
 // 0x1B makes the septet after it be looked up in the extension character set.
 // Where the tables have no character, the Decoder applies the rules 3GPP TS
-// 23.038 gives a receiver:
+// 23.038 V20.0.0 gives a receiver for the escape:
 //
 //   - a septet after an escape that has no character in the extension set is
 //     decoded as the character the septet has in the character set (Section
@@ -140,19 +140,26 @@ func Encode(src []byte, options ...EncoderOption) ([]byte, error) {
 //     1), and the septet after it is decoded normally;
 //   - an escape at the end of src is decoded as a space, as a receiver that
 //     does not understand an escape "shall display it as a space character"
-//     (Section 6.2.1, Note 1);
-//   - a septet with no character in the character set, and a byte above 0x7F,
-//     which is not a septet, are decoded as a space.
+//     (Section 6.2.1, Note 1).
 //
-// A Strict Decoder instead returns an ErrInvalidSeptet for the first of
-// these it finds. DecodeReport reports each replacement made by a non-Strict
-// Decoder.
+// TS 23.038 gives a receiver no rule for the rest, and the Decoder decodes
+// each of them as a space:
+//
+//   - a septet with no character in the character set, such as an empty cell
+//     of a National Language Locking Shift Table, and an escaped septet with
+//     no character in either set;
+//   - a byte above 0x7F, which is not a septet.
+//
+// A Strict Decoder instead returns an ErrInvalidSeptet for the first septet
+// or byte of either list that it finds. DecodeReport reports each
+// replacement made by a non-Strict Decoder.
 func (d *Decoder) Decode(src []byte) ([]byte, error) {
 	return d.decode(src, nil)
 }
 
-// A Replacement records a septet that a Decoder decoded by one of the rules
-// 3GPP TS 23.038 gives a receiver, rather than as a character of its tables.
+// A Replacement records a septet that a Decoder decoded other than as a
+// character of its tables: by a rule 3GPP TS 23.038 gives a receiver, or as
+// a space where the specification gives none. Decode lists both kinds.
 type Replacement struct {
 	// Offset is the index of Septet in the septets, as in ErrInvalidSeptet.
 	Offset int
@@ -160,14 +167,17 @@ type Replacement struct {
 	Septet byte
 	// Escaped reports that Septet follows an escape.
 	Escaped bool
-	// Rule is the receiver rule applied to Septet.
+	// Rule is the rule applied to Septet.
 	Rule ReplacementRule
 	// Rune is the character Septet was decoded as.
 	Rune rune
 }
 
-// ReplacementRule identifies the receiver rule applied to a replaced septet.
-// The zero value is not a rule.
+// ReplacementRule identifies the rule applied to a replaced septet: a rule
+// 3GPP TS 23.038 gives a receiver (ExtensionFallback, ReservedEscape and
+// DanglingEscape), or the space a Decoder substitutes where the
+// specification gives none (Unassigned and NotSeptet). The zero value is not
+// a rule.
 type ReplacementRule int
 
 const (
@@ -182,9 +192,14 @@ const (
 	// (3GPP TS 23.038 Section 6.2.1, Note 1). Escaped is false.
 	DanglingEscape
 	// Unassigned decodes a septet with no character in the character set
-	// (when escaped, in neither set) as a space.
+	// (when escaped, in neither set) as a space. 3GPP TS 23.038 gives no
+	// rule for it. Note 1 of Section 6.1.1, "The characters marked "1)" are
+	// not used but are displayed as a space", does not cover it: every table
+	// marks only the escape 0x1B with "1)", and the cells a National Language
+	// Locking Shift Table does not assign are empty.
 	Unassigned
 	// NotSeptet decodes a byte above 0x7F, which is not a septet, as a space.
+	// 3GPP TS 23.038 gives no rule for it.
 	NotSeptet
 )
 
@@ -207,9 +222,10 @@ func (r ReplacementRule) String() string {
 }
 
 // DecodeReport decodes src as Decode does and reports each replaced septet
-// in septet order, with the receiver rule applied and the resulting character.
-// The rules are those of 3GPP TS 23.038 Sections 6.2.1 and 6.2.1.1 described
-// by Decode. Replacements is nil when no septet is replaced. A Strict
+// in septet order, with the rule applied and the resulting character. The
+// rules are those Decode describes: the receiver rules of 3GPP TS 23.038
+// Sections 6.2.1 and 6.2.1.1, and a space where those give none.
+// Replacements is nil when no septet is replaced. A Strict
 // Decoder returns nil text and nil replacements on an ErrInvalidSeptet.
 func (d *Decoder) DecodeReport(src []byte) ([]byte, []Replacement, error) {
 	var replacements []Replacement
