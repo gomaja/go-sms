@@ -148,22 +148,22 @@ func (v *ValidityPeriod) MarshalBinary() ([]byte, error) {
 // Returns the number of bytes read from the src, and any error detected during
 // the unmarshalling.
 func (v *ValidityPeriod) UnmarshalBinary(src []byte, vpf ValidityPeriodFormat) (int, error) {
+	return v.unmarshalBinary(src, vpf, nil)
+}
+
+func (v *ValidityPeriod) unmarshalBinary(src []byte, vpf ValidityPeriodFormat, r *decodeRecorder) (int, error) {
 	v.Format = VpfNotPresent
 	switch vpf {
 	case VpfAbsolute:
 		t := Timestamp{}
-		err := t.UnmarshalBinary(src)
+		err := t.unmarshalBinary(src, r)
 		if err == nil {
 			v.Time = t
 			v.Format = vpf
 		}
 		return 7, err
 	case VpfEnhanced:
-		used, err := v.unmarshalVPEnhanced(src)
-		if err == nil {
-			v.Format = vpf
-		}
-		return used, err
+		return v.unmarshalVPEnhanced(src, r)
 	case VpfRelative:
 		if len(src) < 1 {
 			return 0, ErrUnderflow
@@ -190,18 +190,29 @@ var enhancedValueLen = [...]int{
 // TS 23.040 Section 9.2.3.12.3, which comprises 7 octets: the functionality
 // indicator, any extension octets of the indicator, and the VP value, with
 // any "reserved/unused bits or octets" set to zero.
-func (v *ValidityPeriod) unmarshalVPEnhanced(src []byte) (int, error) {
+func (v *ValidityPeriod) unmarshalVPEnhanced(src []byte, r *decodeRecorder) (int, error) {
 	if len(src) < 7 {
 		return 0, ErrUnderflow
 	}
 	src = src[:7]
 	efi := src[0]
+	// An inspected TP-VP with a rejected departure is not decoded, but the
+	// TPDU goes on 7 octets after its start.
+	bad := false
 	if efi&efiReserved != 0 {
-		return 0, NewDecodeError("enhanced", 0, ErrNonZero)
+		e := NewDecodeError("enhanced", 0, ErrNonZero)
+		if r.reject(e) {
+			return 0, e
+		}
+		bad = true
 	}
 	evpf := EnhancedValidityPeriodFormat(efi & 0x7)
 	if evpf > EvpfRelativeHHMMSS {
-		return 7, NewDecodeError("enhanced", 0, ErrInvalid)
+		e := NewDecodeError("enhanced", 0, ErrInvalid)
+		if r.reject(e) {
+			return 7, e
+		}
+		return 7, nil
 	}
 	// "Any such extension octet shall immediately follow the previous TP-VP
 	// functionality indicator." None of their bits, other than the
@@ -209,16 +220,28 @@ func (v *ValidityPeriod) unmarshalVPEnhanced(src []byte) (int, error) {
 	vi := 1 // index of the VP value
 	for ext := efi&efiExtension != 0; ext; vi++ {
 		if vi >= len(src) {
-			return vi, NewDecodeError("enhanced", vi, ErrUnderflow)
+			e := NewDecodeError("enhanced", vi, ErrUnderflow)
+			if r.reject(e) {
+				return vi, e
+			}
+			return 7, nil
 		}
 		if src[vi]&^efiExtension != 0 {
-			return vi, NewDecodeError("enhanced", vi, ErrNonZero)
+			e := NewDecodeError("enhanced", vi, ErrNonZero)
+			if r.reject(e) {
+				return vi, e
+			}
+			bad = true
 		}
 		ext = src[vi]&efiExtension != 0
 	}
 	used := enhancedValueLen[evpf]
 	if vi+used > len(src) {
-		return vi, NewDecodeError("enhanced", vi, ErrUnderflow)
+		e := NewDecodeError("enhanced", vi, ErrUnderflow)
+		if r.reject(e) {
+			return vi, e
+		}
+		return 7, nil
 	}
 	d := time.Duration(0)
 	switch evpf {
@@ -227,7 +250,11 @@ func (v *ValidityPeriod) unmarshalVPEnhanced(src []byte) (int, error) {
 	case EvpfRelativeSeconds:
 		// "A TP-VP value of zero is undefined and reserved for future use."
 		if src[vi] == 0 {
-			return vi, NewDecodeError("enhanced", vi, ErrInvalid)
+			e := NewDecodeError("enhanced", vi, ErrInvalid)
+			if r.reject(e) {
+				return vi, e
+			}
+			bad = true
 		}
 		d = time.Second * time.Duration(src[vi])
 	case EvpfRelativeHHMMSS:
@@ -238,19 +265,35 @@ func (v *ValidityPeriod) unmarshalVPEnhanced(src []byte) (int, error) {
 		for idx := 0; idx < 3; idx++ {
 			i[idx], err = bcd.Decode(src[vi+idx])
 			if err != nil {
-				return vi + 3, NewDecodeError("enhanced", vi, err)
+				e := NewDecodeError("enhanced", vi, err)
+				if r.reject(e) {
+					return vi + 3, e
+				}
+				bad = true
 			}
 		}
 		if i[1] > 59 || i[2] > 59 {
-			return vi, NewDecodeError("enhanced", vi, ErrInvalid)
+			e := NewDecodeError("enhanced", vi, ErrInvalid)
+			if r.reject(e) {
+				return vi, e
+			}
+			bad = true
 		}
 		d = time.Duration(i[0])*time.Hour + time.Duration(i[1])*time.Minute + time.Duration(i[2])*time.Second
 	}
 	for i := vi + used; i < len(src); i++ {
 		if src[i] != 0 {
-			return vi + used, NewDecodeError("enhanced", i, ErrNonZero)
+			e := NewDecodeError("enhanced", i, ErrNonZero)
+			if r.reject(e) {
+				return vi + used, e
+			}
+			bad = true
 		}
 	}
+	if bad {
+		return 7, nil
+	}
+	v.Format = VpfEnhanced
 	v.EFI = efi
 	v.efiExt = vi - 1
 	v.Duration = d

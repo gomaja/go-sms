@@ -327,7 +327,7 @@ func TestReservedDCSDeliver(t *testing.T) {
 			0x05, 0xe8, 0x32, 0x9b, 0xfd, 0x06, // UDL and UD "hello"
 		}
 		var pdu tpdu.TPDU
-		err := pdu.UnmarshalBinary(b)
+		err := unmarshalTPDU(t, &pdu, b)
 		require.Nil(t, err, "%02x", dcs)
 		assert.Equal(t, tpdu.UserData("hello"), pdu.UD)
 		assert.Equal(t, tpdu.DCS(dcs), pdu.DCS)

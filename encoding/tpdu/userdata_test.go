@@ -399,7 +399,7 @@ func TestUserDataHeaderIgnored(t *testing.T) {
 		0x02, 0x01, 0x41, // SM
 	}
 	var pdu tpdu.TPDU
-	err := pdu.UnmarshalBinary(b)
+	err := unmarshalTPDU(t, &pdu, b)
 	require.Nil(t, err)
 	assert.Equal(t, tpdu.UserDataHeader{}, pdu.UDH)
 	assert.Equal(t, tpdu.UserData{0x07, 0x02, 0x01, 0x41}, pdu.UD)
@@ -419,7 +419,7 @@ func TestUserDataHeaderIgnored(t *testing.T) {
 		0xa0, 0xcb, 0x6c, 0xf6, 0x1b, // fill bits and SM
 	}
 	pdu = tpdu.TPDU{}
-	err = pdu.UnmarshalBinary(b)
+	err = unmarshalTPDU(t, &pdu, b)
 	require.Nil(t, err)
 	assert.Equal(t, tpdu.UserDataHeader{}, pdu.UDH)
 	assert.Equal(t, tpdu.UserData("hello"), pdu.UD)
@@ -459,7 +459,7 @@ func TestUserDataHeaderEmptyRoundTrip(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			var pdu tpdu.TPDU
-			err := pdu.UnmarshalBinary(p.in)
+			err := unmarshalTPDU(t, &pdu, p.in)
 			require.Nil(t, err)
 			assert.True(t, pdu.UDHI())
 			assert.Equal(t, tpdu.UserDataHeader{}, pdu.UDH)
@@ -1510,7 +1510,7 @@ func TestNationalLanguageIEIDeliver(t *testing.T) {
 		0x03, 0x25, 0x01, 0x01, 0xe8, 0x00, // UDH, fill bits and SM
 	}
 	var pdu tpdu.TPDU
-	err := pdu.UnmarshalBinary(b)
+	err := unmarshalTPDU(t, &pdu, b)
 	require.Nil(t, err)
 	msg, err := tpdu.DecodeUserData(pdu.UD, pdu.UDH, tpdu.Alpha7Bit,
 		tpdu.WithLockingCharset(charset.Turkish))
@@ -1556,7 +1556,7 @@ func TestUserDataHeaderIgnoredRoundTrip(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			pdu := tpdu.TPDU{Direction: p.dirn}
-			require.Nil(t, pdu.UnmarshalBinary(p.in))
+			require.Nil(t, unmarshalTPDU(t, &pdu, p.in))
 			assert.Equal(t, tpdu.UserDataHeader{}, pdu.UDH)
 			assert.Equal(t, p.ud, pdu.UD)
 			assert.Equal(t, p.udhl, pdu.UDHL())
@@ -1572,7 +1572,7 @@ func TestUserDataHeaderIgnoredRoundTrip(t *testing.T) {
 			require.Nil(t, err)
 			assert.NotEqual(t, p.in, out)
 			again := tpdu.TPDU{Direction: p.dirn}
-			require.Nil(t, again.UnmarshalBinary(out))
+			require.Nil(t, unmarshalTPDU(t, &again, out))
 			assert.Equal(t, p.ud, again.UD)
 		}
 		t.Run(p.name, f)

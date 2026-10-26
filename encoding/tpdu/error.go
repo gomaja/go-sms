@@ -9,6 +9,18 @@ import (
 	"io"
 )
 
+// A Departure is a place where a received TPDU departs from 3GPP TS 23.040,
+// as found by TPDU.Inspect.
+type Departure struct {
+	// Err is a DecodeError with the field path and octet offset, wrapping
+	// the cause in the same form as errors returned by UnmarshalBinary.
+	Err error
+	// Rejected reports that UnmarshalBinary rejects this departure.
+	// Otherwise decoding follows a rule for receiving entities, such as
+	// ignoring a malformed header or taking a non-integer SCTS digit as 0.
+	Rejected bool
+}
+
 // DecodeError contains the details of an error detected while decoding a TPDU.
 //
 // The Err it wraps can be matched with errors.Is and errors.As.
@@ -87,6 +99,14 @@ func (e ErrUnsupportedSmsType) Error() string {
 }
 
 var (
+	// ErrNonDecimal indicates a non-integer timestamp digit taken as zero
+	// under 3GPP TS 23.040 Section 9.2.3.11.
+	ErrNonDecimal = errors.New("non-decimal digit")
+
+	// ErrReserved indicates reserved bits or a reserved TP-MTI accepted by
+	// a receiver under 3GPP TS 23.040 Sections 9.2.3.1 and 9.2.3.27.
+	ErrReserved = errors.New("reserved")
+
 	// ErrInvalid indicates the value of a field provided to an encoder is not valid.
 	ErrInvalid = errors.New("invalid")
 

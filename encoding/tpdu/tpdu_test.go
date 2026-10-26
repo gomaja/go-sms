@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1176,7 +1177,7 @@ func TestInvalidDirection(t *testing.T) {
 			assert.Error(t, p.SetSmsType(st), name)
 			in := append([]byte{byte(mt)}, deliver[1:]...)
 			u := tpdu.TPDU{Direction: d}
-			err = u.UnmarshalBinary(in)
+			err = unmarshalTPDU(t, &u, in)
 			assert.Equal(t, tpdu.NewDecodeError("tpdu.firstOctet", 0, tpdu.ErrUnsupportedSmsType(st)), err, name)
 			assert.Equal(t, tpdu.TPDU{Direction: d, FirstOctet: tpdu.FirstOctet(mt)}, u, name)
 		}
@@ -1444,7 +1445,7 @@ func TestAlphanumericAddressEscapes(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{Direction: p.dirn}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			assert.Equal(t, p.want, p.addr(&d))
 			if d.SmsType() != tpdu.SmsStatusReport && d.SmsType() != tpdu.SmsCommand {
 				assert.Equal(t, []byte("A"), []byte(d.UD))
@@ -1495,7 +1496,7 @@ func TestAddressFillSemiOctet(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{Direction: p.dirn}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			assert.Equal(t, number, p.addr(&d))
 			b, err := d.MarshalBinary()
 			require.NoError(t, err)
@@ -1528,7 +1529,7 @@ func TestUDHIWithoutUD(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{Direction: p.dirn}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			assert.True(t, d.UDHI())
 			assert.Nil(t, d.UDH)
 			assert.Equal(t, 0, d.UDHL())
@@ -2482,7 +2483,9 @@ func TestUnmarshalBinary(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			d := tpdu.TPDU{Direction: p.dirn, RPMessage: p.out.RPMessage}
-			err := d.UnmarshalBinary(p.in)
+			err := unmarshalTPDU(t, &d, p.in)
+			checkInspect(t, p.in, tpdu.TPDU{Direction: p.dirn, RPMessage: p.out.RPMessage}, d, err)
+			checkInspectPrefixes(t, p.in)
 			assert.Equal(t, p.err, err)
 			assert.Equal(t, p.out, d)
 		}
@@ -2553,10 +2556,10 @@ func TestUnmarshalBinaryResetsReceiver(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			reused := tpdu.TPDU{Direction: p.dirn}
-			require.NoError(t, reused.UnmarshalBinary(unhex(t, p.first)))
-			rerr := reused.UnmarshalBinary(unhex(t, p.second))
+			require.NoError(t, unmarshalTPDU(t, &reused, unhex(t, p.first)))
+			rerr := unmarshalTPDU(t, &reused, unhex(t, p.second))
 			fresh := tpdu.TPDU{Direction: p.dirn}
-			ferr := fresh.UnmarshalBinary(unhex(t, p.second))
+			ferr := unmarshalTPDU(t, &fresh, unhex(t, p.second))
 			assert.Equal(t, ferr, rerr)
 			assert.Equal(t, fresh, reused)
 		}
@@ -2572,7 +2575,7 @@ func TestUnmarshalBinaryResetsReceiver(t *testing.T) {
 func TestReservedMTI(t *testing.T) {
 	in := unhex(t, "07 04 91 3619 00 00 51507132200523 01 41")
 	d := tpdu.TPDU{Direction: tpdu.MT}
-	require.NoError(t, d.UnmarshalBinary(in))
+	require.NoError(t, unmarshalTPDU(t, &d, in))
 	assert.Equal(t, tpdu.SmsDeliver, d.SmsType())
 	assert.Equal(t, tpdu.MtReserved, d.MTI())
 	assert.Equal(t, tpdu.FirstOctet(0x07), d.FirstOctet)
@@ -2585,7 +2588,7 @@ func TestReservedMTI(t *testing.T) {
 
 	// There is no such rule for the MO direction, where the SC receives it.
 	m := tpdu.TPDU{Direction: tpdu.MO}
-	err = m.UnmarshalBinary(in)
+	err = unmarshalTPDU(t, &m, in)
 	assert.Equal(t, tpdu.NewDecodeError("tpdu.firstOctet", 0, tpdu.ErrUnsupportedSmsType(7)), err)
 	// the TPDU is left partially decoded, so the first octet is kept.
 	assert.Equal(t, tpdu.TPDU{Direction: tpdu.MO, FirstOctet: 0x07}, m)
@@ -2648,7 +2651,7 @@ func TestReportRPAckDecode(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{Direction: p.dirn}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			assert.Equal(t, p.out, d)
 			b, err := d.MarshalBinary()
 			require.NoError(t, err)
@@ -2682,7 +2685,7 @@ func TestReportRPErrorDecode(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			assert.Equal(t, tpdu.RPError, d.RPMessage)
 			assert.Equal(t, p.fcs, d.FCS)
 			assert.Equal(t, p.pi, d.PI)
@@ -2726,7 +2729,7 @@ func TestReportRPErrorUnusedBits(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			assert.Equal(t, p.fcs, d.FCS)
 			assert.Equal(t, byte(0xff), d.FailureCause())
 			// no field after the TP-FCS is examined
@@ -2762,11 +2765,11 @@ func TestReportRPErrorUnusedBits(t *testing.T) {
 			r := tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError}
 			// as are the fields when the unused bits are cleared
 			d = tpdu.TPDU{Direction: p.dirn, RPMessage: tpdu.RPError}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			d.FirstOctet &= 0x43
 			b, err = d.MarshalBinary()
 			require.NoError(t, err)
-			require.NoError(t, r.UnmarshalBinary(b))
+			require.NoError(t, unmarshalTPDU(t, &r, b))
 			assert.Equal(t, p.fcs, r.FailureCause())
 		}
 		t.Run(p.name, f)
@@ -2774,26 +2777,26 @@ func TestReportRPErrorUnusedBits(t *testing.T) {
 
 	// The TP-FCS itself is still required.
 	d := tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}
-	err := d.UnmarshalBinary(unhex(t, "04"))
+	err := unmarshalTPDU(t, &d, unhex(t, "04"))
 	assert.Equal(t, tpdu.NewDecodeError("SmsDeliverReport.fcs", 1, tpdu.ErrUnderflow), err)
 
 	// The rule is for RP-ERROR: in a report for RP-ACK, which has no
 	// TP-FCS, the receiver "shall ignore them" (9.2.2.1a (ii), 9.2.2.2a
 	// (ii)), so the report is decoded as any other.
 	d = tpdu.TPDU{Direction: tpdu.MO}
-	require.NoError(t, d.UnmarshalBinary(unhex(t, "04 01 7f")))
+	require.NoError(t, unmarshalTPDU(t, &d, unhex(t, "04 01 7f")))
 	assert.Equal(t, byte(0x7f), d.PID)
 	assert.Equal(t, byte(0), d.FailureCause())
 	d = tpdu.TPDU{Direction: tpdu.MO}
-	err = d.UnmarshalBinary(unhex(t, "04 07"))
+	err = unmarshalTPDU(t, &d, unhex(t, "04 07"))
 	assert.Equal(t, tpdu.NewDecodeError("SmsDeliverReport.pid", 2, tpdu.ErrUnderflow), err)
 
 	// Without an unused bit the TP-FCS is taken as received, reserved
 	// values included, and the fields are examined.
 	d = tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}
-	require.NoError(t, d.UnmarshalBinary(unhex(t, "40 d0 00")))
+	require.NoError(t, unmarshalTPDU(t, &d, unhex(t, "40 d0 00")))
 	assert.Equal(t, byte(0xd0), d.FailureCause())
-	err = d.UnmarshalBinary(unhex(t, "00 d0 07"))
+	err = unmarshalTPDU(t, &d, unhex(t, "00 d0 07"))
 	assert.Equal(t, tpdu.NewDecodeError("SmsDeliverReport.pid", 3, tpdu.ErrUnderflow), err)
 
 	// FailureCause applies the rule to a report that was not unmarshalled.
@@ -2836,7 +2839,7 @@ func TestReportFCSMarshal(t *testing.T) {
 	r := tpdu.TPDU{Direction: tpdu.MO, RPMessage: 2}
 	_, err := r.MarshalBinary()
 	assert.Equal(t, tpdu.NewEncodeError("SmsDeliverReport.rp", tpdu.ErrInvalid), err)
-	err = r.UnmarshalBinary([]byte{0x00, 0x00})
+	err = unmarshalTPDU(t, &r, []byte{0x00, 0x00})
 	assert.Equal(t, tpdu.NewDecodeError("SmsDeliverReport.rp", 1, tpdu.ErrInvalid), err)
 	// but only matters for the reports
 	r.FirstOctet = 0x01
@@ -2889,7 +2892,7 @@ func TestPIExtension(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{Direction: p.dirn}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			assert.Equal(t, p.pi, d.PI)
 			assert.Equal(t, p.piext, d.PIExt)
 			assert.Equal(t, p.pid, d.PID)
@@ -2919,7 +2922,7 @@ func TestPIExtension(t *testing.T) {
 	for _, p := range truncated {
 		f := func(t *testing.T) {
 			d := tpdu.TPDU{Direction: p.dirn}
-			err := d.UnmarshalBinary(unhex(t, p.in))
+			err := unmarshalTPDU(t, &d, unhex(t, p.in))
 			assert.Equal(t, p.err, err)
 		}
 		t.Run("truncated "+p.name, f)
@@ -2975,7 +2978,7 @@ func TestStatusReportExplicitPI(t *testing.T) {
 	} {
 		b := unhex(t, in)
 		d := tpdu.TPDU{}
-		require.NoError(t, d.UnmarshalBinary(b), in)
+		require.NoError(t, unmarshalTPDU(t, &d, b), in)
 		out, err := d.MarshalBinary()
 		require.NoError(t, err, in)
 		assert.Equal(t, b, out, in)
@@ -2984,7 +2987,7 @@ func TestStatusReportExplicitPI(t *testing.T) {
 		out, err = d.MarshalBinary()
 		require.NoError(t, err, in)
 		r := tpdu.TPDU{}
-		require.NoError(t, r.UnmarshalBinary(out), in)
+		require.NoError(t, unmarshalTPDU(t, &r, out), in)
 		assert.Equal(t, []byte("B"), []byte(r.UD), in)
 	}
 
@@ -2995,8 +2998,8 @@ func TestStatusReportExplicitPI(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, unhex(t, "02 42 04 91 3619 00000000000000 00000000000000 ab"), out)
 	d := tpdu.TPDU{}
-	require.NoError(t, d.UnmarshalBinary(unhex(t, srHead+" 00")))
-	require.NoError(t, d.UnmarshalBinary(unhex(t, srHead)))
+	require.NoError(t, unmarshalTPDU(t, &d, unhex(t, srHead+" 00")))
+	require.NoError(t, unmarshalTPDU(t, &d, unhex(t, srHead)))
 	out, err = d.MarshalBinary()
 	require.NoError(t, err)
 	assert.Equal(t, unhex(t, srHead), out)
@@ -3029,7 +3032,7 @@ func TestPIReservedBits(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			d := tpdu.TPDU{Direction: p.dirn}
-			require.NoError(t, d.UnmarshalBinary(unhex(t, p.in)))
+			require.NoError(t, unmarshalTPDU(t, &d, unhex(t, p.in)))
 			assert.Equal(t, p.ud, []byte(d.UD))
 			// the reserved bits are kept, but not the discarded octets.
 			b, err := d.MarshalBinary()
@@ -3072,7 +3075,7 @@ func TestPIReservedBits(t *testing.T) {
 	for _, p := range rejected {
 		f := func(t *testing.T) {
 			d := tpdu.TPDU{Direction: p.dirn}
-			err := d.UnmarshalBinary(unhex(t, p.in))
+			err := unmarshalTPDU(t, &d, unhex(t, p.in))
 			assert.Equal(t, p.err, err)
 			assert.ErrorIs(t, err, tpdu.ErrOverlength)
 		}
@@ -3099,7 +3102,7 @@ func TestPIDCSAbsent(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			d := tpdu.TPDU{Direction: p.dirn, DCS: tpdu.DcsUCS2Data, PID: 0x7f}
-			require.NoError(t, d.UnmarshalBinary(unhex(t, p.in)))
+			require.NoError(t, unmarshalTPDU(t, &d, unhex(t, p.in)))
 			assert.Equal(t, tpdu.DCS(0), d.DCS)
 			assert.Equal(t, byte(0), d.PID)
 			assert.Equal(t, []byte("AA"), []byte(d.UD))
@@ -3183,7 +3186,7 @@ func TestMarshalDerivesFlags(t *testing.T) {
 			// the TPDU itself is unchanged
 			assert.Equal(t, p.in, in)
 			d := tpdu.TPDU{Direction: p.in.Direction}
-			require.NoError(t, d.UnmarshalBinary(b))
+			require.NoError(t, unmarshalTPDU(t, &d, b))
 			assert.Equal(t, p.in.UDH, d.UDH)
 			assert.Equal(t, p.in.UD, d.UD)
 			assert.Equal(t, p.in.DCS, d.DCS)
@@ -3232,7 +3235,7 @@ func TestUDHIRoundTrip(t *testing.T) {
 		if b[0]&0x03 == 0 {
 			d.Direction = tpdu.MT
 		}
-		require.NoError(t, d.UnmarshalBinary(b), in)
+		require.NoError(t, unmarshalTPDU(t, &d, b), in)
 		out, err := d.MarshalBinary()
 		require.NoError(t, err, in)
 		assert.Equal(t, b, out, in)
@@ -3268,7 +3271,7 @@ func TestCommandData(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{Direction: tpdu.MO}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			assert.Equal(t, tpdu.SmsCommand, d.SmsType())
 			assert.Equal(t, p.udh, d.UDH)
 			assert.Equal(t, p.ud, []byte(d.UD))
@@ -3290,7 +3293,7 @@ func TestCommandData(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, unhex(t, "42 00 00 00 00 00 80 08 05 00 03 01 02 01 7879"), b)
 	d := tpdu.TPDU{Direction: tpdu.MO}
-	require.NoError(t, d.UnmarshalBinary(b))
+	require.NoError(t, unmarshalTPDU(t, &d, b))
 	assert.Equal(t, c.UDH, d.UDH)
 	assert.Equal(t, c.UD, d.UD)
 
@@ -3358,7 +3361,7 @@ func TestCompressedUserData(t *testing.T) {
 		f := func(t *testing.T) {
 			in := unhex(t, p.in)
 			d := tpdu.TPDU{}
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			require.True(t, d.DCS.Compressed())
 			assert.Equal(t, p.udh, d.UDH)
 			assert.Equal(t, p.ud, []byte(d.UD))
@@ -3370,7 +3373,7 @@ func TestCompressedUserData(t *testing.T) {
 	}
 	// a UDL of 8 octets, not septets, so 7 octets is too few.
 	d := tpdu.TPDU{}
-	err := d.UnmarshalBinary(unhex(t, dlvHead+" 20 "+scts+" 08 01020304050607"))
+	err := unmarshalTPDU(t, &d, unhex(t, dlvHead+" 20 "+scts+" 08 01020304050607"))
 	assert.ErrorIs(t, err, tpdu.ErrUnderflow)
 
 	// the block size is in octets
@@ -3410,7 +3413,7 @@ func TestHeaderOnly7BitUDL(t *testing.T) {
 			want := unhex(t, dlvHeadUDHI+" 00 00000000000000 "+p.ud)
 			assert.Equal(t, want, b)
 			d := tpdu.TPDU{}
-			require.NoError(t, d.UnmarshalBinary(b))
+			require.NoError(t, unmarshalTPDU(t, &d, b))
 			assert.Equal(t, p.udh, d.UDH)
 			assert.Nil(t, d.UD)
 			out, err := d.MarshalBinary()
@@ -3424,7 +3427,7 @@ func TestHeaderOnly7BitUDL(t *testing.T) {
 	// alone overruns, is still accepted, but marshals to the counted form.
 	in := unhex(t, "41 00 04 91 3619 00 00 06 05 00 03 01 02 01")
 	d := tpdu.TPDU{Direction: tpdu.MO}
-	require.NoError(t, d.UnmarshalBinary(in))
+	require.NoError(t, unmarshalTPDU(t, &d, in))
 	assert.Equal(t, tpdu.UserDataHeader{{ID: 0, Data: []byte{1, 2, 1}}}, d.UDH)
 	assert.Nil(t, d.UD)
 	b, err := d.MarshalBinary()
@@ -3456,7 +3459,7 @@ func TestSpareBits7Bit(t *testing.T) {
 	for _, p := range patterns {
 		f := func(t *testing.T) {
 			d := tpdu.TPDU{}
-			require.NoError(t, d.UnmarshalBinary(unhex(t, p.in)))
+			require.NoError(t, unmarshalTPDU(t, &d, unhex(t, p.in)))
 			assert.Equal(t, []byte(p.ud), []byte(d.UD))
 			assert.Equal(t, p.udh, d.UDH)
 		}
@@ -3507,7 +3510,7 @@ func TestReservedDCS(t *testing.T) {
 	} {
 		b := unhex(t, in)
 		d := tpdu.TPDU{}
-		require.NoError(t, d.UnmarshalBinary(b), in)
+		require.NoError(t, unmarshalTPDU(t, &d, b), in)
 		assert.Equal(t, []byte("Hahahaha"), []byte(d.UD), in)
 		out, err := d.MarshalBinary()
 		require.NoError(t, err, in)
@@ -3598,7 +3601,7 @@ func TestUDMaximaOnMarshal(t *testing.T) {
 				// the TP-UD takes at most the maximum, and no more than a
 				// unit less, other than for a UCS2 character.
 				d := tpdu.TPDU{Direction: pdu.Direction, RPMessage: pdu.RPMessage}
-				require.NoError(t, d.UnmarshalBinary(b), name)
+				require.NoError(t, unmarshalTPDU(t, &d, b), name)
 				udo := udOctets(pdu)
 				max := p.max
 				if pdu.SmsType() == tpdu.SmsStatusReport && pdu.DCS != 0 {
@@ -3655,7 +3658,7 @@ func TestLongPIExtension(t *testing.T) {
 	in := report(158)
 	require.Len(t, in, 164)
 	d := tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}
-	require.NoError(t, d.UnmarshalBinary(in))
+	require.NoError(t, unmarshalTPDU(t, &d, in))
 	assert.Len(t, d.PIExt, 158)
 	b, err := d.MarshalBinary()
 	require.NoError(t, err)
@@ -3665,12 +3668,12 @@ func TestLongPIExtension(t *testing.T) {
 	d.UD = []byte{1}
 	_, err = d.MarshalBinary()
 	assert.ErrorIs(t, err, tpdu.ErrOverlength)
-	err = d.UnmarshalBinary(append(in[:len(in)-1], 0x01, 0x41))
+	err = unmarshalTPDU(t, &d, append(in[:len(in)-1], 0x01, 0x41))
 	assert.ErrorIs(t, err, tpdu.ErrOverlength)
 
 	// nor one more extension octet, even with no TP-UD
 	in = report(159)
-	err = d.UnmarshalBinary(in)
+	err = unmarshalTPDU(t, &d, in)
 	assert.ErrorIs(t, err, tpdu.ErrOverlength)
 	d = tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError, FCS: 0x80, PIExt: bytes.Repeat([]byte{0x80}, 162)}
 	d.PIExt[len(d.PIExt)-1] = 0
@@ -3735,11 +3738,11 @@ func TestUDMaximaOnUnmarshal(t *testing.T) {
 		f := func(t *testing.T) {
 			d := tpdu.TPDU{Direction: p.dirn}
 			in := unhex(t, p.ok)
-			require.NoError(t, d.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &d, in))
 			b, err := d.MarshalBinary()
 			require.NoError(t, err)
 			assert.Equal(t, in, b)
-			err = d.UnmarshalBinary(unhex(t, p.bad))
+			err = unmarshalTPDU(t, &d, unhex(t, p.bad))
 			assert.ErrorIs(t, err, tpdu.ErrOverlength)
 		}
 		t.Run(p.name, f)
@@ -4217,8 +4220,8 @@ var unmarshalConfigs = []tpdu.TPDU{
 // marshals and decodes back with the same fields, except for the
 // alphanumeric numbering plan. Its octets are preserved other than where
 // 3GPP TS 23.040 lets them differ, as checked by checkRemarshal.
-func FuzzUnmarshalBinary(f *testing.F) {
-	for _, seed := range []string{
+func unmarshalSeeds() []string {
+	return []string{
 		"",
 		"00",
 		"03",
@@ -4264,14 +4267,19 @@ func FuzzUnmarshalBinary(f *testing.F) {
 		"41 00 04 91 3619 00 04 06 05 04 01 03 01 02",
 		"04 06 d0 e1f1d8 00 00 51507132200523 00",
 		"04 06 d1 e1f1d8 00 00 51507132200523 00",
-	} {
+	}
+}
+
+func FuzzUnmarshalBinary(f *testing.F) {
+	for _, seed := range unmarshalSeeds() {
 		f.Add(unhex(f, seed))
 	}
-
 	f.Fuzz(func(t *testing.T, src []byte) {
 		for _, cfg := range unmarshalConfigs {
 			d := cfg
-			if err := d.UnmarshalBinary(src); err != nil {
+			err := d.UnmarshalBinary(src)
+			checkInspect(t, src, cfg, d, err)
+			if err != nil {
 				continue
 			}
 			label := fmt.Sprintf("%s %s % x", d.SmsType(), d.RPMessage, src)
@@ -4748,7 +4756,7 @@ func TestReportRPErrorUnusedBitsLength(t *testing.T) {
 			in := make([]byte, n)
 			in[0], in[1] = fo, 0xd0
 			d := tpdu.TPDU{Direction: dirn, RPMessage: tpdu.RPError}
-			err := d.UnmarshalBinary(in)
+			err := unmarshalTPDU(t, &d, in)
 			if n > 232 {
 				assert.ErrorIs(t, err, tpdu.ErrOverlength, "dirn %d n %d", dirn, n)
 				// the octets past the limit are in the unexamined fields
@@ -4828,7 +4836,7 @@ func TestReportUDRoom(t *testing.T) {
 						require.NoError(t, err)
 						assert.Equal(t, want, b)
 						decoded := tpdu.TPDU{Direction: d.Direction, RPMessage: rp}
-						require.NoError(t, decoded.UnmarshalBinary(want))
+						require.NoError(t, unmarshalTPDU(t, &decoded, want))
 						b, err = decoded.MarshalBinary()
 						require.NoError(t, err)
 						assert.Equal(t, want, b)
@@ -4842,7 +4850,7 @@ func TestReportUDRoom(t *testing.T) {
 						_, err = d.MarshalBinary()
 						assert.ErrorIs(t, err, tpdu.ErrOverlength)
 						bad := append(append(append([]byte{}, in...), byte(units+1)), make([]byte, room+1)...)
-						assert.ErrorIs(t, decoded.UnmarshalBinary(bad), tpdu.ErrOverlength)
+						assert.ErrorIs(t, unmarshalTPDU(t, &decoded, bad), tpdu.ErrOverlength)
 					})
 				}
 			}
@@ -4887,12 +4895,12 @@ func TestReportPIWithoutUDL(t *testing.T) {
 						b, err := d.MarshalBinary()
 						if size > 164 {
 							assert.ErrorIs(t, err, tpdu.ErrOverlength)
-							assert.ErrorIs(t, decoded.UnmarshalBinary(in), tpdu.ErrOverlength)
+							assert.ErrorIs(t, unmarshalTPDU(t, &decoded, in), tpdu.ErrOverlength)
 							return
 						}
 						require.NoError(t, err)
 						assert.Equal(t, in, b)
-						require.NoError(t, decoded.UnmarshalBinary(in))
+						require.NoError(t, unmarshalTPDU(t, &decoded, in))
 						b, err = decoded.MarshalBinary()
 						require.NoError(t, err)
 						assert.Equal(t, in, b)
@@ -4933,7 +4941,7 @@ func TestReportReservedPILength(t *testing.T) {
 						require.Len(t, in, 164)
 						wire := append(append([]byte{}, in...), bytes.Repeat([]byte{0xaa}, size-len(in))...)
 						decoded := tpdu.TPDU{Direction: d.Direction, RPMessage: rp}
-						err = decoded.UnmarshalBinary(wire)
+						err = unmarshalTPDU(t, &decoded, wire)
 						if size > 232 {
 							assert.ErrorIs(t, err, tpdu.ErrOverlength)
 							return
@@ -4955,7 +4963,7 @@ func TestReportReservedPILength(t *testing.T) {
 func TestLongPIChain(t *testing.T) {
 	in := append([]byte{0x00, 0xff}, bytes.Repeat([]byte{0xff}, 1<<20)...)
 	d := tpdu.TPDU{Direction: tpdu.MO}
-	err := d.UnmarshalBinary(in)
+	err := unmarshalTPDU(t, &d, in)
 	assert.ErrorIs(t, err, tpdu.ErrOverlength)
 	assert.ErrorContains(t, err, ".pi at octet 164")
 	assert.Less(t, len(d.PIExt), 164)
@@ -4997,7 +5005,7 @@ func TestReceivedAddressLength(t *testing.T) {
 		for _, n := range []int{p.max, p.max + 1} {
 			in := p.tpdu(n)
 			d := tpdu.TPDU{Direction: p.dirn}
-			err := d.UnmarshalBinary(in)
+			err := unmarshalTPDU(t, &d, in)
 			if n > p.max {
 				// the octet past the budget is the last
 				require.Len(t, in, 165)
@@ -5029,7 +5037,7 @@ func TestHeaderOnly7BitRoom(t *testing.T) {
 	} {
 		t.Run(p.name, func(t *testing.T) {
 			d := tpdu.TPDU{Direction: tpdu.MO}
-			err := d.UnmarshalBinary(unhex(t, p.in))
+			err := unmarshalTPDU(t, &d, unhex(t, p.in))
 			if p.err != nil {
 				require.ErrorIs(t, err, p.err)
 				return
@@ -5039,7 +5047,7 @@ func TestHeaderOnly7BitRoom(t *testing.T) {
 			b, err := d.MarshalBinary()
 			require.NoError(t, err)
 			var decoded = tpdu.TPDU{Direction: tpdu.MO}
-			require.NoError(t, decoded.UnmarshalBinary(b))
+			require.NoError(t, unmarshalTPDU(t, &decoded, b))
 			assert.Equal(t, d, decoded)
 		})
 	}
@@ -5070,12 +5078,316 @@ func TestTPDUAlphanumericNumberingPlan(t *testing.T) {
 			in := append([]byte(nil), b...)
 			in[pos+1] = 0xd1
 			decoded := tpdu.TPDU{Direction: d.Direction}
-			require.NoError(t, decoded.UnmarshalBinary(in))
+			require.NoError(t, unmarshalTPDU(t, &decoded, in))
 			assert.Equal(t, d, decoded)
 			out, err := decoded.MarshalBinary()
 			require.NoError(t, err)
 			assert.Equal(t, b, out)
 			checkRemarshal(t, decoded, in, out, st.String())
 		})
+	}
+}
+
+// checkInspect checks both the public partial result and the complete receiver
+// representation, including the private preservation fields on success.
+func checkInspect(t testing.TB, src []byte, cfg, strict tpdu.TPDU, strictErr error) tpdu.TPDU {
+	t.Helper()
+	got := cfg
+	departures, err := got.Inspect(src)
+	// Compare the complete error values, including their paths and offsets,
+	// rather than merely matching a wrapped cause with errors.Is.
+	require.Equal(t, strictErr, err, "% x: strict %v, inspect %v", src, strictErr, err)
+	var first error
+	for _, d := range departures {
+		de, ok := d.Err.(tpdu.DecodeError)
+		require.True(t, ok)
+		require.GreaterOrEqual(t, de.Offset, 0)
+		require.LessOrEqual(t, de.Offset, len(src))
+		if d.Rejected && first == nil {
+			first = d.Err
+		}
+	}
+	require.Equal(t, strictErr, first, "% x: first rejection %v, want %v", src, first, strictErr)
+	if strictErr == nil {
+		require.Equal(t, strict, got, "% x", src)
+	} else {
+		a, b := reflect.ValueOf(strict), reflect.ValueOf(got)
+		for i := 0; i < a.NumField(); i++ {
+			if a.Type().Field(i).IsExported() && !a.Field(i).IsZero() {
+				require.Equal(t, a.Field(i).Interface(), b.Field(i).Interface(), "% x: %s", src, a.Type().Field(i).Name)
+			}
+		}
+	}
+	return got
+}
+
+func TestInspect(t *testing.T) {
+	for _, p := range []struct {
+		name, src string
+		ud        []byte
+		causes    []error
+	}{
+		{"short UCS2", "01 00 02 91 21 00 08 04 00 41", []byte{0, 0x41}, []error{tpdu.ErrUnderflow}},
+		{"short odd UCS2", "01 00 02 91 21 00 08 04 00 41 00", []byte{0, 0x41, 0}, []error{tpdu.ErrUnderflow, tpdu.ErrOddUCS2Length}},
+		{"odd UCS2", "01 00 02 91 21 00 08 03 00 41 00", []byte{0, 0x41, 0}, []error{tpdu.ErrOddUCS2Length}},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			src := unhex(t, p.src)
+			cfg := tpdu.TPDU{Direction: tpdu.MO}
+			strict := cfg
+			err := strict.UnmarshalBinary(src)
+			got := checkInspect(t, src, cfg, strict, err)
+			require.Equal(t, "12", got.DA.Addr)
+			require.Equal(t, tpdu.UserData(p.ud), got.UD)
+			ds, _ := got.Inspect(src)
+			require.Len(t, ds, len(p.causes))
+			for i, cause := range p.causes {
+				require.Equal(t, tpdu.Departure{Err: tpdu.NewDecodeError("SmsSubmit.ud.sm", 8, cause), Rejected: true}, ds[i])
+			}
+		})
+	}
+}
+
+var inspectedPrefixes sync.Map
+
+// checkInspectPrefixes collects the existing decoder vectors through
+// unmarshalTPDU and the shared fuzz seeds. Each accepted vector is checked once in all
+// four receive contexts, including every possible truncation.
+func checkInspectPrefixes(t testing.TB, src []byte) {
+	t.Helper()
+	if _, loaded := inspectedPrefixes.LoadOrStore(string(src), true); loaded {
+		return
+	}
+	for _, cfg := range unmarshalConfigs {
+		full := cfg
+		if full.UnmarshalBinary(src) != nil {
+			continue
+		}
+		for n := 0; n <= len(src); n++ {
+			strict := cfg
+			err := strict.UnmarshalBinary(src[:n])
+			got := checkInspect(t, src[:n], cfg, strict, err)
+			require.True(t, bytes.HasPrefix(full.UD, got.UD), "% x at %d: user data prefix", src, n)
+			// An ignored full header has no semantic IEs. A truncation can
+			// nevertheless retain complete IEs before its malformed final IE.
+			if len(full.UDH) > 0 {
+				require.LessOrEqual(t, len(got.UDH), len(full.UDH))
+				for i, ie := range got.UDH {
+					require.Equal(t, full.UDH[i], ie)
+				}
+			}
+		}
+	}
+}
+
+func TestInspectTruncation(t *testing.T) {
+	for _, src := range unmarshalSeeds() {
+		checkInspectPrefixes(t, unhex(t, src))
+	}
+}
+
+func TestInspectDepartures(t *testing.T) {
+	rejected := func(field string, offset int, cause error) tpdu.Departure {
+		return tpdu.Departure{Err: tpdu.NewDecodeError(field, offset, cause), Rejected: true}
+	}
+	ignored := func(field string, offset int, cause error) tpdu.Departure {
+		return tpdu.Departure{Err: tpdu.NewDecodeError(field, offset, cause)}
+	}
+	for _, p := range []struct {
+		name, src string
+		cfg       tpdu.TPDU
+		want      []tpdu.Departure
+		ud        []byte
+		udh       tpdu.UserDataHeader
+	}{
+		{"conforming", "01 00 02 91 21 00 04 01 41", tpdu.TPDU{Direction: tpdu.MO}, nil, []byte{0x41}, nil},
+		{"reserved MTI", "03 00 91 00 04 21 10 10 00 00 00 00 00", tpdu.TPDU{}, []tpdu.Departure{ignored("tpdu.firstOctet", 0, tpdu.ErrReserved)}, nil, nil},
+		{"unsupported MTI", "03 00 91", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("tpdu.firstOctet", 0, tpdu.ErrUnsupportedSmsType(7))}, nil, nil},
+		{"ACK report bits", "04 00", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("tpdu.firstOctet", 0, tpdu.ErrNonZero)}, nil, nil},
+		{"ERROR report bits unexamined", "05 d0 ff ff ff", tpdu.TPDU{RPMessage: tpdu.RPError}, []tpdu.Departure{ignored("tpdu.firstOctet", 0, tpdu.ErrNonZero)}, nil, nil},
+		{"SCTS low digit", "00 00 91 00 04 21 10 10 0a 00 00 00 00", tpdu.TPDU{}, []tpdu.Departure{ignored("SmsDeliver.scts.low", 8, tpdu.ErrNonDecimal)}, nil, nil},
+		{"SCTS two digits", "00 00 91 00 04 21 10 10 aa 00 00 00 00", tpdu.TPDU{}, []tpdu.Departure{ignored("SmsDeliver.scts.low", 8, tpdu.ErrNonDecimal), ignored("SmsDeliver.scts.high", 8, tpdu.ErrNonDecimal)}, nil, nil},
+		{"SCTS time zone", "00 00 91 00 04 21 10 10 00 00 00 fa 00", tpdu.TPDU{}, []tpdu.Departure{ignored("SmsDeliver.scts.high", 11, tpdu.ErrNonDecimal)}, nil, nil},
+		{"SCTS time zone sign", "00 00 91 00 04 21 10 10 00 00 00 08 00", tpdu.TPDU{}, nil, nil, nil},
+		{"invalid calendar", "00 00 91 00 04 00 00 00 00 00 00 00 00", tpdu.TPDU{}, []tpdu.Departure{ignored("SmsDeliver.scts", 5, tpdu.ErrInvalid)}, nil, nil},
+		{"absolute VP", "19 00 00 91 00 04 21 10 10 00 00 a0 00 00", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsSubmit.vp.high", 11, tpdu.ErrNonDecimal)}, nil, nil},
+		{"DT", "02 00 00 91 21 10 10 00 00 00 00 21 10 10 00 a0 00 00 00", tpdu.TPDU{}, []tpdu.Departure{ignored("SmsStatusReport.dt.high", 15, tpdu.ErrNonDecimal)}, nil, nil},
+		{"PI reserved and tail", "00 94 01 01 41 de ad", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsDeliverReport.pi", 1, tpdu.ErrReserved), ignored("SmsDeliverReport.pi", 2, tpdu.ErrReserved), ignored("SmsDeliverReport.ud", 5, tpdu.ErrOverlength)}, []byte{0x41}, nil},
+		{"PI unterminated", "00 87 80 80", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsDeliverReport.pi", 4, tpdu.ErrUnderflow)}, nil, nil},
+		{"trailing", "01 00 00 91 00 04 01 41 ff", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.ud", 8, tpdu.ErrOverlength)}, []byte{0x41}, nil},
+		{"address fill", "01 00 01 91 01 00 04 01 41", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsSubmit.da.fill", 4, tpdu.ErrInvalid)}, []byte{0x41}, nil},
+		{"address too few digits", "01 00 02 91 ff 00 04 01 41", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.da.addr", 4, tpdu.ErrUnderflow)}, []byte{0x41}, nil},
+		{"address above twenty", "01 00 16 91" + strings.Repeat("11", 11) + "00 04 01 41", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.da.addr", 2, tpdu.ErrOverlength)}, []byte{0x41}, nil},
+		{"address missing length", "01 00", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.da.addr", 2, tpdu.ErrUnderflow)}, nil, nil},
+		{"spare bits", "01 00 00 91 00 00 01 c1", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsSubmit.ud.fill", 7, tpdu.ErrNonZero)}, []byte{0x41}, nil},
+		{"header fill", "41 00 00 91 00 00 03 00 7f 10", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsSubmit.ud.fill", 8, tpdu.ErrNonZero)}, []byte{0x41}, tpdu.UserDataHeader{}},
+		// The 6 fill bits after a 1-octet header are the low bits of the
+		// octet that follows it; its top 2 bits start the message.
+		{"header fill clear", "41 00 00 91 00 00 03 00 c0 10", tpdu.TPDU{Direction: tpdu.MO}, nil, []byte{0x43}, tpdu.UserDataHeader{}},
+		{"header fill low bit", "41 00 00 91 00 00 03 00 01 10", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsSubmit.ud.fill", 8, tpdu.ErrNonZero)}, []byte{0x40}, tpdu.UserDataHeader{}},
+		{"ignored header missing length", "41 00 00 91 00 04 03 01 70 41", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsSubmit.ud.udh.ie[0].iedl", 9, tpdu.ErrUnderflow)}, []byte{0x41}, tpdu.UserDataHeader{}},
+		{"ignored header missing data", "41 00 00 91 00 04 06 04 70 04 01 02 41", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsSubmit.ud.udh.ie[0].ied", 12, tpdu.ErrUnderflow)}, []byte{0x41}, tpdu.UserDataHeader{}},
+		{"ignored header final extra octet", "41 00 00 91 00 04 06 04 70 01 02 71 41", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{ignored("SmsSubmit.ud.udh.ie[1].iedl", 12, tpdu.ErrUnderflow)}, []byte{0x41}, tpdu.UserDataHeader{}},
+		{"header cut short", "41 00 00 91 00 04 09 06 70 01 02 71", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.ud.sm", 7, tpdu.ErrUnderflow), rejected("SmsSubmit.ud.udh.ie", 8, tpdu.ErrUnderflow)}, nil, tpdu.UserDataHeader{{ID: 0x70, Data: []byte{2}}}},
+		{"header exceeds declared extent", "41 00 00 91 00 04 04 06 70 01 02 71", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.ud.udh.ie", 8, tpdu.ErrUnderflow), rejected("SmsSubmit.ud", 11, tpdu.ErrOverlength)}, nil, tpdu.UserDataHeader{{ID: 0x70, Data: []byte{2}}}},
+		{"header missing", "41 00 00 91 00 04 01", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.ud.sm", 7, tpdu.ErrUnderflow), rejected("SmsSubmit.ud.udh.udhl", 7, tpdu.ErrUnderflow)}, nil, nil},
+		{"compressed short", "01 00 00 91 00 28 04 00 41 00", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.ud.sm", 7, tpdu.ErrUnderflow)}, []byte{0, 0x41, 0}, nil},
+		{"overlength then short odd", "01 00 00 91 00 08 ff 41", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.ud.udl", 6, tpdu.ErrOverlength), rejected("SmsSubmit.ud.sm", 7, tpdu.ErrUnderflow), rejected("SmsSubmit.ud.sm", 7, tpdu.ErrOddUCS2Length)}, []byte{0x41}, nil},
+		{"enhanced then oversized malformed short", "49 00 00 91 00 08 08 00 00 00 00 00 00 ff 01 70 00 41 00", tpdu.TPDU{Direction: tpdu.MO}, []tpdu.Departure{rejected("SmsSubmit.vp.enhanced", 6, tpdu.ErrNonZero), rejected("SmsSubmit.ud.udl", 13, tpdu.ErrOverlength), rejected("SmsSubmit.ud.sm", 14, tpdu.ErrUnderflow), ignored("SmsSubmit.ud.udh.ie[0].iedl", 16, tpdu.ErrUnderflow), rejected("SmsSubmit.ud.sm", 16, tpdu.ErrOddUCS2Length)}, []byte{0, 0x41, 0}, tpdu.UserDataHeader{}},
+		{"DELIVER digit then oversized malformed short", "40 00 91 00 08 21 10 10 0a 00 00 00 ff 01 70 00 41 00", tpdu.TPDU{}, []tpdu.Departure{ignored("SmsDeliver.scts.low", 8, tpdu.ErrNonDecimal), rejected("SmsDeliver.ud.udl", 12, tpdu.ErrOverlength), rejected("SmsDeliver.ud.sm", 13, tpdu.ErrUnderflow), ignored("SmsDeliver.ud.udh.ie[0].iedl", 15, tpdu.ErrUnderflow), rejected("SmsDeliver.ud.sm", 15, tpdu.ErrOddUCS2Length)}, []byte{0, 0x41, 0}, tpdu.UserDataHeader{}},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			src := unhex(t, p.src)
+			strict := p.cfg
+			err := strict.UnmarshalBinary(src)
+			got := checkInspect(t, src, p.cfg, strict, err)
+			ds, _ := got.Inspect(src)
+			require.Equal(t, p.want, ds)
+			require.Equal(t, tpdu.UserData(p.ud), got.UD)
+			require.Equal(t, p.udh, got.UDH)
+		})
+	}
+}
+
+func TestInspectGSM7Truncation(t *testing.T) {
+	for header := 0; header <= 9; header++ {
+		if header == 2 {
+			continue
+		} // a header with only an IEI is ignored
+		t.Run(fmt.Sprintf("header-%d", header), func(t *testing.T) {
+			cfg := tpdu.TPDU{Direction: tpdu.MO}
+			src := unhex(t, "01 00 00 91 00 00")
+			fill := (7 - header%7) % 7
+			septets := (header*8+fill)/7 + 19
+			src = append(src, byte(septets))
+			packed := make([]byte, (septets*7+7)/8)
+			if header > 0 {
+				src[0] |= 0x40
+				packed[0] = byte(header - 1)
+				if header > 1 {
+					packed[1], packed[2] = 0x70, byte(header-3)
+				}
+			}
+			// Set message bits independently of the package's packer.
+			for bit := header*8 + fill; bit < septets*7; bit++ {
+				if bit%3 != 0 {
+					packed[bit/8] |= 1 << (bit % 8)
+				}
+			}
+			for n := 0; n <= len(packed); n++ {
+				input := append(append([]byte(nil), src...), packed[:n]...)
+				strict := cfg
+				err := strict.UnmarshalBinary(input)
+				got := checkInspect(t, input, cfg, strict, err)
+				var want tpdu.UserData
+				for start := header*8 + fill; start+7 <= n*8 && start+7 <= septets*7; start += 7 {
+					var septet byte
+					for bit := 0; bit < 7; bit++ {
+						at := start + bit
+						septet |= ((packed[at/8] >> (at % 8)) & 1) << bit
+					}
+					want = append(want, septet)
+				}
+				require.Equal(t, want, got.UD, "received %d", n)
+			}
+		})
+	}
+}
+
+// unmarshalTPDU collects each complete TPDU vector used by the existing
+// decoder tests for the systematic prefix checks.
+func unmarshalTPDU(t testing.TB, dst *tpdu.TPDU, src []byte) error {
+	t.Helper()
+	err := dst.UnmarshalBinary(src)
+	if err == nil {
+		checkInspectPrefixes(t, src)
+	}
+	return err
+}
+
+func TestInspectEnhancedVP(t *testing.T) {
+	for _, p := range []struct {
+		name, vp string
+		offsets  []int
+		causes   []error
+	}{
+		{"reserved EFI", "08 00 00 00 00 00 00", []int{6}, []error{tpdu.ErrNonZero}},
+		{"reserved format", "04 00 00 00 00 00 00", []int{6}, []error{tpdu.ErrInvalid}},
+		{"unterminated extension", "80 80 80 80 80 80 80", []int{13}, []error{tpdu.ErrUnderflow}},
+		{"reserved extension", "80 01 00 00 00 00 00", []int{7}, []error{tpdu.ErrNonZero}},
+		{"no value room", "83 80 80 80 00 00 00", []int{11}, []error{tpdu.ErrUnderflow}},
+		{"zero seconds", "02 00 00 00 00 00 00", []int{7}, []error{tpdu.ErrInvalid}},
+		{"non-decimal seconds", "03 00 00 a0 00 00 00", []int{7}, []error{bcd.ErrInvalidOctet(0xa0)}},
+		{"invalid minutes", "03 00 06 00 00 00 00", []int{7}, []error{tpdu.ErrInvalid}},
+		{"unused octets", "01 00 00 00 00 00 01", []int{12}, []error{tpdu.ErrNonZero}},
+		{"multiple errors", "0a 00 01 00 00 00 02", []int{6, 7, 8, 12}, []error{tpdu.ErrNonZero, tpdu.ErrInvalid, tpdu.ErrNonZero, tpdu.ErrNonZero}},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			src := unhex(t, "09 00 00 91 00 04 "+p.vp+" 01 41")
+			cfg := tpdu.TPDU{Direction: tpdu.MO}
+			strict := cfg
+			err := strict.UnmarshalBinary(src)
+			got := checkInspect(t, src, cfg, strict, err)
+			ds, _ := got.Inspect(src)
+			require.Len(t, ds, len(p.offsets))
+			for i, offset := range p.offsets {
+				require.Equal(t, tpdu.Departure{Err: tpdu.NewDecodeError("SmsSubmit.vp.enhanced", offset, p.causes[i]), Rejected: true}, ds[i])
+			}
+			require.Equal(t, tpdu.UserData{0x41}, got.UD)
+			// A TP-VP with a rejected departure is not decoded.
+			require.Equal(t, tpdu.ValidityPeriod{}, got.VP)
+		})
+	}
+}
+
+func TestInspectBudgets(t *testing.T) {
+	for _, p := range []struct {
+		name     string
+		src      []byte
+		fields   []string
+		offsets  []int
+		rejected []bool
+		ud       []byte
+		pid      byte
+	}{
+		{"completed PI leaves no room", append(append([]byte{0, 0x87}, bytes.Repeat([]byte{0x80}, 159)...), 0, 0x7f, 4, 1, 0x41), []string{"pi", "ud.udl", "ud"}, []int{162, 164, 164}, []bool{true, true, true}, []byte{0x41}, 0x7f},
+		{"PI beyond budget", append(append([]byte{0, 0x87}, bytes.Repeat([]byte{0x80}, 163)...), 0, 0x7f, 4, 1, 0x41), []string{"pi", "ud.udl", "ud"}, []int{164, 168, 164}, []bool{true, true, true}, []byte{0x41}, 0x7f},
+		{"reserved PI and long discarded run", append([]byte{0, 0x18}, bytes.Repeat([]byte{0x41}, 10000)...), []string{"pi", "ud", "ud"}, []int{1, 2, 2}, []bool{false, true, false}, nil, 0},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			cfg := tpdu.TPDU{Direction: tpdu.MO}
+			strict := cfg
+			err := strict.UnmarshalBinary(p.src)
+			got := checkInspect(t, p.src, cfg, strict, err)
+			ds, _ := got.Inspect(p.src)
+			require.Len(t, ds, len(p.fields))
+			for i, field := range p.fields {
+				cause := tpdu.ErrOverlength
+				if field == "pi" && !p.rejected[i] {
+					cause = tpdu.ErrReserved
+				}
+				require.Equal(t, tpdu.Departure{Err: tpdu.NewDecodeError("SmsDeliverReport."+field, p.offsets[i], cause), Rejected: p.rejected[i]}, ds[i])
+			}
+			require.Equal(t, tpdu.UserData(p.ud), got.UD)
+			require.Equal(t, p.pid, got.PID)
+		})
+	}
+}
+
+func TestInspectResetAndOwnership(t *testing.T) {
+	cfg := tpdu.TPDU{Direction: tpdu.MO, RPMessage: tpdu.RPError}
+	got := cfg
+	for _, wire := range []string{"49 00 00 91 00 04 08 00 00 00 00 00 00 09 06 70 01 02 71", "41 00 00 91 00 08 05 01 70 00 41 00", "01 00 00 91 00 04 01 41", ""} {
+		src := unhex(t, wire)
+		fresh := cfg
+		wantDS, wantErr := fresh.Inspect(append([]byte(nil), src...))
+		ds, err := got.Inspect(src)
+		require.Equal(t, wantDS, ds)
+		require.Equal(t, wantErr, err)
+		require.Equal(t, fresh, got)
+		for i := range src {
+			src[i] ^= 0xff
+		}
+		require.Equal(t, fresh, got)
 	}
 }

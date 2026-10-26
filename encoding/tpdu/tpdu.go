@@ -1151,26 +1151,85 @@ func (t *TPDU) marshalSubmitReport() ([]byte, error) {
 //
 // In the case of error the TPDU will be partially unmarshalled, up to the
 // point that the decoding error was detected.
-func (t *TPDU) UnmarshalBinary(src []byte) (err error) {
+func (t *TPDU) UnmarshalBinary(src []byte) error {
+	return t.unmarshalBinary(src, nil)
+}
+
+// Inspect decodes src into t as UnmarshalBinary does, keeping Direction and
+// RPMessage and resetting all other fields. It reports departures from the
+// TPDU layouts and receiver rules of 3GPP TS 23.040, not semantic validation
+// of PID, DCS, ST, CT, FCS, TOA or information element contents.
+//
+// The error is exactly the error UnmarshalBinary returns, and is the Err of
+// the first Rejected departure. Departures are in decode order, or nil when
+// there are none. On success t is identical to UnmarshalBinary's result.
+// On failure fields already decoded retain their values; decoding continues
+// only where received lengths and fixed widths locate the following fields.
+// An unsupported type, missing address length or unterminated TP-PI stops it.
+// An address or enhanced TP-VP whose value cannot be read is left as
+// UnmarshalBinary leaves it, and decoding goes on after its received length.
+//
+// Arrived user data within the declared extent is retained, including an odd
+// final UCS2 octet, but only complete GSM 7 bit septets. A truncated header
+// retains its complete IEs and no message. A complete malformed header is
+// ignored as in UnmarshalBinary. Its departure identifies the IE by its
+// zero-based index in the field path and the first missing octet's offset.
+// Length octets are never repaired. A result with a Rejected departure does
+// not in general marshal back to src.
+//
+// Non-decimal timestamp digits include the time zone with its sign bit
+// excluded, as specified in 3GPP TS 23.040 Section 9.2.3.11. Each digit has a
+// separate departure at its octet; an invalid date and time is reported at
+// the field start. Reports for RP-ERROR with unused first-octet bits set
+// still leave the other fields unexamined, as required by Sections 9.2.2.1a
+// and 9.2.2.2a. Inspect takes linear time and reports one departure per
+// finding, including one for each excessive run rather than each octet.
+func (t *TPDU) Inspect(src []byte) ([]Departure, error) {
+	var departures []Departure
+	reservedPI := false
+	r := &decodeRecorder{departures: &departures, reservedPI: &reservedPI}
+	if err := t.unmarshalBinary(src, r); err != nil {
+		r.add(err, true)
+	}
+	for _, d := range departures {
+		if d.Rejected {
+			return departures, d.Err
+		}
+	}
+	return departures, nil
+}
+
+func (t *TPDU) unmarshalBinary(src []byte, r *decodeRecorder) (err error) {
 	*t = TPDU{Direction: t.Direction, RPMessage: t.RPMessage}
 	if len(src) < 1 {
 		return NewDecodeError("tpdu.firstOctet", 0, ErrUnderflow)
 	}
 	t.FirstOctet = FirstOctet(src[0])
 	st := smsType(t.FirstOctet.MTI(), t.Direction)
+	if t.Direction == MT && t.FirstOctet.MTI() == 3 {
+		// 3GPP TS 23.040 Section 9.2.3.1: "shall process the message as if
+		// it were an 'SMS-DELIVER' but store the message exactly as received".
+		r.note("tpdu.firstOctet", 0, ErrReserved)
+	}
+	if (st == SmsDeliverReport || st == SmsSubmitReport) && t.FirstOctet&foReportUnused != 0 {
+		// 3GPP TS 23.040 Sections 9.2.2.1a and 9.2.2.2a: RP-ACK receivers
+		// "shall ignore them"; RP-ERROR receivers "shall not examine the
+		// other field".
+		r.note("tpdu.firstOctet", 0, ErrNonZero)
+	}
 	switch st {
 	case SmsDeliver:
-		err = t.unmarshalDeliver(src[1:])
+		err = t.unmarshalDeliver(src[1:], r.child(st.String(), 1))
 	case SmsDeliverReport:
-		err = t.unmarshalDeliverReport(src[1:])
+		err = t.unmarshalDeliverReport(src[1:], r.child(st.String(), 1))
 	case SmsSubmitReport:
-		err = t.unmarshalSubmitReport(src[1:])
+		err = t.unmarshalSubmitReport(src[1:], r.child(st.String(), 1))
 	case SmsSubmit:
-		err = t.unmarshalSubmit(src[1:])
+		err = t.unmarshalSubmit(src[1:], r.child(st.String(), 1))
 	case SmsStatusReport:
-		err = t.unmarshalStatusReport(src[1:])
+		err = t.unmarshalStatusReport(src[1:], r.child(st.String(), 1))
 	case SmsCommand:
-		err = t.unmarshalCommand(src[1:])
+		err = t.unmarshalCommand(src[1:], r.child(st.String(), 1))
 	default:
 		return NewDecodeError("tpdu.firstOctet", 0, ErrUnsupportedSmsType(st))
 	}
@@ -1180,7 +1239,7 @@ func (t *TPDU) UnmarshalBinary(src []byte) (err error) {
 	return nil
 }
 
-func (t *TPDU) unmarshalCommand(src []byte) error {
+func (t *TPDU) unmarshalCommand(src []byte, r *decodeRecorder) error {
 	ri := 0
 	for _, f := range []struct {
 		name string
@@ -1192,20 +1251,20 @@ func (t *TPDU) unmarshalCommand(src []byte) error {
 		*f.p = src[ri]
 		ri++
 	}
-	n, err := t.DA.UnmarshalBinary(src[ri:])
+	n, err := t.DA.unmarshalBinary(src[ri:], r.child("da", ri))
 	if err != nil {
 		return NewDecodeError("da", ri, err)
 	}
 	ri += n
-	n, err = t.decodeUserData(src[ri:])
+	n, err = t.unmarshalUserData(src[ri:], r.child("ud", ri))
 	if err != nil {
 		return NewDecodeError("ud", ri, err)
 	}
-	return checkTrailing(src, ri+n, false)
+	return checkTrailing(src, ri+n, false, r)
 }
 
-func (t *TPDU) unmarshalDeliver(src []byte) error {
-	n, err := t.OA.UnmarshalBinary(src)
+func (t *TPDU) unmarshalDeliver(src []byte, r *decodeRecorder) error {
+	n, err := t.OA.unmarshalBinary(src, r.child("oa", 0))
 	if err != nil {
 		return NewDecodeError("oa", 0, err)
 	}
@@ -1223,31 +1282,41 @@ func (t *TPDU) unmarshalDeliver(src []byte) error {
 	if len(src) < ri+7 {
 		return NewDecodeError("scts", ri, ErrUnderflow)
 	}
-	err = t.SCTS.UnmarshalBinary(src[ri : ri+7])
+	err = t.SCTS.unmarshalBinary(src[ri:ri+7], r.child("scts", ri))
 	if err != nil {
 		return NewDecodeError("scts", ri, err)
 	}
 	ri += 7
-	n, err = t.decodeUserData(src[ri:])
+	n, err = t.unmarshalUserData(src[ri:], r.child("ud", ri))
 	if err != nil {
 		return NewDecodeError("ud", ri, err)
 	}
-	return checkTrailing(src, ri+n, false)
+	return checkTrailing(src, ri+n, false, r)
 }
 
 // checkTrailing returns an error if src holds octets beyond the end of the
 // TPDU at ri, unless they are to be discarded. src excludes the first
 // octet. Defined fields must fit maxDefinedTPDULen even when discarded
 // octets follow, and the whole TPDU must fit maxRPTPDULen.
-func checkTrailing(src []byte, ri int, discard bool) error {
-	switch {
-	case 1+ri > maxDefinedTPDULen:
-		// The room for the TP-UD, or TP-CD, assumes an address of the length
-		// it marshals to, which one received can be longer than, so the
-		// octets past the budget are those that follow it.
-		return NewDecodeError("ud", maxDefinedTPDULen-1, ErrOverlength)
-	case 1+len(src) > maxRPTPDULen, ri < len(src) && !discard:
-		return NewDecodeError("ud", ri, ErrOverlength)
+func checkTrailing(src []byte, ri int, discard bool, r *decodeRecorder) error {
+	if 1+ri > maxDefinedTPDULen {
+		// Received addresses may be longer than their marshalled form,
+		// which the earlier user data capacity calculation uses.
+		err := NewDecodeError("ud", maxDefinedTPDULen-1, ErrOverlength)
+		if r.reject(err) {
+			return err
+		}
+	}
+	if 1+len(src) > maxRPTPDULen || ri < len(src) && !discard {
+		err := NewDecodeError("ud", ri, ErrOverlength)
+		if r.reject(err) {
+			return err
+		}
+	}
+	if discard && ri < len(src) {
+		// 3GPP TS 23.040 Section 9.2.3.27: "a receiving entity shall
+		// discard any octets following the TP-User-Data".
+		r.note("ud", ri, ErrOverlength)
 	}
 	return nil
 }
@@ -1259,30 +1328,48 @@ func checkTrailing(src []byte, ri int, discard bool) error {
 // any other TP-PI octets which may be added later is reserved as an extension
 // bit which when set to a 1 shall indicate that another TP-PI octet follows
 // immediately afterwards."
-func (t *TPDU) unmarshalPI(src []byte, ri int) (int, error) {
+func (t *TPDU) unmarshalPI(src []byte, ri int, r *decodeRecorder) (int, error) {
 	if len(src) <= ri {
 		return ri, NewDecodeError("pi", ri, ErrUnderflow)
 	}
 	t.PI = PI(src[ri])
+	if t.PI&PiReserved != 0 {
+		r.piReserved(ri)
+	}
 	ri++
+	overBudget := false
 	for ext := t.PI&PiExt != 0; ext; ri++ {
 		if len(src) <= ri {
 			return ri, NewDecodeError("pi", ri, ErrUnderflow)
 		}
 		// The TP-PI is one of the fields that must fit the budget, so a
 		// chain of extension octets that runs past it is refused there.
-		if 1+ri >= maxDefinedTPDULen {
-			return ri, NewDecodeError("pi", ri, ErrOverlength)
+		if 1+ri >= maxDefinedTPDULen && !overBudget {
+			err := NewDecodeError("pi", ri, ErrOverlength)
+			if r.reject(err) {
+				return ri, err
+			}
+			overBudget = true
 		}
-		t.PIExt = append(t.PIExt, src[ri])
+		if src[ri]&^PiExt != 0 {
+			r.piReserved(ri)
+		}
+		// Keep the extension prefix that ordinary decoding committed before
+		// the budget error, even while locating the end of the received chain.
+		if !overBudget {
+			t.PIExt = append(t.PIExt, src[ri])
+		}
 		ext = src[ri]&PiExt != 0
 	}
 	room := t.maxUDOctets()
 	if !t.PI.UDL() {
 		room++ // the TP-UDL is absent
 	}
-	if room < 0 {
-		return ri, NewDecodeError("pi", ri, ErrOverlength)
+	if room < 0 && !overBudget {
+		err := NewDecodeError("pi", ri, ErrOverlength)
+		if r.reject(err) {
+			return ri, err
+		}
 	}
 	return ri, nil
 }
@@ -1307,7 +1394,7 @@ func (t *TPDU) piReserved() bool {
 // unmarshalOptionals reads the TP-PID, TP-DCS, TP-UDL and TP-UD fields of a
 // report, those that follow the TP-PI and its TP-SCTS, that are announced by
 // the TP-PI, starting at src[ri].
-func (t *TPDU) unmarshalOptionals(src []byte, ri int) error {
+func (t *TPDU) unmarshalOptionals(src []byte, ri int, r *decodeRecorder) error {
 	if t.PI.PID() {
 		if len(src) <= ri {
 			return NewDecodeError("pid", ri, ErrUnderflow)
@@ -1326,7 +1413,7 @@ func (t *TPDU) unmarshalOptionals(src []byte, ri int) error {
 		ri++
 	}
 	if t.PI.UDL() {
-		n, err := t.decodeUserData(src[ri:])
+		n, err := t.unmarshalUserData(src[ri:], r.child("ud", ri))
 		if err != nil {
 			return NewDecodeError("ud", ri, err)
 		}
@@ -1337,7 +1424,11 @@ func (t *TPDU) unmarshalOptionals(src []byte, ri int) error {
 	// shall mean that additional information will follow the TP-User-Data,
 	// so a receiving entity shall discard any octets following the
 	// TP-User-Data."
-	return checkTrailing(src, ri, t.piReserved())
+	discard := t.piReserved()
+	if r != nil {
+		discard = discard || *r.reservedPI
+	}
+	return checkTrailing(src, ri, discard, r)
 }
 
 // rpFCS returns the TP-FCS of a report, which is only present in a report
@@ -1408,7 +1499,7 @@ func (t *TPDU) unmarshalUnexamined(src []byte, ri int) (bool, error) {
 	return true, nil
 }
 
-func (t *TPDU) unmarshalDeliverReport(src []byte) error {
+func (t *TPDU) unmarshalDeliverReport(src []byte, r *decodeRecorder) error {
 	ri, err := t.unmarshalFCS(src)
 	if err != nil {
 		return err
@@ -1416,21 +1507,21 @@ func (t *TPDU) unmarshalDeliverReport(src []byte) error {
 	if unexamined, err := t.unmarshalUnexamined(src, ri); unexamined {
 		return err
 	}
-	ri, err = t.unmarshalPI(src, ri)
+	ri, err = t.unmarshalPI(src, ri, r)
 	if err != nil {
 		return err
 	}
-	return t.unmarshalOptionals(src, ri)
+	return t.unmarshalOptionals(src, ri, r)
 }
 
-func (t *TPDU) unmarshalStatusReport(src []byte) error {
+func (t *TPDU) unmarshalStatusReport(src []byte, r *decodeRecorder) error {
 	ri := 0
 	if len(src) <= ri {
 		return NewDecodeError("mr", ri, ErrUnderflow)
 	}
 	t.MR = src[ri]
 	ri++
-	n, err := t.RA.UnmarshalBinary(src[ri:])
+	n, err := t.RA.unmarshalBinary(src[ri:], r.child("ra", ri))
 	if err != nil {
 		return NewDecodeError("ra", ri, err)
 	}
@@ -1438,7 +1529,7 @@ func (t *TPDU) unmarshalStatusReport(src []byte) error {
 	if len(src) < ri+7 {
 		return NewDecodeError("scts", ri, ErrUnderflow)
 	}
-	err = t.SCTS.UnmarshalBinary(src[ri : ri+7])
+	err = t.SCTS.unmarshalBinary(src[ri:ri+7], r.child("scts", ri))
 	if err != nil {
 		return NewDecodeError("scts", ri, err)
 	}
@@ -1446,7 +1537,7 @@ func (t *TPDU) unmarshalStatusReport(src []byte) error {
 	if len(src) < ri+7 {
 		return NewDecodeError("dt", ri, ErrUnderflow)
 	}
-	err = t.DT.UnmarshalBinary(src[ri : ri+7])
+	err = t.DT.unmarshalBinary(src[ri:ri+7], r.child("dt", ri))
 	if err != nil {
 		return NewDecodeError("dt", ri, err)
 	}
@@ -1461,22 +1552,22 @@ func (t *TPDU) unmarshalStatusReport(src []byte) error {
 	if len(src) == ri {
 		return nil
 	}
-	ri, err = t.unmarshalPI(src, ri)
+	ri, err = t.unmarshalPI(src, ri, r)
 	if err != nil {
 		return err
 	}
 	// A TP-PI of 0 has no extension bit, so it has no extension octets.
 	t.zeroPI = t.PI == 0
-	return t.unmarshalOptionals(src, ri)
+	return t.unmarshalOptionals(src, ri, r)
 }
 
-func (t *TPDU) unmarshalSubmit(src []byte) error {
+func (t *TPDU) unmarshalSubmit(src []byte, r *decodeRecorder) error {
 	if len(src) < 1 {
 		return NewDecodeError("mr", 0, ErrUnderflow)
 	}
 	t.MR = src[0]
 	ri := 1
-	n, err := t.DA.UnmarshalBinary(src[ri:])
+	n, err := t.DA.unmarshalBinary(src[ri:], r.child("da", ri))
 	if err != nil {
 		return NewDecodeError("da", ri, err)
 	}
@@ -1491,19 +1582,19 @@ func (t *TPDU) unmarshalSubmit(src []byte) error {
 	}
 	t.DCS = DCS(src[ri])
 	ri++
-	n, err = t.VP.UnmarshalBinary(src[ri:], t.FirstOctet.VPF())
+	n, err = t.VP.unmarshalBinary(src[ri:], t.FirstOctet.VPF(), r.child("vp", ri))
 	if err != nil {
 		return NewDecodeError("vp", ri, err)
 	}
 	ri += n
-	n, err = t.decodeUserData(src[ri:])
+	n, err = t.unmarshalUserData(src[ri:], r.child("ud", ri))
 	if err != nil {
 		return NewDecodeError("ud", ri, err)
 	}
-	return checkTrailing(src, ri+n, false)
+	return checkTrailing(src, ri+n, false, r)
 }
 
-func (t *TPDU) unmarshalSubmitReport(src []byte) error {
+func (t *TPDU) unmarshalSubmitReport(src []byte, r *decodeRecorder) error {
 	ri, err := t.unmarshalFCS(src)
 	if err != nil {
 		return err
@@ -1511,25 +1602,29 @@ func (t *TPDU) unmarshalSubmitReport(src []byte) error {
 	if unexamined, err := t.unmarshalUnexamined(src, ri); unexamined {
 		return err
 	}
-	ri, err = t.unmarshalPI(src, ri)
+	ri, err = t.unmarshalPI(src, ri, r)
 	if err != nil {
 		return err
 	}
 	if len(src) < ri+7 {
 		return NewDecodeError("scts", ri, ErrUnderflow)
 	}
-	err = t.SCTS.UnmarshalBinary(src[ri : ri+7])
+	err = t.SCTS.unmarshalBinary(src[ri:ri+7], r.child("scts", ri))
 	if err != nil {
 		return NewDecodeError("scts", ri, err)
 	}
 	ri += 7
-	return t.unmarshalOptionals(src, ri)
+	return t.unmarshalOptionals(src, ri, r)
 }
 
 // decodeUserData decodes the TP-UDL at the start of src, and the TP-UD it
 // announces, into the UDH and UD, and returns the number of octets they
 // occupy. Any octets that follow are left to the caller.
 func (t *TPDU) decodeUserData(src []byte) (int, error) {
+	return t.unmarshalUserData(src, nil)
+}
+
+func (t *TPDU) unmarshalUserData(src []byte, r *decodeRecorder) (int, error) {
 	if len(src) < 1 {
 		return 0, NewDecodeError("udl", 0, ErrUnderflow)
 	}
@@ -1549,19 +1644,34 @@ func (t *TPDU) decodeUserData(src []byte) (int, error) {
 		udl = (sml7*7 + 7) / 8
 	}
 	if udl > t.maxUDOctets() {
-		return 0, NewDecodeError("udl", 0, ErrOverlength)
+		err := NewDecodeError("udl", 0, ErrOverlength)
+		if r.reject(err) {
+			return 0, err
+		}
 	}
-	if len(src) < ri+udl {
-		return 0, NewDecodeError("sm", ri, ErrUnderflow)
+	short := len(src) < ri+udl
+	if short {
+		err := NewDecodeError("sm", ri, ErrUnderflow)
+		if r.reject(err) {
+			return 0, err
+		}
 	}
-	src = src[:ri+udl]
+	src = src[:min(len(src), ri+udl)]
 	var udhl int // Note that in this context udhl includes itself.
 	udhi := t.UDHI()
 	if udhi {
 		udh = make(UserDataHeader, 0)
-		l, err := udh.UnmarshalBinary(src[ri:])
+		l, err := udh.unmarshalBinary(src[ri:], r.child("udh", ri))
 		if err != nil {
-			return 0, NewDecodeError("udh", ri, err)
+			if r == nil {
+				return 0, NewDecodeError("udh", ri, err)
+			}
+			r.add(NewDecodeError("udh", ri, err), true)
+			if len(src) == ri {
+				udh = nil
+			}
+			t.UDH = udh
+			return len(src), nil
 		}
 		if len(udh) == 0 && l > 1 {
 			// the UDH was ignored, but its octets are kept
@@ -1576,14 +1686,24 @@ func (t *TPDU) decodeUserData(src []byte) (int, error) {
 		// header off the septet boundary needs another octet for its
 		// fill bits when marshalled, even with no short message.
 		if alphabet == Alpha7Bit && udhl%7 != 0 && udhl+1 > t.maxUDOctets() {
-			return 0, NewDecodeError("udhl", 1, ErrOverlength)
+			err := NewDecodeError("udhl", 1, ErrOverlength)
+			if r.reject(err) {
+				return 0, err
+			}
 		}
 		t.UDH = udh
 		return len(src), nil
 	}
 	switch alphabet {
 	case Alpha7Bit:
-		sm, err := decode7Bit(sml7, udhl, src[ri:])
+		r.fill(src, sml7, udhl)
+		count := sml7
+		if short {
+			fill := (7 - udhl%7) % 7
+			header := (udhl*8 + fill) / 7
+			count = min(sml7, header+max(0, (len(src[ri:])*8-fill)/7))
+		}
+		sm, err := decode7Bit(count, udhl, src[ri:])
 		if err != nil {
 			return 0, NewDecodeError("sm", ri, err)
 		}
@@ -1592,7 +1712,10 @@ func (t *TPDU) decodeUserData(src []byte) (int, error) {
 		}
 	case AlphaUCS2:
 		if len(src[ri:])&0x01 == 0x01 {
-			return 0, NewDecodeError("sm", ri, ErrOddUCS2Length)
+			err := NewDecodeError("sm", ri, ErrOddUCS2Length)
+			if r.reject(err) {
+				return 0, err
+			}
 		}
 		fallthrough
 	case Alpha8Bit:
