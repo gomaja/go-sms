@@ -556,6 +556,75 @@ const (
 	// reference number IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.8.
 	IEIConcat16Bit byte = 0x08
 
+	// IEITextFormatting identifies the Text Formatting IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.1.
+	IEITextFormatting byte = 0x0a
+
+	// IEIPredefinedSound identifies the Predefined Sound IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.2.
+	IEIPredefinedSound byte = 0x0b
+
+	// IEIUserDefinedSound identifies the User Defined Sound IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.3.
+	IEIUserDefinedSound byte = 0x0c
+
+	// IEIPredefinedAnimation identifies the Predefined Animation IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.4.
+	IEIPredefinedAnimation byte = 0x0d
+
+	// IEILargeAnimation identifies the Large Animation IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.5.
+	IEILargeAnimation byte = 0x0e
+
+	// IEISmallAnimation identifies the Small Animation IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.6.
+	IEISmallAnimation byte = 0x0f
+
+	// IEILargePicture identifies the Large Picture IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.7.
+	IEILargePicture byte = 0x10
+
+	// IEISmallPicture identifies the Small Picture IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.8.
+	IEISmallPicture byte = 0x11
+
+	// IEIVariablePicture identifies the Variable Picture IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.9.
+	IEIVariablePicture byte = 0x12
+
+	// IEIUserPromptIndicator identifies the User Prompt Indicator IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.10.
+	IEIUserPromptIndicator byte = 0x13
+
+	// IEIExtendedObject identifies the Extended Object IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.13.
+	IEIExtendedObject byte = 0x14
+
+	// IEIReusedExtendedObject identifies the Reused Extended Object IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.14.
+	IEIReusedExtendedObject byte = 0x15
+
+	// IEICompressionControl identifies the Compression Control IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.15.
+	IEICompressionControl byte = 0x16
+
+	// IEIObjectDistributionIndicator identifies the Object Distribution Indicator IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.16.
+	IEIObjectDistributionIndicator byte = 0x17
+
+	// IEIStandardWVGObject identifies the Standard WVG Object IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.11.
+	IEIStandardWVGObject byte = 0x18
+
+	// IEICharacterSizeWVGObject identifies the Character Size WVG Object IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.12.
+	IEICharacterSizeWVGObject byte = 0x19
+
+	// IEIExtendedObjectDataRequestCommand identifies the Extended Object Data Request Command IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.10.1.18.
+	// "There is no data element associated with this IE." Its IEDL is zero.
+	IEIExtendedObjectDataRequestCommand byte = 0x1a
+
 	// IEIEmailHeader identifies the IETF RFC 5322 E-Mail Header IE, as
 	// defined in 3GPP TS 23.040 Section 9.2.3.24.11.
 	IEIEmailHeader byte = 0x20
