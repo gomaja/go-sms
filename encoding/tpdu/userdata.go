@@ -260,11 +260,8 @@ func (ie InformationElement) ConcatInfo() (ConcatInfo, error) {
 	default:
 		return ConcatInfo{}, NewDecodeError("iei", 0, ErrInvalid)
 	}
-	if len(ie.Data) < length {
-		return ConcatInfo{}, NewDecodeError("ied", 2, ErrUnderflow)
-	}
-	if len(ie.Data) > length {
-		return ConcatInfo{}, NewDecodeError("ied", 2, ErrOverlength)
+	if err := ie.dataLength(length); err != nil {
+		return ConcatInfo{}, err
 	}
 	var ci ConcatInfo
 	if ie.ID == IEIConcat8Bit {
@@ -534,6 +531,26 @@ const (
 	// IEIConcat8Bit identifies the Concatenated short messages, 8-bit
 	// reference number IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.1.
 	IEIConcat8Bit byte = 0x00
+
+	// IEISpecialMessageIndication identifies the Special SMS Message Indication
+	// IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.2.
+	IEISpecialMessageIndication byte = 0x01
+
+	// IEIPort8Bit identifies the Application port addressing scheme, 8 bit
+	// address IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.3.
+	IEIPort8Bit byte = 0x04
+
+	// IEIPort16Bit identifies the Application port addressing scheme, 16 bit
+	// address IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.4.
+	IEIPort16Bit byte = 0x05
+
+	// IEISMSCControlParameters identifies the SMSC Control Parameters IE,
+	// as defined in 3GPP TS 23.040 Section 9.2.3.24.5.
+	IEISMSCControlParameters byte = 0x06
+
+	// IEIUDHSource identifies the UDH Source Indicator IE, as defined in
+	// 3GPP TS 23.040 Section 9.2.3.24.6.
+	IEIUDHSource byte = 0x07
 
 	// IEIConcat16Bit identifies the Concatenated short messages, 16-bit
 	// reference number IE, as defined in 3GPP TS 23.040 Section 9.2.3.24.8.
