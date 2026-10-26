@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	hindiDecoder = Decoder{
+func hindiDecoder() Decoder {
+	return Decoder{
 		0x00: '\u0901',
 		0x01: '\u0902',
 		0x02: '\u0903',
@@ -132,7 +132,10 @@ var (
 		0x7e: 'ॾ',
 		0x7f: 'ॿ',
 	}
-	hindiExtDecoder = Decoder{
+}
+
+func hindiExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -222,6 +225,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	hindiEncoder    = generateEncoder(hindiDecoder)
-	hindiExtEncoder = generateEncoder(hindiExtDecoder)
-)
+}
+
+func hindiEncoder() Encoder {
+	return generateEncoder(hindiDecoder())
+}
+
+func hindiExtEncoder() Encoder {
+	return generateEncoder(hindiExtDecoder())
+}

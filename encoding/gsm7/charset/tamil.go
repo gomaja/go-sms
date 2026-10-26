@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	tamilDecoder = Decoder{
+func tamilDecoder() Decoder {
+	return Decoder{
 		0x01: '\u0b82',
 		0x02: '\u0b83',
 		0x03: '\u0b85',
@@ -107,7 +107,10 @@ var (
 		0x7e: '\u0bf2',
 		0x7f: '\u0bf9',
 	}
-	tamilExtDecoder = Decoder{
+}
+
+func tamilExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -188,6 +191,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	tamilEncoder    = generateEncoder(tamilDecoder)
-	tamilExtEncoder = generateEncoder(tamilExtDecoder)
-)
+}
+
+func tamilEncoder() Encoder {
+	return generateEncoder(tamilDecoder())
+}
+
+func tamilExtEncoder() Encoder {
+	return generateEncoder(tamilExtDecoder())
+}

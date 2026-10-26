@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	gujaratiDecoder = Decoder{
+func gujaratiDecoder() Decoder {
+	return Decoder{
 		0x00: '\u0a81',
 		0x01: '\u0a82',
 		0x02: '\u0a83',
@@ -125,7 +125,10 @@ var (
 		0x7e: '\u0ae3',
 		0x7f: '\u0af1',
 	}
-	gujaratiExtDecoder = Decoder{
+}
+
+func gujaratiExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -197,6 +200,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	gujaratiEncoder    = generateEncoder(gujaratiDecoder)
-	gujaratiExtEncoder = generateEncoder(gujaratiExtDecoder)
-)
+}
+
+func gujaratiEncoder() Encoder {
+	return generateEncoder(gujaratiDecoder())
+}
+
+func gujaratiExtEncoder() Encoder {
+	return generateEncoder(gujaratiExtDecoder())
+}

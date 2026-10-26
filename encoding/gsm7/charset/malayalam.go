@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	malayalamDecoder = Decoder{
+func malayalamDecoder() Decoder {
+	return Decoder{
 		0x01: '\u0d02',
 		0x02: '\u0d03',
 		0x03: '\u0d05',
@@ -125,7 +125,10 @@ var (
 		0x7e: '\u0d63',
 		0x7f: '\u0d79',
 	}
-	malayalamExtDecoder = Decoder{
+}
+
+func malayalamExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -209,6 +212,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	malayalamEncoder    = generateEncoder(malayalamDecoder)
-	malayalamExtEncoder = generateEncoder(malayalamExtDecoder)
-)
+}
+
+func malayalamEncoder() Encoder {
+	return generateEncoder(malayalamDecoder())
+}
+
+func malayalamExtEncoder() Encoder {
+	return generateEncoder(malayalamExtDecoder())
+}

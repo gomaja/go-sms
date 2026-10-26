@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	bengaliDecoder = Decoder{
+func bengaliDecoder() Decoder {
+	return Decoder{
 		0x00: '\u0981',
 		0x01: '\u0982',
 		0x02: '\u0983',
@@ -119,7 +119,10 @@ var (
 		0x7e: '\u09f0',
 		0x7f: '\u09f1',
 	}
-	bengaliExtDecoder = Decoder{
+}
+
+func bengaliExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -203,6 +206,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	bengaliEncoder    = generateEncoder(bengaliDecoder)
-	bengaliExtEncoder = generateEncoder(bengaliExtDecoder)
-)
+}
+
+func bengaliEncoder() Encoder {
+	return generateEncoder(bengaliDecoder())
+}
+
+func bengaliExtEncoder() Encoder {
+	return generateEncoder(bengaliExtDecoder())
+}

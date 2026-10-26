@@ -2,16 +2,15 @@
 
 // Package charset provides encoders and decoders for GSM character sets.
 //
-// The tables are built once, when the package is initialised, and are never
-// handed out. Each function returns a new copy of its table, so a caller may
-// change the table it gets without affecting any other caller.
+// The package keeps no tables. Each function builds its table when it is
+// called, so a caller may change the table it gets without affecting any
+// other caller. The Encoders and Decoders of package gsm7 instead share one
+// copy of each table, built the first time one of them needs it.
 package charset
-
-import "maps"
 
 // DefaultDecoder returns the default mapping table from GSM7 to UTF8.
 func DefaultDecoder() Decoder {
-	return maps.Clone(defaultDecoder)
+	return defaultDecoder()
 }
 
 // NewDecoder returns the mapping table from GSM7 to UTF8 for the given language.
@@ -20,15 +19,15 @@ func DefaultDecoder() Decoder {
 // (3GPP TS 23.038 Annex A.3.2 is Void), and for an identifier that is
 // reserved or unknown, as a receiver ignores those (Section 6.2.1.2.5).
 func NewDecoder(nli int) Decoder {
-	if d, ok := decoders[nli]; ok {
-		return maps.Clone(d)
+	if nli >= 0 && nli < End && decoders[nli] != nil {
+		return decoders[nli]()
 	}
 	return DefaultDecoder()
 }
 
 // DefaultExtDecoder returns the default extension mapping table from GSM7 to UTF8.
 func DefaultExtDecoder() Decoder {
-	return maps.Clone(defaultExtDecoder)
+	return defaultExtDecoder()
 }
 
 // NewExtDecoder returns the extension mapping table from GSM7 to UTF8 for the given language.
@@ -36,38 +35,38 @@ func DefaultExtDecoder() Decoder {
 // It returns the default table for an identifier that is reserved or
 // unknown, as a receiver ignores those (3GPP TS 23.038 Section 6.2.1.2.5).
 func NewExtDecoder(nli int) Decoder {
-	if d, ok := extDecoders[nli]; ok {
-		return maps.Clone(d)
+	if nli >= 0 && nli < End && extDecoders[nli] != nil {
+		return extDecoders[nli]()
 	}
 	return DefaultExtDecoder()
 }
 
 // DefaultEncoder returns the default mapping table from UTF8 to GSM7.
 func DefaultEncoder() Encoder {
-	return maps.Clone(defaultEncoder)
+	return defaultEncoder()
 }
 
 // NewEncoder returns the mapping table from UTF8 to GSM7 for the given language.
 //
 // It returns the default table where NewDecoder does.
 func NewEncoder(nli int) Encoder {
-	if e, ok := encoders[nli]; ok {
-		return maps.Clone(e)
+	if nli >= 0 && nli < End && encoders[nli] != nil {
+		return encoders[nli]()
 	}
 	return DefaultEncoder()
 }
 
 // DefaultExtEncoder returns the default extension mapping table from UTF8 to GSM7.
 func DefaultExtEncoder() Encoder {
-	return maps.Clone(defaultExtEncoder)
+	return defaultExtEncoder()
 }
 
 // NewExtEncoder returns the extension mapping table from UTF8 to GSM7 for the given language.
 //
 // It returns the default table where NewExtDecoder does.
 func NewExtEncoder(nli int) Encoder {
-	if e, ok := extEncoders[nli]; ok {
-		return maps.Clone(e)
+	if nli >= 0 && nli < End && extEncoders[nli] != nil {
+		return extEncoders[nli]()
 	}
 	return DefaultExtEncoder()
 }
@@ -162,7 +161,8 @@ func generateDecoderFromRunes(runes []rune) Decoder {
 }
 
 var (
-	decoders = map[int]Decoder{
+	decoders = [End]func() Decoder{
+		Default: defaultDecoder,
 		Turkish: turkishDecoder,
 		// Spanish uses default
 		Portuguese: portugueseDecoder,
@@ -181,7 +181,8 @@ var (
 	// Annex A.2 have no symbol at 0x0D, which they mark only as a control
 	// character (Note 4), so none of these has an entry for it and ESC 0x0D
 	// decodes as the locking shift table's CR.
-	extDecoders = map[int]Decoder{
+	extDecoders = [End]func() Decoder{
+		Default:    defaultExtDecoder,
 		Turkish:    turkishExtDecoder,
 		Spanish:    spanishExtDecoder,
 		Portuguese: portugueseExtDecoder,
@@ -196,7 +197,8 @@ var (
 		Telugu:     teluguExtDecoder,
 		Urdu:       urduExtDecoder,
 	}
-	encoders = map[int]Encoder{
+	encoders = [End]func() Encoder{
+		Default: defaultEncoder,
 		Turkish: turkishEncoder,
 		// Spanish uses default
 		Portuguese: portugueseEncoder,
@@ -211,7 +213,8 @@ var (
 		Telugu:     teluguEncoder,
 		Urdu:       urduEncoder,
 	}
-	extEncoders = map[int]Encoder{
+	extEncoders = [End]func() Encoder{
+		Default:    defaultExtEncoder,
 		Turkish:    turkishExtEncoder,
 		Spanish:    spanishExtEncoder,
 		Portuguese: portugueseExtEncoder,

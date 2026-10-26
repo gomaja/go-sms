@@ -2,9 +2,12 @@
 
 package charset
 
-var (
-	turkishDecoder    = generateDecoderFromRunes(turkishRunes)
-	turkishExtDecoder = Decoder{
+func turkishDecoder() Decoder {
+	return generateDecoderFromRunes([]rune(turkishRunes))
+}
+
+func turkishExtDecoder() Decoder {
+	return Decoder{
 		0x0a: '\f',
 		0x14: '^',
 		0x28: '{',
@@ -23,9 +26,15 @@ var (
 		0x69: 'ı',
 		0x73: 'ş',
 	}
-	turkishEncoder    = generateEncoderFromRunes(turkishRunes)
-	turkishExtEncoder = generateEncoder(turkishExtDecoder)
-	turkishRunes      = []rune(
-		"@£$¥€éùıòÇ\nĞğ\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bŞşßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
-			"İABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§çabcdefghijklmnopqrstuvwxyzäöñüà")
-)
+}
+
+func turkishEncoder() Encoder {
+	return generateEncoderFromRunes([]rune(turkishRunes))
+}
+
+func turkishExtEncoder() Encoder {
+	return generateEncoder(turkishExtDecoder())
+}
+
+const turkishRunes = "@£$¥€éùıòÇ\nĞğ\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bŞşßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
+	"İABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§çabcdefghijklmnopqrstuvwxyzäöñüà"

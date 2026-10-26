@@ -5,6 +5,7 @@ package gsm7
 
 import (
 	"fmt"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/gomaja/go-sms/encoding/gsm7/charset"
@@ -16,34 +17,35 @@ const (
 )
 
 // The character set tables used by the Encoders and Decoders of this package,
-// indexed by national language identifier. They are built once from the
-// copies the charset package returns, and are never handed out or changed,
-// so every Encoder and Decoder can share them.
+// indexed by national language identifier. Each table is built once, when
+// an Encoder or Decoder first needs it, and is never handed out or changed,
+// so every Encoder and Decoder can share it.
 var (
-	decoders    = tables(charset.NewDecoder)
-	extDecoders = tables(charset.NewExtDecoder)
-	encoders    = tables(charset.NewEncoder)
-	extEncoders = tables(charset.NewExtEncoder)
+	decoders    = lazyTables[charset.Decoder]{build: charset.NewDecoder}
+	extDecoders = lazyTables[charset.Decoder]{build: charset.NewExtDecoder}
+	encoders    = lazyTables[charset.Encoder]{build: charset.NewEncoder}
+	extEncoders = lazyTables[charset.Encoder]{build: charset.NewExtEncoder}
 
 	// noExt is the extension table of WithoutExtCharset.
 	noExt = charset.Decoder{}
 )
 
-// tables builds the table for every national language identifier.
-func tables[T any](f func(nli int) T) (t [charset.End]T) {
-	for nli := range t {
-		t[nli] = f(nli)
-	}
-	return t
+// lazyTables builds and shares one table per national language identifier.
+// It must not be copied after first use.
+type lazyTables[T any] struct {
+	build func(nli int) T
+	once  [charset.End]sync.Once
+	t     [charset.End]T
 }
 
-// table returns the table for the national language identifier nli, or the
-// default table for an identifier that has none.
-func table[T any](t *[charset.End]T, nli int) T {
-	if nli < 0 || nli >= len(t) {
+// get returns the table for the national language identifier nli, or the
+// default table for an identifier that has none, building it on first use.
+func (l *lazyTables[T]) get(nli int) T {
+	if nli < 0 || nli >= len(l.t) {
 		nli = charset.Default
 	}
-	return t[nli]
+	l.once[nli].Do(func() { l.t[nli] = l.build(nli) })
+	return l.t[nli]
 }
 
 // Decoder converts from GSM7 to UTF-8 using a particular character set.
@@ -76,10 +78,10 @@ func NewDecoder(options ...DecoderOption) Decoder {
 		option.applyDecoderOption(&d)
 	}
 	if d.set == nil {
-		d.set = decoders[charset.Default]
+		d.set = decoders.get(charset.Default)
 	}
 	if d.ext == nil {
-		d.ext = extDecoders[charset.Default]
+		d.ext = extDecoders.get(charset.Default)
 	}
 	return d
 }
@@ -91,10 +93,10 @@ func NewEncoder(options ...EncoderOption) Encoder {
 		option.applyEncoderOption(&e)
 	}
 	if e.set == nil {
-		e.set = encoders[charset.Default]
+		e.set = encoders.get(charset.Default)
 	}
 	if e.ext == nil {
-		e.ext = extEncoders[charset.Default]
+		e.ext = extEncoders.get(charset.Default)
 	}
 	return e
 }
@@ -292,11 +294,11 @@ type CharsetOption struct {
 }
 
 func (o CharsetOption) applyDecoderOption(d *Decoder) {
-	d.set = table(&decoders, o.nli)
+	d.set = decoders.get(o.nli)
 }
 
 func (o CharsetOption) applyEncoderOption(e *Encoder) {
-	e.set = table(&encoders, o.nli)
+	e.set = encoders.get(o.nli)
 }
 
 // ExtCharsetOption specifies the extension character set to be used for
@@ -306,11 +308,11 @@ type ExtCharsetOption struct {
 }
 
 func (o ExtCharsetOption) applyDecoderOption(d *Decoder) {
-	d.ext = table(&extDecoders, o.nli)
+	d.ext = extDecoders.get(o.nli)
 }
 
 func (o ExtCharsetOption) applyEncoderOption(e *Encoder) {
-	e.ext = table(&extEncoders, o.nli)
+	e.ext = extEncoders.get(o.nli)
 }
 
 // WithCharset specifies the character set map used for encoding or decoding.

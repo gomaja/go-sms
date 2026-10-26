@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	kannadaDecoder = Decoder{
+func kannadaDecoder() Decoder {
+	return Decoder{
 		0x01: '\u0c82',
 		0x02: '\u0c83',
 		0x03: '\u0c85',
@@ -127,7 +127,10 @@ var (
 		0x7e: '\u0ce2',
 		0x7f: '\u0ce3',
 	}
-	kannadaExtDecoder = Decoder{
+}
+
+func kannadaExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -202,6 +205,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	kannadaEncoder    = generateEncoder(kannadaDecoder)
-	kannadaExtEncoder = generateEncoder(kannadaExtDecoder)
-)
+}
+
+func kannadaEncoder() Encoder {
+	return generateEncoder(kannadaDecoder())
+}
+
+func kannadaExtEncoder() Encoder {
+	return generateEncoder(kannadaExtDecoder())
+}
