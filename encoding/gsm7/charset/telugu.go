@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	teluguDecoder = Decoder{
+func teluguDecoder() Decoder {
+	return Decoder{
 		0x00: '\u0c01',
 		0x01: '\u0c02',
 		0x02: '\u0c03',
@@ -125,7 +125,10 @@ var (
 		0x7e: '\u0c62',
 		0x7f: '\u0c63',
 	}
-	teluguExtDecoder = Decoder{
+}
+
+func teluguExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -210,6 +213,12 @@ var (
 		// table. Android's GsmAlphabet does map 0x65 to €, but a receiver
 		// following the table decodes ESC 0x65 as the locking shift 'e'.
 	}
-	teluguEncoder    = generateEncoder(teluguDecoder)
-	teluguExtEncoder = generateEncoder(teluguExtDecoder)
-)
+}
+
+func teluguEncoder() Encoder {
+	return generateEncoder(teluguDecoder())
+}
+
+func teluguExtEncoder() Encoder {
+	return generateEncoder(teluguExtDecoder())
+}

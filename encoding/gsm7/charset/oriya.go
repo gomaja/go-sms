@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	oriyaDecoder = Decoder{
+func oriyaDecoder() Decoder {
+	return Decoder{
 		0x00: '\u0b01',
 		0x01: '\u0b02',
 		0x02: '\u0b03',
@@ -122,7 +122,10 @@ var (
 		0x7e: '\u0b62',
 		0x7f: '\u0b63',
 	}
-	oriyaExtDecoder = Decoder{
+}
+
+func oriyaExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -199,6 +202,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	oriyaEncoder    = generateEncoder(oriyaDecoder)
-	oriyaExtEncoder = generateEncoder(oriyaExtDecoder)
-)
+}
+
+func oriyaEncoder() Encoder {
+	return generateEncoder(oriyaDecoder())
+}
+
+func oriyaExtEncoder() Encoder {
+	return generateEncoder(oriyaExtDecoder())
+}

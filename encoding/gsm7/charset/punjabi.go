@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	punjabiDecoder = Decoder{
+func punjabiDecoder() Decoder {
+	return Decoder{
 		0x00: '\u0a01',
 		0x01: '\u0a02',
 		0x02: '\u0a03',
@@ -115,7 +115,10 @@ var (
 		0x7e: '\u0a73',
 		0x7f: '\u0a74',
 	}
-	punjabiExtDecoder = Decoder{
+}
+
+func punjabiExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -194,6 +197,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	punjabiEncoder    = generateEncoder(punjabiDecoder)
-	punjabiExtEncoder = generateEncoder(punjabiExtDecoder)
-)
+}
+
+func punjabiEncoder() Encoder {
+	return generateEncoder(punjabiDecoder())
+}
+
+func punjabiExtEncoder() Encoder {
+	return generateEncoder(punjabiExtDecoder())
+}

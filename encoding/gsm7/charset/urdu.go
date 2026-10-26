@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	urduDecoder = Decoder{
+func urduDecoder() Decoder {
+	return Decoder{
 		// awkward layout as most editors have problems with these RTL characters.
 		0x00: 'ا',
 		0x01: 'آ',
@@ -133,7 +133,10 @@ var (
 		0x7e: '\u0656',
 		0x7f: '\u0670',
 	}
-	urduExtDecoder = Decoder{
+}
+
+func urduExtDecoder() Decoder {
+	return Decoder{
 		0x00: '@',
 		0x01: '£',
 		0x02: '$',
@@ -225,6 +228,12 @@ var (
 		0x5a: 'Z',
 		0x65: '€',
 	}
-	urduEncoder    = generateEncoder(urduDecoder)
-	urduExtEncoder = generateEncoder(urduExtDecoder)
-)
+}
+
+func urduEncoder() Encoder {
+	return generateEncoder(urduDecoder())
+}
+
+func urduExtEncoder() Encoder {
+	return generateEncoder(urduExtDecoder())
+}

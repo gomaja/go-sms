@@ -2,8 +2,8 @@
 
 package charset
 
-var (
-	spanishExtDecoder = Decoder{
+func spanishExtDecoder() Decoder {
+	return Decoder{
 		0x09: 'ç',
 		0x0a: '\f',
 		0x14: '^',
@@ -24,5 +24,8 @@ var (
 		0x6f: 'ó',
 		0x75: 'ú',
 	}
-	spanishExtEncoder = generateEncoder(spanishExtDecoder)
-)
+}
+
+func spanishExtEncoder() Encoder {
+	return generateEncoder(spanishExtDecoder())
+}

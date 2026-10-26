@@ -2,9 +2,12 @@
 
 package charset
 
-var (
-	portugueseDecoder    = generateDecoderFromRunes(portugueseRunes)
-	portugueseExtDecoder = Decoder{
+func portugueseDecoder() Decoder {
+	return generateDecoderFromRunes([]rune(portugueseRunes))
+}
+
+func portugueseExtDecoder() Decoder {
+	return Decoder{
 		0x05: 'ê',
 		0x09: 'ç',
 		0x0a: '\f',
@@ -43,9 +46,15 @@ var (
 		0x7c: 'õ',
 		0x7f: 'â',
 	}
-	portugueseEncoder    = generateEncoderFromRunes(portugueseRunes)
-	portugueseExtEncoder = generateEncoder(portugueseExtDecoder)
-	portugueseRunes      = []rune(
-		"@£$¥êéúíóç\nÔô\rÁáΔ_ªÇÀ∞^\\€Ó|\x1bÂâÊÉ !\"#º%&'()*+,-./0123456789:;<=>?" +
-			"ÍABCDEFGHIJKLMNOPQRSTUVWXYZÃÕÚÜ§~abcdefghijklmnopqrstuvwxyzãõ`üà")
-)
+}
+
+func portugueseEncoder() Encoder {
+	return generateEncoderFromRunes([]rune(portugueseRunes))
+}
+
+func portugueseExtEncoder() Encoder {
+	return generateEncoder(portugueseExtDecoder())
+}
+
+const portugueseRunes = "@£$¥êéúíóç\nÔô\rÁáΔ_ªÇÀ∞^\\€Ó|\x1bÂâÊÉ !\"#º%&'()*+,-./0123456789:;<=>?" +
+	"ÍABCDEFGHIJKLMNOPQRSTUVWXYZÃÕÚÜ§~abcdefghijklmnopqrstuvwxyzãõ`üà"
