@@ -19,3 +19,27 @@ func ExampleDecodeReport() {
 	// 2 00 ExtensionFallback '@'
 	// 4 1b ReservedEscape ' '
 }
+
+func ExampleEncodeReport() {
+	septets, substitutions, _ := gsm7.EncodeReport([]byte("Olá Zoë: 2½ km [ok]"),
+		gsm7.WithSubstituteFunc(func(r rune) rune {
+			switch r {
+			case 'á':
+				return 'a'
+			case 'ë':
+				return 'e'
+			default:
+				return '?'
+			}
+		}))
+	text, _ := gsm7.Decode(septets)
+	fmt.Printf("%s\n", text)
+	for _, s := range substitutions {
+		fmt.Printf("%d %q %q\n", s.Offset, s.Rune, s.Substitute)
+	}
+	// Output:
+	// Ola Zoe: 2? km [ok]
+	// 2 'á' 'a'
+	// 7 'ë' 'e'
+	// 12 '½' '?'
+}

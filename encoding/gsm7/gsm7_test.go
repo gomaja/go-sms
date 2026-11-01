@@ -220,6 +220,137 @@ func TestEncode(t *testing.T) {
 	testEncoder(t, e, p)
 }
 
+func TestEncodeReport(t *testing.T) {
+	baseLetter := func(r rune) rune {
+		switch r {
+		case 'á':
+			return 'a'
+		case 'ë':
+			return 'e'
+		default:
+			return '?'
+		}
+	}
+	const source = "Olá Zoë: 2½ km [ok]"
+	patterns := []struct {
+		name    string
+		src     string
+		options []gsm7.EncoderOption
+		text    string
+		report  []gsm7.Substitution
+		err     error
+	}{
+		{"strict encodable", "Ä€[ok]", nil, "Ä€[ok]", nil, nil},
+		{"strict unencodable", "Ä😀", nil, "", nil, gsm7.ErrUnencodable{Offset: 2, Rune: '😀'}},
+		{"strict invalid", "a\xff", nil, "", nil, gsm7.ErrInvalidUTF8{Offset: 1, Byte: 0xff}},
+		{"question", source, []gsm7.EncoderOption{gsm7.WithSubstitute('?')}, "Ol? Zo?: 2? km [ok]", []gsm7.Substitution{{Offset: 2, Rune: 'á', Substitute: '?'}, {Offset: 7, Rune: 'ë', Substitute: '?'}, {Offset: 12, Rune: '½', Substitute: '?'}}, nil},
+		{"base letter", source, []gsm7.EncoderOption{gsm7.WithSubstituteFunc(baseLetter)}, "Ola Zoe: 2? km [ok]", []gsm7.Substitution{{Offset: 2, Rune: 'á', Substitute: 'a'}, {Offset: 7, Rune: 'ë', Substitute: 'e'}, {Offset: 12, Rune: '½', Substitute: '?'}}, nil},
+		{"extension", "😀", []gsm7.EncoderOption{gsm7.WithSubstitute('€')}, "€", []gsm7.Substitution{{Offset: 0, Rune: '😀', Substitute: '€'}}, nil},
+		{"bad substitute", "Ä😀", []gsm7.EncoderOption{gsm7.WithSubstitute('á')}, "", nil, gsm7.ErrUnencodable{Offset: 2, Rune: '😀'}},
+		{"later bad substitute", "áë", []gsm7.EncoderOption{gsm7.WithSubstituteFunc(func(r rune) rune {
+			if r == 'á' {
+				return '?'
+			}
+			return '½'
+		})}, "", nil, gsm7.ErrUnencodable{Offset: 2, Rune: 'ë'}},
+		{"later invalid", "á\xff", []gsm7.EncoderOption{gsm7.WithSubstitute('?')}, "", nil, gsm7.ErrInvalidUTF8{Offset: 2, Byte: 0xff}},
+		{"replacement rune", "\uFFFD", []gsm7.EncoderOption{gsm7.WithSubstitute('?')}, "?", []gsm7.Substitution{{Offset: 0, Rune: '\uFFFD', Substitute: '?'}}, nil},
+		{"empty", "", []gsm7.EncoderOption{gsm7.WithSubstitute('?')}, "", nil, nil},
+		{"no substitution", "hello €", []gsm7.EncoderOption{gsm7.WithSubstitute('?')}, "hello €", nil, nil},
+		{"nil function", "😀", []gsm7.EncoderOption{gsm7.WithSubstitute('?'), gsm7.WithSubstituteFunc(nil)}, "", nil, gsm7.ErrUnencodable{Offset: 0, Rune: '😀'}},
+		{"last option", "😀", []gsm7.EncoderOption{gsm7.WithSubstitute('á'), gsm7.WithSubstitute('?')}, "?", []gsm7.Substitution{{Offset: 0, Rune: '😀', Substitute: '?'}}, nil},
+	}
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			want, err := gsm7.Encode([]byte(p.text))
+			require.NoError(t, err)
+			e := gsm7.NewEncoder(p.options...)
+			got, report, err := e.EncodeReport([]byte(p.src))
+			assert.Equal(t, p.err, err)
+			assert.Equal(t, want, got)
+			assert.Equal(t, p.report, report)
+			plain, plainErr := e.Encode([]byte(p.src))
+			assert.Equal(t, got, plain)
+			assert.Equal(t, err, plainErr)
+			pkg, pkgReport, pkgErr := gsm7.EncodeReport([]byte(p.src), p.options...)
+			assert.Equal(t, got, pkg)
+			assert.Equal(t, report, pkgReport)
+			assert.Equal(t, err, pkgErr)
+		})
+	}
+}
+
+func TestEncodeSubstituteCalls(t *testing.T) {
+	for _, report := range []bool{false, true} {
+		var calls []rune
+		e := gsm7.NewEncoder(gsm7.WithSubstituteFunc(func(r rune) rune {
+			calls = append(calls, r)
+			return '?'
+		}))
+		src := []byte("aá€ë😀\xff½")
+		if report {
+			_, _, err := e.EncodeReport(src)
+			assert.Equal(t, gsm7.ErrInvalidUTF8{Offset: 12, Byte: 0xff}, err)
+		} else {
+			_, err := e.Encode(src)
+			assert.Equal(t, gsm7.ErrInvalidUTF8{Offset: 12, Byte: 0xff}, err)
+		}
+		assert.Equal(t, []rune{'á', 'ë', '😀'}, calls)
+	}
+}
+
+func TestEncodeSubstituteTables(t *testing.T) {
+	for _, g := range []byte{0x1b, 0x80, 0xff} {
+		for _, extension := range []bool{false, true} {
+			set, ext := charset.Encoder{}, charset.Encoder{}
+			if extension {
+				ext['?'] = g
+			} else {
+				set['?'] = g
+			}
+			e := gsm7.NewEncoder(gsm7.WithSubstitute('?')).WithCharset(set).WithExtCharset(ext)
+			out, report, err := e.EncodeReport([]byte("😀"))
+			assert.Nil(t, out)
+			assert.Nil(t, report)
+			assert.Equal(t, gsm7.ErrUnencodable{Offset: 0, Rune: '😀'}, err)
+			plain, plainErr := e.Encode([]byte("😀"))
+			assert.Nil(t, plain)
+			assert.Equal(t, err, plainErr)
+		}
+		// An invalid locking entry still permits a valid extension entry.
+		e := gsm7.NewEncoder(gsm7.WithSubstitute('?')).WithCharset(charset.Encoder{'?': g}).WithExtCharset(charset.Encoder{'?': 0x40})
+		out, report, err := e.EncodeReport([]byte("😀"))
+		require.NoError(t, err)
+		assert.Equal(t, []byte{0x1b, 0x40}, out)
+		assert.Equal(t, []gsm7.Substitution{{Offset: 0, Rune: '😀', Substitute: '?'}}, report)
+	}
+	e := gsm7.NewEncoder(gsm7.WithSubstitute('?')).WithCharset(charset.Encoder{'?': 0x41}).WithExtCharset(charset.Encoder{'?': 0x42})
+	out, err := e.Encode([]byte("😀"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0x41}, out)
+}
+
+func TestEncodeSubstituteQuestionMark(t *testing.T) {
+	for nli := -1; nli <= charset.End; nli++ {
+		for ext := -1; ext <= charset.End; ext++ {
+			e := gsm7.NewEncoder(gsm7.WithCharset(nli), gsm7.WithExtCharset(ext), gsm7.WithSubstitute('?'))
+			out, err := e.Encode([]byte("😀"))
+			require.NoError(t, err, "set %d ext %d", nli, ext)
+			assert.Equal(t, []byte{0x3f}, out, "set %d ext %d", nli, ext)
+		}
+	}
+}
+
+func TestEncodeReportAllocations(t *testing.T) {
+	src := []byte("hello Ä€ [world]")
+	strict := gsm7.NewEncoder()
+	sub := gsm7.NewEncoder(gsm7.WithSubstitute('?'))
+	plain := testing.AllocsPerRun(100, func() { _, _ = strict.Encode(src) })
+	assert.Equal(t, plain, testing.AllocsPerRun(100, func() { _, _ = sub.Encode(src) }))
+	assert.Equal(t, plain, testing.AllocsPerRun(100, func() { _, _, _ = sub.EncodeReport(src) }))
+	assert.Equal(t, plain, testing.AllocsPerRun(100, func() { _, _, _ = strict.EncodeReport(src) }))
+}
+
 // TestEncodeReplacementCharacter checks that an invalid byte is not encoded
 // as the replacement character U+FFFD, even with tables that have a septet
 // for U+FFFD, while a U+FFFD in the source is.
@@ -577,6 +708,77 @@ func FuzzEncode(f *testing.F) {
 		got, err := gsm7.Decode(out, gsm7.WithCharset(ls), gsm7.WithExtCharset(ss), gsm7.Strict)
 		if err != nil || string(got) != s {
 			t.Fatalf("set %d ext %d encode %q -> % x -> decode %q, %v", ls, ss, s, out, got, err)
+		}
+	})
+}
+
+// FuzzEncodeReport checks substitution against an independent walk of the
+// locking and single shift tables, including a substitute absent from some tables.
+func FuzzEncodeReport(f *testing.F) {
+	for ls := 0; ls < charset.End; ls++ {
+		for ss := 0; ss < charset.End; ss++ {
+			f.Add(tableText(ls)+"áë½😀\uFFFD", uint8(ls), uint8(ss))
+		}
+	}
+	f.Add("á\xff", uint8(0), uint8(0))
+	f.Add("", uint8(0), uint8(0))
+	sub := func(r rune) rune {
+		if r%2 == 0 {
+			return '?'
+		}
+		return '€'
+	}
+	f.Fuzz(func(t *testing.T, src string, set, ext uint8) {
+		ls, ss := int(set)%charset.End, int(ext)%charset.End
+		var want []byte
+		var substitutions []gsm7.Substitution
+		var wantErr error
+		var text strings.Builder
+		septets := func(r rune) []byte {
+			for j, table := range []charset.Encoder{lockingEncoders[ls], shiftEncoders[ss]} {
+				if g, ok := table[r]; ok && g < 0x80 && g != 0x1b {
+					if j == 0 {
+						return []byte{g}
+					}
+					return []byte{0x1b, g}
+				}
+			}
+			return nil
+		}
+		for i, r := range src {
+			if r == utf8.RuneError && !strings.HasPrefix(src[i:], "\uFFFD") {
+				wantErr = gsm7.ErrInvalidUTF8{Offset: i, Byte: src[i]}
+				break
+			}
+			encoded := septets(r)
+			decoded := r
+			if encoded == nil {
+				decoded = sub(r)
+				encoded = septets(decoded)
+				if encoded == nil {
+					wantErr = gsm7.ErrUnencodable{Offset: i, Rune: r}
+					break
+				}
+				substitutions = append(substitutions, gsm7.Substitution{Offset: i, Rune: r, Substitute: decoded})
+			}
+			want = append(want, encoded...)
+			text.WriteRune(decoded)
+		}
+		if wantErr != nil {
+			want, substitutions = nil, nil
+		}
+		e := gsm7.NewEncoder(gsm7.WithCharset(ls), gsm7.WithExtCharset(ss), gsm7.WithSubstituteFunc(sub))
+		got, report, err := e.EncodeReport([]byte(src))
+		require.Equal(t, wantErr, err)
+		require.Equal(t, want, got)
+		require.Equal(t, substitutions, report)
+		plain, plainErr := e.Encode([]byte(src))
+		require.Equal(t, err, plainErr)
+		require.Equal(t, got, plain)
+		if err == nil {
+			decoded, decodeErr := gsm7.Decode(got, gsm7.WithCharset(ls), gsm7.WithExtCharset(ss), gsm7.Strict)
+			require.NoError(t, decodeErr)
+			require.Equal(t, text.String(), string(decoded))
 		}
 	})
 }

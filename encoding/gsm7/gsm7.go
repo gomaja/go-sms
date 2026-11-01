@@ -59,6 +59,7 @@ type Decoder struct {
 type Encoder struct {
 	set charset.Encoder
 	ext charset.Encoder
+	sub func(rune) rune // nil: no substitute
 }
 
 // DecoderOption applies an option to a Decoder.
@@ -121,6 +122,13 @@ func DecodeReport(src []byte, options ...DecoderOption) ([]byte, []Replacement, 
 func Encode(src []byte, options ...EncoderOption) ([]byte, error) {
 	e := NewEncoder(options...)
 	return e.Encode(src)
+}
+
+// EncodeReport converts src from UTF-8 to unpacked GSM7 and reports each
+// substitution. It is the same as NewEncoder(options...).EncodeReport(src).
+func EncodeReport(src []byte, options ...EncoderOption) ([]byte, []Substitution, error) {
+	e := NewEncoder(options...)
+	return e.EncodeReport(src)
 }
 
 // Decode converts the src from unpacked GSM7 to UTF-8.
@@ -346,6 +354,38 @@ func WithExtCharset(nli int) ExtCharsetOption {
 	return ExtCharsetOption{nli}
 }
 
+// SubstituteOption is the EncoderOption of WithSubstitute and WithSubstituteFunc.
+// It is not a DecoderOption.
+type SubstituteOption struct{ sub func(rune) rune }
+
+func (o SubstituteOption) applyEncoderOption(e *Encoder) {
+	e.sub = o.sub
+}
+
+// WithSubstitute makes the Encoder encode sub in place of each character that
+// neither its character set nor its extension character set has, rather than
+// return an ErrUnencodable. See Encoder.Encode.
+//
+// Every character set that the option WithCharset selects has '?' at 0x3F:
+// the GSM 7 bit default alphabet (3GPP TS 23.038 V20.0.0 Section 6.2.1) and
+// each National Language Locking Shift Table (Annex A.3). Spanish has none
+// (A.3.2 is Void), and WithCharset selects the default alphabet for it. So an
+// Encoder made with WithSubstitute('?') and those tables never returns an
+// ErrUnencodable.
+func WithSubstitute(sub rune) SubstituteOption {
+	return SubstituteOption{sub: func(rune) rune { return sub }}
+}
+
+// WithSubstituteFunc makes the Encoder encode sub(r) in place of each
+// character r that neither its character set nor its extension character set
+// has, rather than return an ErrUnencodable. The Encoder calls sub once for
+// each such character and does not substitute the result in turn: if neither
+// set has the result either, it returns the ErrUnencodable for r. A nil sub
+// leaves the Encoder without a substitute. See Encoder.Encode.
+func WithSubstituteFunc(sub func(r rune) rune) SubstituteOption {
+	return SubstituteOption{sub: sub}
+}
+
 // NullDecoder is the DecoderOption of WithoutExtCharset. It removes the
 // extension character set, so the Decoder decodes every escaped septet from
 // the character set, or rejects it if the Decoder is Strict.
@@ -402,12 +442,20 @@ func (d Decoder) Strict() Decoder {
 // character set has no septet for it, as the escape 0x1B followed by its
 // septet in the extension character set.
 //
+// An Encoder made with WithSubstitute or WithSubstituteFunc encodes a
+// character that neither set has as its substitute, which is looked up in the
+// same way, and EncodeReport reports each substitution. 3GPP TS 23.038
+// V20.0.0 gives a sending entity no rule for what to send in place of such a
+// character: its rules for a sending entity, in Sections 6.2.1.2.2 and
+// 6.2.1.2.5, are about the national language tables.
+//
 // Encode stops at the first of these errors, and returns no septets:
 //
 //   - ErrInvalidUTF8, with its offset, for a byte of src that does not begin
-//     a valid UTF-8 sequence;
+//     a valid UTF-8 sequence, with or without a substitute;
 //   - ErrUnencodable, with the character and its offset, for a character that
-//     neither the character set nor the extension character set has.
+//     neither the character set nor the extension character set has, if the
+//     Encoder has no substitute or neither set has the substitute either.
 //
 // An invalid byte is never read as the replacement character U+FFFD, so it
 // is reported even by an Encoder whose tables have a septet for U+FFFD.
@@ -416,6 +464,35 @@ func (d Decoder) Strict() Decoder {
 // above 0x7F, is treated as absent, as neither is a character (3GPP TS 23.038
 // Section 6.2.1).
 func (e *Encoder) Encode(src []byte) ([]byte, error) {
+	return e.encode(src, nil)
+}
+
+// A Substitution records a character that an Encoder could not encode, and
+// the substitute it encoded in its place.
+type Substitution struct {
+	// Offset is the index in the source of the first byte of Rune, as in
+	// ErrUnencodable.
+	Offset int
+	// Rune is the character of the source, which neither set has.
+	Rune rune
+	// Substitute is the character encoded in place of Rune.
+	Substitute rune
+}
+
+// EncodeReport encodes src as Encode does and reports each substitution in
+// source order. Substitutions is nil when no character is substituted, as
+// always for an Encoder without a substitute. On an error EncodeReport
+// returns nil septets and nil substitutions.
+func (e *Encoder) EncodeReport(src []byte) ([]byte, []Substitution, error) {
+	var substitutions []Substitution
+	dst, err := e.encode(src, &substitutions)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dst, substitutions, nil
+}
+
+func (e *Encoder) encode(src []byte, substitutions *[]Substitution) ([]byte, error) {
 	if len(src) == 0 {
 		return nil, nil
 	}
@@ -430,7 +507,20 @@ func (e *Encoder) Encode(src []byte) ([]byte, error) {
 		} else if g, ok := e.ext[u]; ok && isCharacter(g) {
 			dst = append(dst, esc, g)
 		} else {
-			return nil, ErrUnencodable{Offset: i, Rune: u}
+			if e.sub == nil {
+				return nil, ErrUnencodable{Offset: i, Rune: u}
+			}
+			s := e.sub(u)
+			if g, ok := e.set[s]; ok && isCharacter(g) {
+				dst = append(dst, g)
+			} else if g, ok := e.ext[s]; ok && isCharacter(g) {
+				dst = append(dst, esc, g)
+			} else {
+				return nil, ErrUnencodable{Offset: i, Rune: u}
+			}
+			if substitutions != nil {
+				*substitutions = append(*substitutions, Substitution{Offset: i, Rune: u, Substitute: s})
+			}
 		}
 		i += n
 	}
@@ -498,7 +588,9 @@ func (e ErrInvalidUTF8) Error() string {
 
 // ErrUnencodable indicates a character that has no GSM7 encoding with the
 // tables of the Encoder: neither its character set nor its extension
-// character set has a septet for it.
+// character set has a septet for it. With a substitute, it is returned only
+// when neither set has the substitute either; Rune is still the character
+// of the source.
 type ErrUnencodable struct {
 	// Offset is the index in the source of the first byte of Rune.
 	Offset int
