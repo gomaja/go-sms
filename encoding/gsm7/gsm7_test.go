@@ -297,6 +297,28 @@ func TestEncodeSubstituteCalls(t *testing.T) {
 		}
 		assert.Equal(t, []rune{'á', 'ë', '😀'}, calls)
 	}
+	// A substitute that neither set has is not substituted in turn, and
+	// the function is called neither again nor for a later character.
+	for _, report := range []bool{false, true} {
+		var calls []rune
+		e := gsm7.NewEncoder(gsm7.WithSubstituteFunc(func(r rune) rune {
+			calls = append(calls, r)
+			return 'á'
+		}))
+		src := []byte("aáë")
+		var out []byte
+		var err error
+		if report {
+			var substitutions []gsm7.Substitution
+			out, substitutions, err = e.EncodeReport(src)
+			assert.Nil(t, substitutions)
+		} else {
+			out, err = e.Encode(src)
+		}
+		assert.Nil(t, out)
+		assert.Equal(t, gsm7.ErrUnencodable{Offset: 1, Rune: 'á'}, err)
+		assert.Equal(t, []rune{'á'}, calls)
+	}
 }
 
 func TestEncodeSubstituteTables(t *testing.T) {

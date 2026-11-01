@@ -446,8 +446,7 @@ func (d Decoder) Strict() Decoder {
 // character that neither set has as its substitute, which is looked up in the
 // same way, and EncodeReport reports each substitution. 3GPP TS 23.038
 // V20.0.0 gives a sending entity no rule for what to send in place of such a
-// character: its rules for a sending entity, in Sections 6.2.1.2.2 and
-// 6.2.1.2.5, are about the national language tables.
+// character.
 //
 // Encode stops at the first of these errors, and returns no septets:
 //
